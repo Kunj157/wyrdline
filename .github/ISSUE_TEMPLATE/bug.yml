@@ -1,0 +1,40 @@
+name: Bug
+description: Something does not behave as specified
+labels: ["type: bug"]
+body:
+  - type: input
+    id: env
+    attributes:
+      label: Environment and version
+      placeholder: "kernel release, distro, wyrd version or commit; paste `wyrd doctor --json`"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, session id, strict-redacted bundle, screenshots
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options: ["low", "medium", "high", "critical"]
+    validations:
+      required: true

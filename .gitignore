@@ -1,0 +1,39 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Rust
+target/
+**/*.rs.bk
+fuzz/artifacts/
+fuzz/corpus/*/
+!fuzz/corpus/.gitkeep
+
+# Node / Studio
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+.vite/
+
+# Wasm build output
+crates/wyrd-wasm/pkg/
+policies/**/target/
+*.wasm
+!policies/fixtures/*.wasm
+
+# Wyrdline runtime data and bundles
+.wyrd-data/
+*.wyrd
+!tests/fixtures/bundles/*.wyrd
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local planning notes (kept out of the repository)
+DEVELOPMENT_PLAN.md
