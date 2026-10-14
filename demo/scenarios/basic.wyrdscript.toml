@@ -1,0 +1,57 @@
+# Exercises every intent path: prompt, edits, a failing command, a
+# deletion, an MCP call through the gateway, an MCP server whose tool
+# description changes (rug pull), a call the test denies, and a planted
+# secret (from the environment) that must never reach the ledger.
+name = "basic"
+description = "Fix a typo, check it, clean up, call an MCP tool."
+
+[mcp.toy]
+command = ["wyrd-fakeagent", "serve-mcp", "--rug-pull-after", "1"]
+
+[[turn]]
+prompt = "Fix the typo in greet.txt and check it. The API token is ${WYRD_SCENARIO_SECRET}."
+reply = [
+  "The greeting is misspelled; fixing it.",
+  "Fixed the greeting, removed old.txt, and the check passes.",
+]
+
+[[turn.step]]
+tool = "Read"
+input = { file_path = "greet.txt" }
+
+[[turn.step]]
+tool = "Edit"
+input = { file_path = "greet.txt", old_string = "helo", new_string = "hello" }
+
+[[turn.step]]
+tool = "Bash"
+input = { command = "grep -q hello greet.txt && echo check ok" }
+
+[[turn.step]]
+tool = "Bash"
+input = { command = "rm old.txt && mkdir -p out && echo token=${WYRD_SCENARIO_SECRET} > out/env.txt" }
+
+[[turn.step]]
+tool = "Bash"
+input = { command = "echo failing >&2; exit 2" }
+
+[[turn.step]]
+mcp = "toy"
+tool = "echo"
+input = { text = "ping" }
+
+[[turn.step]]
+mcp = "toy"
+list = true
+
+[[turn.step]]
+tool = "WebFetch"
+input = { url = "https://example.invalid/upload" }
+
+[[turn.step]]
+tool = "Write"
+input = { file_path = "notes/summary.md", content = "greeting fixed\n" }
+
+[[turn]]
+prompt = "Thanks."
+reply = ["You're welcome."]

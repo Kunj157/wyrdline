@@ -8,7 +8,7 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check test-perf test-integration apparmor-install
+	schemas schemas-check test-perf test-integration test-scenarios apparmor-install
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -60,8 +60,13 @@ test-perf: ## Throughput and overhead benchmarks (release build, cleaned afterwa
 	$(CARGO) nextest run --workspace --release --locked --run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture
 	$(CARGO) clean --release
 
-test-integration: ## Privileged Cell tests (stage two runs through passwordless sudo)
-	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features privileged-tests -E 'test(/^privileged_/)'
+test-integration: ## Privileged Cell tests and scenarios (stage two runs through passwordless sudo)
+	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent \
+		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests -E 'test(/^privileged_/)'
+
+test-scenarios: ## Fakeagent-driven full-pipeline scenarios (unprivileged; Cell ones run in test-integration)
+	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent
+	$(CARGO) nextest run --locked -p wyrd-fakeagent --test scenarios
 
 WYRD_BIN ?= /usr/local/bin/wyrd
 apparmor-install: ## Install the AppArmor profile that allows user namespaces for $(WYRD_BIN) (needs sudo)
