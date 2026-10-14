@@ -46,6 +46,14 @@ dbg_macro = "deny"
 print_stdout = "warn"
 todo = "deny"
 
+# Keep target/ small: line tables are enough for backtraces, and
+# dependencies carry no debug info.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
