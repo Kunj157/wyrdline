@@ -90,6 +90,12 @@ reports exactly what is available and what degrades without it.
 | 13 | CI capture, containers, Kubernetes |
 | 14 | Hardening, performance, launch |
 
+## Documentation
+
+- [Architecture overview](docs/architecture/overview.md)
+- [Architecture decision records](docs/adr/README.md)
+- [Threat model](docs/threat-model/scope.md)
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and
