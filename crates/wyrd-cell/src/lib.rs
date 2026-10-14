@@ -18,7 +18,7 @@ pub mod session;
 pub mod state;
 
 pub use paths::{DataDir, SessionDir};
-pub use session::Session;
+pub use session::{RunOptions, Session};
 
 use std::path::PathBuf;
 

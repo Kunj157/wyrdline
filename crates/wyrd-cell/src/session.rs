@@ -28,8 +28,32 @@ pub struct CreateOptions {
     pub observe: bool,
     pub name: Option<String>,
     pub agent_kind: String,
+    pub deny_tools: Vec<String>,
     pub kernel_release: String,
     pub capabilities: BTreeMap<String, bool>,
+}
+
+/// Per-run additions from the caller (intent capture).
+#[derive(Default)]
+pub struct RunOptions<'a> {
+    /// Extra environment for the agent, e.g. the intent socket path.
+    pub env: Vec<(String, String)>,
+    /// Command to execute instead of the recorded one (e.g. with injected
+    /// hook settings); the ledger keeps the user's command.
+    pub command: Option<Vec<String>>,
+    /// Called after the agent exits and before the final checkpoint; returns
+    /// the tool call the final checkpoint should be attributed to. Runs
+    /// without the session lock so in-flight checkpoints can finish.
+    pub before_final: Option<Box<dyn FnOnce() -> Option<String> + 'a>>,
+}
+
+impl std::fmt::Debug for RunOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunOptions")
+            .field("env", &self.env.len())
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
 }
 
 /// An open session.
@@ -110,6 +134,8 @@ impl Session {
             cgroup: None,
             pid: None,
             runs: 0,
+            agent: opts.agent_kind.clone(),
+            deny_tools: opts.deny_tools,
         };
         state::save(&dir, &rec)?;
         let mut ledger = Ledger::create(dir.ledger(), &id)?;
@@ -232,60 +258,88 @@ impl Session {
         self.running_cgroup().is_some()
     }
 
+    /// Launch the agent on the current branch (stage one).
+    fn start(
+        &mut self,
+        helper: &Path,
+        probe_userns: impl FnOnce() -> std::result::Result<(), String>,
+        command: Option<Vec<String>>,
+        extra_env: Vec<(String, String)>,
+    ) -> Result<launch::Running> {
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        if self.is_running() {
+            return Err(CellError::Invalid("the session is already running".into()));
+        }
+        let mode = match launch::choose_mode(self.rec.mode == CaptureMode::Observe, probe_userns) {
+            Ok(m) => m,
+            Err(e) => {
+                if self.rec.status == SessionState::Preparing {
+                    self.set_status(SessionState::Failed, Some(&e.to_string()))?;
+                }
+                return Err(e);
+            }
+        };
+        let branch = self.rec.current_branch.clone();
+        let workspace = self.rec.workspace.clone();
+        let mut spec = LaunchSpec {
+            mode: mode.clone(),
+            workspace: workspace.clone(),
+            upper: self.dir.upper(&branch),
+            work: self.dir.work(&branch),
+            cgroup_procs: None,
+            write_allow: confine::default_write_allow(&workspace, launch::home_dir().as_deref()),
+            cwd: workspace,
+            command: command.unwrap_or_else(|| self.rec.command.clone()),
+            env: launch::agent_env(&self.rec.id)
+                .into_iter()
+                .chain(extra_env)
+                .collect(),
+        };
+        if mode != LaunchMode::Observe {
+            // A previous run may have left overlay's internal work dir behind.
+            let _ = fs::remove_dir(self.dir.work(&branch).join("work"));
+            mkdirs(&self.dir.work(&branch))?;
+        }
+        self.rec.runs += 1;
+        // The full id: ULIDs created in the same millisecond share their prefix.
+        let unit = format!("wyrd-{}-r{}", self.rec.id, self.rec.runs);
+        // Recording starts before the agent does, so everything the
+        // agent reports lands after this transition in the ledger.
+        let before = self.rec.status;
+        self.set_status(SessionState::Recording, Some("agent starting"))?;
+        let running = match launch::spawn(helper, &mut spec, &self.dir.spec(), &unit) {
+            Ok(r) => r,
+            Err(e) => {
+                let back = if before == SessionState::Preparing {
+                    SessionState::Failed
+                } else {
+                    SessionState::Paused
+                };
+                self.set_status(back, Some(&format!("launch failed: {e}")))?;
+                return Err(e);
+            }
+        };
+        self.rec.pid = Some(running.child.id());
+        self.rec.cgroup = running.cgroup.as_ref().map(|c| c.path().to_path_buf());
+        state::save(&self.dir, &self.rec)?;
+        Ok(running)
+    }
+
     /// Run the agent in the current branch and wait for it to exit. Returns
     /// its exit code. A final checkpoint is taken in Cell mode.
     pub fn run(
         &mut self,
         helper: &Path,
         probe_userns: impl FnOnce() -> std::result::Result<(), String>,
+        opts: RunOptions<'_>,
     ) -> Result<i32> {
-        let mut running = {
-            let _lock = state::lock(&self.dir.lock())?;
-            self.reload()?;
-            if self.is_running() {
-                return Err(CellError::Invalid("the session is already running".into()));
-            }
-            let mode =
-                match launch::choose_mode(self.rec.mode == CaptureMode::Observe, probe_userns) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        if self.rec.status == SessionState::Preparing {
-                            self.set_status(SessionState::Failed, Some(&e.to_string()))?;
-                        }
-                        return Err(e);
-                    }
-                };
-            let branch = self.rec.current_branch.clone();
-            let workspace = self.rec.workspace.clone();
-            let mut spec = LaunchSpec {
-                mode: mode.clone(),
-                workspace: workspace.clone(),
-                upper: self.dir.upper(&branch),
-                work: self.dir.work(&branch),
-                cgroup_procs: None,
-                write_allow: confine::default_write_allow(
-                    &workspace,
-                    launch::home_dir().as_deref(),
-                ),
-                cwd: workspace,
-                command: self.rec.command.clone(),
-                env: launch::agent_env(&self.rec.id),
-            };
-            if mode != LaunchMode::Observe {
-                // A previous run may have left overlay's internal work dir behind.
-                let _ = fs::remove_dir(self.dir.work(&branch).join("work"));
-                mkdirs(&self.dir.work(&branch))?;
-            }
-            self.rec.runs += 1;
-            // The full id: ULIDs created in the same millisecond share their prefix.
-            let unit = format!("wyrd-{}-r{}", self.rec.id, self.rec.runs);
-            let running = launch::spawn(helper, &mut spec, &self.dir.spec(), &unit)?;
-            self.rec.pid = Some(running.child.id());
-            self.rec.cgroup = running.cgroup.as_ref().map(|c| c.path().to_path_buf());
-            state::save(&self.dir, &self.rec)?;
-            self.set_status(SessionState::Recording, Some("agent started"))?;
-            running
-        };
+        let RunOptions {
+            env: extra_env,
+            command,
+            before_final,
+        } = opts;
+        let mut running = self.start(helper, probe_userns, command, extra_env)?;
         let status = running.child.wait().map_err(io_err(&self.rec.workspace))?;
         if let Some(work) = running.root_workdir.as_deref() {
             // Overlay left a root-owned work/work behind; remove it the same way we got root.
@@ -307,6 +361,7 @@ impl Session {
         let code = status
             .code()
             .unwrap_or(128 + std::os::unix::process::ExitStatusExt::signal(&status).unwrap_or(0));
+        let final_call = before_final.and_then(|f| f());
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         if let Some(cg) = &running.cgroup {
@@ -320,7 +375,10 @@ impl Session {
         self.rec.cgroup = None;
         state::save(&self.dir, &self.rec)?;
         if self.rec.mode == CaptureMode::Cell {
-            self.checkpoint_locked(None)?;
+            // Without a call to attribute it to, the exit checkpoint is only
+            // kept when something changed since the last one.
+            let skip_unchanged = final_call.is_none();
+            self.checkpoint_inner(final_call, skip_unchanged)?;
         }
         self.set_status(
             SessionState::Paused,
@@ -337,6 +395,14 @@ impl Session {
     }
 
     fn checkpoint_locked(&mut self, after_call: Option<String>) -> Result<CheckpointRecord> {
+        self.checkpoint_inner(after_call, false)
+    }
+
+    fn checkpoint_inner(
+        &mut self,
+        after_call: Option<String>,
+        skip_unchanged: bool,
+    ) -> Result<CheckpointRecord> {
         if self.rec.mode != CaptureMode::Cell {
             return Err(CellError::Invalid(
                 "observe-mode sessions have no checkpoints".into(),
@@ -365,6 +431,13 @@ impl Session {
         }
         let (manifest, stats) = snap?;
         let hash = self.cas.put_manifest(&manifest)?;
+        if skip_unchanged
+            && let Some(p) = &parent
+            && p.manifest == hash.to_string()
+            && p.branch == branch
+        {
+            return Ok(p.clone());
+        }
         let id = self.rec.next_checkpoint_id();
         let duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         let seq = self.append(vec![EventBody::CheckpointCreated(CheckpointCreated {

@@ -1,0 +1,26 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-tmp-ws/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/tmp/ws",
+  "prompt_id": "49d28fba-e99a-4836-a19c-43485cfa40c5",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/tmp/ws/hello.txt",
+    "content": "hi"
+  },
+  "tool_response": {
+    "type": "create",
+    "filePath": "/tmp/ws/hello.txt",
+    "content": "hi",
+    "structuredPatch": [],
+    "originalFile": null,
+    "userModified": false
+  },
+  "tool_use_id": "toolu_01SsnSwwqQQTW3xh2LFf13ge",
+  "duration_ms": 13
+}

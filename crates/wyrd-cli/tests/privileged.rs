@@ -63,6 +63,30 @@ fn only_session(e: &Env) -> String {
     v[0]["id"].as_str().unwrap().to_string()
 }
 
+/// Poll (with a deadline) until the only session's agent is running.
+fn wait_until_recording(e: &Env) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+            .args(["sessions", "--json"])
+            .env("WYRD_DATA_DIR", &e.data)
+            .output()
+            .unwrap();
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            && v[0]["status"] == "recording"
+            && !v[0]["cgroup"].is_null()
+        {
+            return v[0]["id"].as_str().unwrap().to_string();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the agent never started: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn host_overlays(ws: &Path) -> usize {
     fs::read_to_string("/proc/self/mountinfo")
         .unwrap()
@@ -176,8 +200,7 @@ fn privileged_checkpoint_while_running_freezes_consistently() {
         .env("WYRD_PRIVILEGED_HELPER", "sudo")
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(900));
-    let sid = only_session(&e);
+    let sid = wait_until_recording(&e);
     let cp = wyrd(&e, &["checkpoint", &sid]);
     assert_eq!(cp.status.code(), Some(0));
     assert_eq!(child.wait().unwrap().code(), Some(0));
@@ -208,10 +231,108 @@ fn privileged_stop_kills_the_whole_tree() {
         .env("WYRD_PRIVILEGED_HELPER", "sudo")
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(800));
-    let sid = only_session(&e);
+    let sid = wait_until_recording(&e);
     let stop = wyrd(&e, &["stop", &sid]);
     assert_eq!(String::from_utf8_lossy(&stop.stdout).trim(), "stopped");
     let status = child.wait().unwrap();
     assert!(!status.success(), "the agent was killed");
+}
+
+fn ledger_events(e: &Env, sid: &str) -> Vec<wyrd_schema::EventBody> {
+    let path = e.data.join("sessions").join(sid).join("ledger.wyrdledger");
+    wyrd_ledger::Ledger::open_read_only(path)
+        .unwrap()
+        .events_after(0, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .map(|ev| ev.body)
+        .collect()
+}
+
+#[test]
+fn privileged_every_tool_call_gets_its_own_checkpoint() {
+    use wyrd_schema::EventBody;
+    let e = env();
+    // The Cell may write to /tmp but not to the test's own directory.
+    let scratch = tempfile::tempdir().unwrap();
+    let decision = scratch.path().join("decision.json");
+    let hook = "hook() { printf '%s' \"$1\" | \"$WYRD_BIN\" hook claude-code; }";
+    let pre = |id: &str, tool: &str| {
+        format!(
+            "hook '{{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"{tool}\",\"tool_use_id\":\"{id}\",\"tool_input\":{{}}}}'"
+        )
+    };
+    let post = |id: &str| {
+        format!(
+            "hook '{{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Write\",\"tool_use_id\":\"{id}\",\"tool_response\":{{}}}}'"
+        )
+    };
+    let body = [
+        hook.to_string(),
+        pre("t1", "Write"),
+        "echo one > one.txt".into(),
+        post("t1"),
+        pre("t2", "Write"),
+        "echo two > two.txt && rm b.txt".into(),
+        post("t2"),
+        format!("{} > {}", pre("t3", "Bash"), decision.display()),
+    ]
+    .join("\n");
+    let agent = script(&e, "hooks.sh", &body);
+    let out = wyrd(
+        &e,
+        &[
+            "run",
+            "--agent",
+            "claude-code",
+            "--deny-tool",
+            "Bash",
+            "--",
+            &agent,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let v: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&decision).unwrap()).unwrap();
+    assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
+
+    let sid = only_session(&e);
+    let events = ledger_events(&e, &sid);
+    let checkpoints: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|b| match b {
+            EventBody::CheckpointCreated(c) => Some(c.after_call_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        checkpoints,
+        [Some("t1".into()), Some("t2".into())],
+        "one checkpoint per finished call, none extra at exit"
+    );
+    // Each checkpoint follows its call's finish and precedes the next call.
+    let pos = |pred: &dyn Fn(&EventBody) -> bool| events.iter().position(pred).unwrap();
+    let c1 = pos(
+        &|b| matches!(b, EventBody::CheckpointCreated(c) if c.after_call_id.as_deref() == Some("t1")),
+    );
+    let t2 = pos(&|b| matches!(b, EventBody::ToolCallStarted(c) if c.call_id == "t2"));
+    assert!(c1 < t2);
+    // Rewinding to the first call's checkpoint restores exactly its state.
+    assert_eq!(wyrd(&e, &["rewind", &sid, "c1"]).status.code(), Some(0));
+    let cps = wyrd(&e, &["diff", &sid, "c1", "c2", "--json"]);
+    let changes: serde_json::Value = serde_json::from_slice(&cps.stdout).unwrap();
+    let paths: Vec<&str> = changes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["b.txt", "two.txt"]);
+    let ledger = e.data.join("sessions").join(&sid).join("ledger.wyrdledger");
+    assert_eq!(
+        wyrd(&e, &["verify", ledger.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
 }

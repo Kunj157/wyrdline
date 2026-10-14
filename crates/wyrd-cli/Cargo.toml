@@ -21,9 +21,13 @@ landlock.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+tracing.workspace = true
+wyrd-adapters = { path = "../wyrd-adapters" }
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-doctor = { path = "../wyrd-doctor" }
+wyrd-gateway = { path = "../wyrd-gateway" }
 wyrd-ledger = { path = "../wyrd-ledger" }
+wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
 rustix.workspace = true
