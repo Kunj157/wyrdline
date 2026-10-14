@@ -63,6 +63,30 @@ fn only_session(e: &Env) -> String {
     v[0]["id"].as_str().unwrap().to_string()
 }
 
+/// Poll (with a deadline) until the only session's agent is running.
+fn wait_until_recording(e: &Env) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+            .args(["sessions", "--json"])
+            .env("WYRD_DATA_DIR", &e.data)
+            .output()
+            .unwrap();
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            && v[0]["status"] == "recording"
+            && !v[0]["cgroup"].is_null()
+        {
+            return v[0]["id"].as_str().unwrap().to_string();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the agent never started: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn host_overlays(ws: &Path) -> usize {
     fs::read_to_string("/proc/self/mountinfo")
         .unwrap()
@@ -176,8 +200,7 @@ fn privileged_checkpoint_while_running_freezes_consistently() {
         .env("WYRD_PRIVILEGED_HELPER", "sudo")
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(900));
-    let sid = only_session(&e);
+    let sid = wait_until_recording(&e);
     let cp = wyrd(&e, &["checkpoint", &sid]);
     assert_eq!(cp.status.code(), Some(0));
     assert_eq!(child.wait().unwrap().code(), Some(0));
@@ -208,8 +231,7 @@ fn privileged_stop_kills_the_whole_tree() {
         .env("WYRD_PRIVILEGED_HELPER", "sudo")
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(800));
-    let sid = only_session(&e);
+    let sid = wait_until_recording(&e);
     let stop = wyrd(&e, &["stop", &sid]);
     assert_eq!(String::from_utf8_lossy(&stop.stdout).trim(), "stopped");
     let status = child.wait().unwrap();
