@@ -1,0 +1,43 @@
+/*
+ * "Ink & Verdigris" theme. Values mirror src/tokens.ts (kept in sync by
+ * tokens.test.ts). Tailwind v4 picks up the @theme block; components use
+ * the generated utilities (bg-surface-1, text-text-muted, …) or var(--…).
+ */
+@theme {
+  --color-background: #0e0d0c;
+  --color-surface-1: #151413;
+  --color-surface-2: #1c1a18;
+  --color-surface-3: #252220;
+  --color-surface-glass: rgba(28, 26, 24, 0.74);
+
+  --color-text-primary: #efeae3;
+  --color-text-secondary: #b3aca2;
+  --color-text-muted: #8f897f;
+
+  --color-border: rgba(255, 245, 230, 0.08);
+  --color-border-strong: rgba(255, 245, 230, 0.15);
+
+  --color-accent: #4fd1b5;
+  --color-accent-hover: #6fe0c8;
+  --color-accent-subtle: rgba(79, 209, 181, 0.12);
+  --color-on-accent: #0e0d0c;
+
+  --color-effect: #d9cfbf;
+
+  --color-verdict-divergence: #ff7a4d;
+  --color-verdict-denied: #f05a5a;
+  --color-verdict-irreversible: #e3a83b;
+  --color-verdict-ok: #63c78c;
+  --color-verdict-unknown: #8f897f;
+
+  --radius-sm: 6px;
+  --radius-card: 12px;
+  --radius-lg: 18px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+
+  --font-sans: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+}

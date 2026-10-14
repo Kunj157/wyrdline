@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Supply-chain hardening
+blockExoticSubdeps: true
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade
+# Older releases published before provenance existed; reviewed 2026-10-14.
+trustPolicyExclude:
+  - undici-types@6.21.0
+  - semver@6.3.1

@@ -1,0 +1,10 @@
+{
+  "name": "@wyrdline/schemas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript types generated from the Rust wyrd-schema crate. Do not edit generated files.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
