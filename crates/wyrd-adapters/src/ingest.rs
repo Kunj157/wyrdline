@@ -11,7 +11,8 @@ use wyrd_schema::{
     Role, ToolCallDenied, ToolCallFinished, ToolCallStarted,
 };
 
-use crate::{Adapter, Request, Response};
+use crate::mcp::{McpState, PINNING_POLICY};
+use crate::{Adapter, Direction, Request, Response};
 
 /// Redaction level applied to everything before it reaches the ledger.
 pub const INGEST_LEVEL: Level = Level::Standard;
@@ -84,11 +85,18 @@ pub struct Ingest<S> {
     mode: CaptureMode,
     policy: StaticPolicy,
     turn: Mutex<u32>,
+    mcp: Mutex<McpState>,
 }
 
-fn guard(decision: Decision, policy: &str, reason: String, call_id: Option<String>) -> EventBody {
+fn guard(
+    stage: GuardStage,
+    decision: Decision,
+    policy: &str,
+    reason: String,
+    call_id: Option<String>,
+) -> EventBody {
     EventBody::GuardDecision(GuardDecision {
-        stage: GuardStage::Hook,
+        stage,
         decision,
         policy_id: policy.to_string(),
         policy_version: StaticPolicy::VERSION.to_string(),
@@ -106,6 +114,7 @@ impl<S: Sink> Ingest<S> {
             mode,
             policy,
             turn: Mutex::new(turn),
+            mcp: Mutex::new(McpState::default()),
         }
     }
 
@@ -122,6 +131,82 @@ impl<S: Sink> Ingest<S> {
                     message: format!("unknown adapter {adapter}"),
                 },
             },
+            Request::Mcp {
+                server,
+                direction,
+                message,
+            } => self.mcp(&server, direction, &message),
+        }
+    }
+
+    fn turn(&self) -> u32 {
+        *self
+            .turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A message seen by the MCP gateway. `tools/call` requests are
+    /// answered with a decision; everything else with `Ok`.
+    fn mcp(&self, server: &str, direction: Direction, message: &Value) -> Response {
+        let observed = self
+            .mcp
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .observe(server, direction, message, std::time::Instant::now());
+        let mut bodies = observed.events;
+        for tool in &observed.rug_pulls {
+            bodies.push(EventBody::GuardDecision(GuardDecision {
+                stage: GuardStage::Gateway,
+                decision: Decision::Ask,
+                policy_id: PINNING_POLICY.into(),
+                policy_version: StaticPolicy::VERSION.into(),
+                reason: format!(
+                    "tool {tool} on MCP server {server} changed its description or schema since it was first listed (possible rug pull)"
+                ),
+                call_id: None,
+                subject_seq: None,
+            }));
+        }
+        let Some((call_id, tool, args)) = observed.call else {
+            if let Err(r) = self.append(bodies) {
+                return r;
+            }
+            if let Some(done) = observed.finished {
+                self.sink.after_tool_call(&done);
+            }
+            return Response::Ok;
+        };
+        self.sink.before_tool_call();
+        let turn = self.turn();
+        let (decision, reason) = self.policy.decide(&tool);
+        bodies.push(EventBody::ToolCallStarted(ToolCallStarted {
+            call_id: call_id.clone(),
+            source: IntentSource::Mcp,
+            tool,
+            args,
+            turn: (turn > 0).then_some(turn),
+        }));
+        bodies.push(guard(
+            GuardStage::Gateway,
+            decision,
+            StaticPolicy::ID,
+            reason.clone(),
+            Some(call_id.clone()),
+        ));
+        if decision == Decision::Deny {
+            bodies.push(EventBody::ToolCallDenied(ToolCallDenied {
+                call_id,
+                policy_id: StaticPolicy::ID.into(),
+                reason: reason.clone(),
+            }));
+        }
+        if let Err(r) = self.append(bodies) {
+            return r;
+        }
+        Response::Decision {
+            decision,
+            reason: (decision != Decision::Allow).then_some(reason),
         }
     }
 
@@ -142,7 +227,14 @@ impl<S: Sink> Ingest<S> {
             CaptureMode::Observe => Decision::Allow,
         };
         let reason = format!("malformed {} hook payload: {why}", adapter.name());
-        if let Err(r) = self.append(vec![guard(decision, INGEST_POLICY, reason.clone(), None)]) {
+        let event = guard(
+            GuardStage::Hook,
+            decision,
+            INGEST_POLICY,
+            reason.clone(),
+            None,
+        );
+        if let Err(r) = self.append(vec![event]) {
             return r;
         }
         Response::Decision {
@@ -235,6 +327,7 @@ impl<S: Sink> Ingest<S> {
                 turn: (turn > 0).then_some(turn),
             }),
             guard(
+                GuardStage::Hook,
                 decision,
                 StaticPolicy::ID,
                 reason.clone(),

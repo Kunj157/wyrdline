@@ -255,3 +255,80 @@ pub fn inject_settings(command: &[String], settings_file: &Path) -> Vec<String> 
     }
     out
 }
+
+/// MCP servers the agent would start, merged with its own precedence
+/// (user < project `.mcp.json` < local project entry in the user config).
+pub fn mcp_servers(
+    user_config: Option<&Value>,
+    project_file: Option<&Value>,
+    workspace: &Path,
+) -> serde_json::Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    let local = user_config
+        .and_then(|c| c.get("projects"))
+        .and_then(|p| p.get(workspace.display().to_string()));
+    for source in [user_config, project_file, local].into_iter().flatten() {
+        if let Some(servers) = source.get("mcpServers").and_then(Value::as_object) {
+            for (name, server) in servers {
+                out.insert(name.clone(), server.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Route every stdio server through `wyrd mcp-proxy`. Remote (HTTP/SSE)
+/// servers are kept as they are: the gateway proxies stdio only so far.
+pub fn wrap_mcp_servers(servers: &serde_json::Map<String, Value>, wyrd: &Path) -> Value {
+    let wrapped: serde_json::Map<String, Value> = servers
+        .iter()
+        .map(|(name, server)| {
+            let stdio = server
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("stdio")
+                == "stdio";
+            let Some(command) = server
+                .get("command")
+                .and_then(Value::as_str)
+                .filter(|_| stdio)
+            else {
+                return (name.clone(), server.clone());
+            };
+            let mut args = vec![
+                json!("mcp-proxy"),
+                json!("--server"),
+                json!(name),
+                json!("--"),
+                json!(command),
+            ];
+            args.extend(
+                server
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            let mut w = server.clone();
+            w["type"] = json!("stdio");
+            w["command"] = json!(wyrd.display().to_string());
+            w["args"] = Value::Array(args);
+            (name.clone(), w)
+        })
+        .collect();
+    json!({ "mcpServers": wrapped })
+}
+
+/// Add `--mcp-config <file> --strict-mcp-config` after the program name so
+/// only the wrapped servers are started.
+pub fn inject_mcp_config(command: &[String], config_file: &Path) -> Vec<String> {
+    let mut out = Vec::with_capacity(command.len() + 3);
+    if let Some((prog, rest)) = command.split_first() {
+        out.push(prog.clone());
+        out.push("--mcp-config".into());
+        out.push(config_file.display().to_string());
+        out.push("--strict-mcp-config".into());
+        out.extend(rest.iter().cloned());
+    }
+    out
+}

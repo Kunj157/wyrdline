@@ -202,12 +202,46 @@ pub struct Capture {
     pub env: Vec<(String, String)>,
     /// Command with injected hook settings, when the adapter needs it.
     pub command: Option<Vec<String>>,
+    /// Wrapped MCP config (may hold server environment values); removed
+    /// when the run ends.
+    pub mcp_config: Option<PathBuf>,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.socket);
+        if let Some(f) = &self.mcp_config {
+            let _ = std::fs::remove_file(f);
+        }
     }
+}
+
+fn read_json(path: &Path) -> Option<serde_json::Value> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// The agent's user-level config file (`$CLAUDE_CONFIG_DIR/.claude.json`
+/// or `~/.claude.json`).
+fn agent_user_config() -> PathBuf {
+    match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(d) => PathBuf::from(d).join(".claude.json"),
+        None => wyrd_cell::launch::home_dir()
+            .unwrap_or_default()
+            .join(".claude.json"),
+    }
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut f| f.write_all(bytes))
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 /// Bind the intent socket and start serving it for `session`.
@@ -247,6 +281,7 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         (wyrd_adapters::MODE_ENV.into(), mode.into()),
         (wyrd_adapters::BIN_ENV.into(), wyrd.display().to_string()),
     ];
+    let mut mcp_config = None;
     let command = if rec.agent == claude_code::NAME {
         let file = session.dir().root().join("claude-code-settings.json");
         std::fs::write(
@@ -254,7 +289,22 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
             serde_json::to_vec_pretty(&claude_code::settings(wyrd))?,
         )
         .with_context(|| format!("writing {}", file.display()))?;
-        Some(claude_code::inject_settings(&rec.command, &file))
+        let mut command = claude_code::inject_settings(&rec.command, &file);
+        let servers = claude_code::mcp_servers(
+            read_json(&agent_user_config()).as_ref(),
+            read_json(&rec.workspace.join(".mcp.json")).as_ref(),
+            &rec.workspace,
+        );
+        if !servers.is_empty() {
+            let file = session.dir().root().join("claude-code-mcp.json");
+            write_private(
+                &file,
+                &serde_json::to_vec_pretty(&claude_code::wrap_mcp_servers(&servers, wyrd))?,
+            )?;
+            command = claude_code::inject_mcp_config(&command, &file);
+            mcp_config = Some(file);
+        }
+        Some(command)
     } else {
         None
     };
@@ -263,6 +313,7 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         checkpoints,
         env,
         command,
+        mcp_config,
     })
 }
 

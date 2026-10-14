@@ -79,3 +79,41 @@ one, the exit checkpoint is only kept when something changed.
 `claude-code-settings.json` into the session directory and inserts
 `--settings <file>` after the program name. No user or project file is
 modified; the ledger keeps the command as the user typed it.
+
+## MCP gateway
+
+`wyrd mcp-proxy --server <name> -- <command…>` relays a stdio MCP server
+(newline-delimited JSON-RPC) between the agent and the real server, which
+runs as its child. Every message is reported to the intent socket:
+
+| Message | Ledger events |
+|---|---|
+| request with an id (either direction) | `intent.mcp.request` (method, redacted params) |
+| response | `intent.mcp.response` (error flag, short redacted summary) |
+| `tools/call` | additionally `intent.tool_call.started` (source `mcp`, tool `mcp__<server>__<tool>`, call id `mcp:<server>:<id>`) and `guard.decision` (stage `gateway`); its response adds `intent.tool_call.finished` and schedules a checkpoint |
+| notifications | not recorded |
+
+A denied `tools/call` (`--deny-tool mcp__github__*` — the same names the
+agent's own hooks use) is never forwarded; the agent receives a JSON-RPC
+error with code `-32001` and `data.wyrdline_reason`. In batches, denied
+elements are answered and the rest is forwarded. `ask` is treated as deny
+in the gateway until interactive decisions exist (Phase 9). When the
+socket is unreachable, `tools/call` is denied in Cell mode and forwarded
+in observe mode; other messages always pass. The proxy exits with the
+server's exit code; the server's stderr passes through.
+
+**Tool pinning.** The first `tools/list` result pins each tool's
+description and input schema (BLAKE3). If a later listing differs, a
+`guard.decision` with policy `wyrdline.mcp-pinning` and decision `ask` is
+recorded — a server that swaps a benign description for a malicious one
+after approval ("rug pull") is flagged (divergence rule D009 builds on it).
+
+**Routing the agent's servers.** For Claude Code, `wyrd run` merges the
+MCP servers the agent would start (user config < project `.mcp.json` <
+local project entry), rewrites every stdio server to go through
+`wyrd mcp-proxy`, writes the result to the session directory (mode 0600,
+since server environments can hold credentials; removed after the run),
+and passes it with `--mcp-config <file> --strict-mcp-config`. Remote
+(HTTP/SSE) servers are passed through unproxied for now: the Streamable
+HTTP transport of the gateway needs an HTTP client stack and is deferred
+to Phase 7, where the daemon's HTTP stack lands.

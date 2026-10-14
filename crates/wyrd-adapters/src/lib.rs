@@ -1,7 +1,7 @@
 //! Intent capture.
 //!
 //! Agents run inside the Cell and cannot write the ledger, so their hooks
-//! (and, from the MCP gateway on, every proxied MCP message) talk to a
+//! and the MCP gateway (every proxied JSON-RPC message) talk to a
 //! per-session **intent socket** served by `wyrd run` outside the Cell.
 //! The socket accepts ingest messages only — never commands — and
 //! everything it receives is untrusted: kernel effects (Phase 5) are the
@@ -10,11 +10,12 @@
 pub mod claude_code;
 pub mod hook;
 pub mod ingest;
+pub mod mcp;
 pub mod protocol;
 pub mod server;
 
 pub use ingest::{HookEvent, Ingest, Sink, StaticPolicy};
-pub use protocol::{Request, Response};
+pub use protocol::{Direction, Request, Response};
 
 /// Environment variable carrying the intent socket path into the Cell.
 pub const SOCKET_ENV: &str = "WYRD_INTENT_SOCKET";

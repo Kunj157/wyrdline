@@ -1461,6 +1461,7 @@ dependencies = [
  "wyrd-adapters",
  "wyrd-cell",
  "wyrd-doctor",
+ "wyrd-gateway",
  "wyrd-ledger",
  "wyrd-schema",
 ]
@@ -1472,6 +1473,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "wyrd-gateway"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tracing",
+ "wyrd-adapters",
+ "wyrd-schema",
 ]
 
 [[package]]
