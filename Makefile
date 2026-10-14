@@ -3,39 +3,64 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 CARGO ?= cargo
+PNPM ?= pnpm
 
-.PHONY: help fmt fmt-check lint typecheck test build deny secrets check
+.PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
+	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
+	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
+	schemas schemas-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 
+install: ## Install JavaScript dependencies
+	$(PNPM) install --frozen-lockfile
+
 fmt: ## Format all code
 	$(CARGO) fmt --all
+	$(PNPM) format
 
-fmt-check: ## Fail if formatting would change anything
+fmt-check: fmt-check-rust fmt-check-web ## Fail if formatting would change anything
+fmt-check-rust:
 	$(CARGO) fmt --all -- --check
+fmt-check-web:
+	$(PNPM) format:check
 
-lint: ## Clippy with warnings as errors
+lint: lint-rust lint-web ## Clippy and ESLint with warnings as errors
+lint-rust:
 	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
+lint-web:
+	$(PNPM) lint
 
-typecheck: ## Type-check every target
+typecheck: typecheck-rust typecheck-web ## Type-check every target
+typecheck-rust:
 	$(CARGO) check --workspace --all-targets --locked
+typecheck-web:
+	$(PNPM) typecheck
 
-test: ## Unit and integration tests that need no privileges
+test: test-rust test-web ## Tests that need no privileges
+test-rust:
 	$(CARGO) nextest run --workspace --locked --no-tests=pass
+test-web:
+	$(PNPM) test
 
-build: ## Release build
+build: build-rust build-web ## Release build
+build-rust:
 	$(CARGO) build --workspace --release --locked
+build-web:
+	$(PNPM) build
 
-deny: ## Licences, advisories, bans, sources
+deny: deny-rust deny-web ## Licences, advisories, bans, sources
+deny-rust:
 	$(CARGO) deny check
+deny-web:
+	$(PNPM) audit --prod --audit-level high
 
 secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact
 
 check: fmt-check lint typecheck test deny secrets ## Local gate (subset available so far)
 
-.PHONY: schemas schemas-check
 schemas: ## Regenerate TypeScript types and JSON Schema from wyrd-schema
 	$(CARGO) run --quiet --locked -p wyrd-schema --bin wyrd-gen-schemas -- .
 
