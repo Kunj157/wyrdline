@@ -37,6 +37,8 @@ jobs:
         run: make lint
       - name: Tests
         run: make test
+      - name: Generated schemas are current
+        run: make schemas-check
       - name: Release build
         run: make build
 
