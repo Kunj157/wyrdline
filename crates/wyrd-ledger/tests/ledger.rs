@@ -91,6 +91,21 @@ fn append_assigns_dense_sequence_and_verifies() {
 }
 
 #[test]
+fn two_handles_appending_keep_one_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("two.wyrdledger");
+    let mut a = Ledger::create(&path, "two").unwrap();
+    let mut b = Ledger::open(&path).unwrap();
+    a.append(sample(2)).unwrap();
+    assert_eq!(b.append(sample(3)).unwrap(), 5, "b sees a's events");
+    assert_eq!(a.append(sample(1)).unwrap(), 6, "a sees b's events");
+    a.seal(&key(), 1).unwrap();
+    let v = verify(&path).unwrap();
+    assert!(v.ok(), "{v:?}");
+    assert_eq!(v.events, 6);
+}
+
+#[test]
 fn empty_ledger_verifies() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("e.wyrdledger");

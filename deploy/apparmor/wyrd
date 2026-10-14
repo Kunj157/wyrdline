@@ -1,0 +1,16 @@
+# AppArmor profile that lets the `wyrd` binary create unprivileged user
+# namespaces on distributions that restrict them (Ubuntu 23.10+,
+# kernel.apparmor_restrict_unprivileged_userns = 1). It only grants `userns`;
+# everything else stays unconfined, like the stock profiles Ubuntu ships for
+# browsers and other sandboxing tools.
+#
+# Install: sudo make apparmor-install   (adjust the path if wyrd lives elsewhere)
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile wyrd /usr/local/bin/wyrd flags=(unconfined) {
+  userns,
+
+  include if exists <local/wyrd>
+}
