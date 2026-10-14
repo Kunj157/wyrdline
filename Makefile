@@ -34,3 +34,11 @@ secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact
 
 check: fmt-check lint typecheck test deny secrets ## Local gate (subset available so far)
+
+.PHONY: schemas schemas-check
+schemas: ## Regenerate TypeScript types and JSON Schema from wyrd-schema
+	$(CARGO) run --quiet --locked -p wyrd-schema --bin wyrd-gen-schemas -- .
+
+schemas-check: schemas ## Fail if generated schema files are stale
+	@git add -N packages/schemas docs/schemas >/dev/null 2>&1 || true
+	@git diff --exit-code --stat -- packages/schemas docs/schemas || { echo "Generated schemas are stale: run 'make schemas' and commit."; exit 1; }

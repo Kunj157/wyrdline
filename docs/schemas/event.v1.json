@@ -1,0 +1,1525 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event",
+  "description": "One entry of the session event stream.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "description": "Kind-specific content.",
+      "$ref": "#/$defs/EventBody"
+    },
+    "drops_since_last": {
+      "description": "Ring-buffer drops observed by the sensor since the previous event.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "process": {
+      "description": "Process that caused the event, when there is one.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProcessRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "seq": {
+      "description": "Dense sequence number within the session, starting at 1.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ts_mono_ns": {
+      "description": "`CLOCK_MONOTONIC` nanoseconds (kernel or daemon clock).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ts_wall_ms": {
+      "description": "Wall-clock milliseconds since the Unix epoch, for display only.",
+      "type": "integer",
+      "format": "int64"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "seq",
+    "ts_mono_ns",
+    "ts_wall_ms",
+    "drops_since_last",
+    "body"
+  ],
+  "$defs": {
+    "CallStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error",
+        "denied",
+        "cancelled"
+      ]
+    },
+    "CaptureMode": {
+      "oneOf": [
+        {
+          "description": "Copy-on-write sandbox with checkpoints and rewind.",
+          "type": "string",
+          "const": "cell"
+        },
+        {
+          "description": "Observation only, no sandbox and no rewind.",
+          "type": "string",
+          "const": "observe"
+        }
+      ]
+    },
+    "CheckpointApplied": {
+      "type": "object",
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "files": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_id",
+        "files"
+      ]
+    },
+    "CheckpointCreated": {
+      "type": "object",
+      "properties": {
+        "after_call_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch_id": {
+          "type": "string"
+        },
+        "bytes_added": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "files_changed": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "manifest": {
+          "description": "BLAKE3 of the manifest, `b3:` + hex.",
+          "type": "string"
+        },
+        "parent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_id",
+        "branch_id",
+        "manifest",
+        "files_changed",
+        "bytes_added",
+        "duration_ms"
+      ]
+    },
+    "CheckpointForked": {
+      "type": "object",
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_id",
+        "branch_id",
+        "name"
+      ]
+    },
+    "CheckpointRewound": {
+      "type": "object",
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "irreversible_seqs": {
+          "description": "Effects that could not be undone (escaped the Cell or hit the network).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_id",
+        "branch_id",
+        "irreversible_seqs"
+      ]
+    },
+    "ClaimExtracted": {
+      "type": "object",
+      "properties": {
+        "claim_id": {
+          "type": "string"
+        },
+        "claim_type": {
+          "$ref": "#/$defs/ClaimType"
+        },
+        "extractor": {
+          "$ref": "#/$defs/Extractor"
+        },
+        "quote": {
+          "description": "Verbatim substring of the referenced assistant turn.",
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "turn",
+        "claim_type",
+        "subject",
+        "quote",
+        "extractor"
+      ]
+    },
+    "ClaimType": {
+      "type": "string",
+      "enum": [
+        "tests_pass",
+        "build_ok",
+        "ran_command",
+        "changed_only",
+        "did_not_change",
+        "no_network",
+        "fixed_issue",
+        "other"
+      ]
+    },
+    "Decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny",
+        "ask"
+      ]
+    },
+    "DivergenceRaised": {
+      "type": "object",
+      "properties": {
+        "claim_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence_bp": {
+          "description": "Confidence in basis points (0–10000), integer for deterministic hashing.",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "divergence_id": {
+          "type": "string"
+        },
+        "evidence_seqs": {
+          "description": "Ledger events that prove the divergence.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "rule_id": {
+          "description": "Rule identifier, e.g. `D001`.",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "divergence_id",
+        "rule_id",
+        "severity",
+        "evidence_seqs",
+        "confidence_bp",
+        "summary"
+      ]
+    },
+    "DivergenceStatus": {
+      "type": "string",
+      "enum": [
+        "open",
+        "acknowledged",
+        "false_positive"
+      ]
+    },
+    "DivergenceUpdated": {
+      "type": "object",
+      "properties": {
+        "divergence_id": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/DivergenceStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "divergence_id",
+        "status"
+      ]
+    },
+    "DnsQuery": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "EventBody": {
+      "description": "Every event kind of schema v1, adjacently tagged as\n`{ \"kind\": \"effect.file.write\", \"payload\": { … } }`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "meta.session.started"
+            },
+            "payload": {
+              "$ref": "#/$defs/SessionStarted"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "meta.session.closed"
+            },
+            "payload": {
+              "$ref": "#/$defs/SessionClosed"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "meta.session.state_changed"
+            },
+            "payload": {
+              "$ref": "#/$defs/SessionStateChanged"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "meta.sensor.lost"
+            },
+            "payload": {
+              "$ref": "#/$defs/SensorLost"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "meta.sensor.resumed"
+            },
+            "payload": {
+              "$ref": "#/$defs/SensorResumed"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "intent.tool_call.started"
+            },
+            "payload": {
+              "$ref": "#/$defs/ToolCallStarted"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "intent.tool_call.finished"
+            },
+            "payload": {
+              "$ref": "#/$defs/ToolCallFinished"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "intent.tool_call.denied"
+            },
+            "payload": {
+              "$ref": "#/$defs/ToolCallDenied"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "intent.message"
+            },
+            "payload": {
+              "$ref": "#/$defs/Message"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "intent.mcp.request"
+            },
+            "payload": {
+              "$ref": "#/$defs/McpRequest"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "intent.mcp.response"
+            },
+            "payload": {
+              "$ref": "#/$defs/McpResponse"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.proc.exec"
+            },
+            "payload": {
+              "$ref": "#/$defs/ProcExec"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.proc.fork"
+            },
+            "payload": {
+              "$ref": "#/$defs/ProcFork"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.proc.exit"
+            },
+            "payload": {
+              "$ref": "#/$defs/ProcExit"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.open_write"
+            },
+            "payload": {
+              "$ref": "#/$defs/FileOpenWrite"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.write"
+            },
+            "payload": {
+              "$ref": "#/$defs/FileWrite"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.rename"
+            },
+            "payload": {
+              "$ref": "#/$defs/FileRename"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.unlink"
+            },
+            "payload": {
+              "$ref": "#/$defs/FileUnlink"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.mkdir"
+            },
+            "payload": {
+              "$ref": "#/$defs/FilePath"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.chmod"
+            },
+            "payload": {
+              "$ref": "#/$defs/FileChmod"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.truncate"
+            },
+            "payload": {
+              "$ref": "#/$defs/FileTruncate"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.file.read_sensitive"
+            },
+            "payload": {
+              "$ref": "#/$defs/FilePath"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.net.connect"
+            },
+            "payload": {
+              "$ref": "#/$defs/NetConnect"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effect.net.dns_query"
+            },
+            "payload": {
+              "$ref": "#/$defs/DnsQuery"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state.checkpoint.created"
+            },
+            "payload": {
+              "$ref": "#/$defs/CheckpointCreated"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state.checkpoint.rewound"
+            },
+            "payload": {
+              "$ref": "#/$defs/CheckpointRewound"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state.checkpoint.forked"
+            },
+            "payload": {
+              "$ref": "#/$defs/CheckpointForked"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state.checkpoint.applied"
+            },
+            "payload": {
+              "$ref": "#/$defs/CheckpointApplied"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "guard.decision"
+            },
+            "payload": {
+              "$ref": "#/$defs/GuardDecision"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "verdict.claim.extracted"
+            },
+            "payload": {
+              "$ref": "#/$defs/ClaimExtracted"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "verdict.divergence.raised"
+            },
+            "payload": {
+              "$ref": "#/$defs/DivergenceRaised"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "verdict.divergence.updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/DivergenceUpdated"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        }
+      ]
+    },
+    "Extractor": {
+      "type": "string",
+      "enum": [
+        "rule",
+        "llm"
+      ]
+    },
+    "FileChmod": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/FilePath"
+        },
+        "mode": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "mode"
+      ]
+    },
+    "FileOpenWrite": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/FilePath"
+        },
+        "flags": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "flags"
+      ]
+    },
+    "FilePath": {
+      "description": "A path as observed in the kernel.",
+      "type": "object",
+      "properties": {
+        "in_cell": {
+          "description": "True when the path is inside the session's Cell (rewindable).",
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "truncated": {
+          "description": "True when path resolution hit its component limit.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "in_cell",
+        "truncated"
+      ]
+    },
+    "FileRename": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/FilePath"
+        },
+        "to": {
+          "$ref": "#/$defs/FilePath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "FileTruncate": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/FilePath"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "size"
+      ]
+    },
+    "FileUnlink": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/FilePath"
+        },
+        "is_dir": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "is_dir"
+      ]
+    },
+    "FileWrite": {
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "description": "Bytes written, aggregated per file descriptor per window.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "file": {
+          "$ref": "#/$defs/FilePath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "bytes"
+      ]
+    },
+    "GuardDecision": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/GuardStage"
+        },
+        "subject_seq": {
+          "description": "Effect event the decision refers to, when it is effect-time.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "decision",
+        "policy_id",
+        "policy_version",
+        "reason"
+      ]
+    },
+    "GuardStage": {
+      "type": "string",
+      "enum": [
+        "hook",
+        "gateway",
+        "kernel",
+        "effect"
+      ]
+    },
+    "IntentSource": {
+      "type": "string",
+      "enum": [
+        "hook",
+        "mcp",
+        "otlp"
+      ]
+    },
+    "McpRequest": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "params": {
+          "description": "Redacted params."
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "server",
+        "request_id",
+        "method",
+        "params"
+      ]
+    },
+    "McpResponse": {
+      "type": "object",
+      "properties": {
+        "is_error": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "result_summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "server",
+        "request_id",
+        "is_error"
+      ]
+    },
+    "Message": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "text": {
+          "description": "Redacted message text.",
+          "type": "string"
+        },
+        "turn": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "turn",
+        "text"
+      ]
+    },
+    "NetConnect": {
+      "type": "object",
+      "properties": {
+        "addr": {
+          "type": "string"
+        },
+        "dns_name": {
+          "description": "Most recent DNS name that resolved to `addr` in this session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "family": {
+          "description": "`4` or `6`.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "port": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "verdict": {
+          "$ref": "#/$defs/NetVerdict"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "addr",
+        "port",
+        "verdict"
+      ]
+    },
+    "NetVerdict": {
+      "type": "string",
+      "enum": [
+        "allowed",
+        "denied"
+      ]
+    },
+    "ProcExec": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "description": "First arguments, each possibly truncated (see `truncated`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "filename": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "argv",
+        "truncated"
+      ]
+    },
+    "ProcExit": {
+      "type": "object",
+      "properties": {
+        "exit_code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "signal": {
+          "description": "Terminating signal, if the process was killed.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exit_code"
+      ]
+    },
+    "ProcFork": {
+      "type": "object",
+      "properties": {
+        "child_pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "child_start_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "child_pid",
+        "child_start_ns"
+      ]
+    },
+    "ProcessRef": {
+      "description": "Identity of a process, robust against PID reuse.",
+      "type": "object",
+      "properties": {
+        "cgroup_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "ppid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start_ns": {
+          "description": "Process start time in monotonic nanoseconds; `(pid, start_ns)` is unique.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "tid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pid",
+        "tid",
+        "ppid",
+        "start_ns",
+        "cgroup_id"
+      ]
+    },
+    "Role": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant"
+      ]
+    },
+    "SensorLost": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ]
+    },
+    "SensorResumed": {
+      "type": "object",
+      "properties": {
+        "dropped": {
+          "description": "Events known to be lost while the sensor was unavailable.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dropped"
+      ]
+    },
+    "SessionClosed": {
+      "type": "object",
+      "properties": {
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ]
+    },
+    "SessionStarted": {
+      "type": "object",
+      "properties": {
+        "agent_kind": {
+          "description": "Adapter name, e.g. `claude-code`, `codex`, `gemini-cli`, `mcp`, `fakeagent`.",
+          "type": "string"
+        },
+        "agent_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capabilities": {
+          "description": "Capability name → available, as reported by `wyrd doctor`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "command": {
+          "description": "Redacted agent command line.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kernel_release": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/CaptureMode"
+        },
+        "policy_set_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "workspace_root": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "agent_kind",
+        "command",
+        "workspace_root",
+        "mode",
+        "kernel_release",
+        "capabilities"
+      ]
+    },
+    "SessionState": {
+      "type": "string",
+      "enum": [
+        "preparing",
+        "recording",
+        "paused",
+        "rewinding",
+        "degraded",
+        "closing",
+        "closed",
+        "failed"
+      ]
+    },
+    "SessionStateChanged": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "$ref": "#/$defs/SessionState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "Severity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "ToolCallDenied": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "call_id",
+        "policy_id",
+        "reason"
+      ]
+    },
+    "ToolCallFinished": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "status": {
+          "$ref": "#/$defs/CallStatus"
+        },
+        "summary": {
+          "description": "Short redacted summary of the result.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "call_id",
+        "status",
+        "duration_ms"
+      ]
+    },
+    "ToolCallStarted": {
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Redacted tool arguments."
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/IntentSource"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turn": {
+          "description": "Transcript turn that issued the call, when known.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "call_id",
+        "source",
+        "tool",
+        "args"
+      ]
+    }
+  }
+}
