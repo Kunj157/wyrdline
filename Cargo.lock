@@ -1381,6 +1381,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wyrd-adapters"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "wyrd-bundle",
+ "wyrd-schema",
+]
+
+[[package]]
 name = "wyrd-bundle"
 version = "0.0.0"
 dependencies = [
