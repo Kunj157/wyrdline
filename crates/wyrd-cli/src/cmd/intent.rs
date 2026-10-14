@@ -306,6 +306,16 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         }
         Some(command)
     } else {
+        if matches!(
+            rec.agent.as_str(),
+            wyrd_adapters::CODEX | wyrd_adapters::gemini_cli::NAME
+        ) {
+            eprintln!(
+                "wyrd: hooks are not injected automatically for {}; register `wyrd hook {}` \
+                 in its hook configuration (docs/architecture/adapters.md)",
+                rec.agent, rec.agent
+            );
+        }
         None
     };
     Ok(Capture {
@@ -326,6 +336,8 @@ pub fn detect_agent(command: &[String]) -> String {
         .unwrap_or_default();
     match prog.as_str() {
         "claude" => claude_code::NAME.into(),
+        "codex" => wyrd_adapters::CODEX.into(),
+        "gemini" => wyrd_adapters::gemini_cli::NAME.into(),
         "wyrd-fakeagent" => "fakeagent".into(),
         _ => "generic".into(),
     }

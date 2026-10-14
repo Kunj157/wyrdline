@@ -48,7 +48,7 @@ pub fn mode_from_env(value: Option<&str>) -> CaptureMode {
 /// Add the turn's assistant texts from the transcript the agent itself
 /// names in a `Stop` payload. Runs inside the Cell, as the agent.
 fn enrich(adapter: Adapter, payload: &mut Value) {
-    if adapter != Adapter::ClaudeCode
+    if !matches!(adapter, Adapter::ClaudeCode | Adapter::Codex)
         || !matches!(claude_code::event_name(payload), "Stop" | "SubagentStop")
     {
         return;
