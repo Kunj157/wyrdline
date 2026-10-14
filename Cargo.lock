@@ -1457,6 +1457,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tracing",
+ "wyrd-adapters",
  "wyrd-cell",
  "wyrd-doctor",
  "wyrd-ledger",
