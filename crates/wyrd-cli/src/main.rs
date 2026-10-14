@@ -51,6 +51,8 @@ enum Command {
     Close(cmd::session::SessionArg),
     /// Forward an agent hook payload (stdin) to the running session.
     Hook(cmd::hook::Args),
+    /// Proxy a stdio MCP server, recording and checking its traffic.
+    McpProxy(cmd::mcp_proxy::Args),
     /// Internal: stage two of a Cell launch.
     #[command(name = "__cell-exec", hide = true)]
     CellExec { spec: std::path::PathBuf },
@@ -82,6 +84,7 @@ fn main() -> ExitCode {
         Command::Stop(a) => cmd::session::stop(&a),
         Command::Close(a) => cmd::session::close(&a),
         Command::Hook(a) => cmd::hook::run(&a),
+        Command::McpProxy(a) => cmd::mcp_proxy::run(&a),
         Command::CellExec { spec } => cmd::session::cell_exec(&spec),
         Command::CellCleanup { work } => wyrd_cell::exec::cleanup_workdir(&work)
             .map(|()| exit::OK)
