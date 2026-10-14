@@ -1,20 +1,20 @@
 {
- "session_id": "00000000-0000-4000-8000-000000000001",
- "transcript_path": "/home/user/.claude/projects/-tmp-ws/00000000-0000-4000-8000-000000000001.jsonl",
- "cwd": "/tmp/ws",
- "prompt_id": "49d28fba-e99a-4836-a19c-43485cfa40c5",
- "permission_mode": "default",
- "effort": {
-  "level": "medium"
- },
- "hook_event_name": "PostToolUseFailure",
- "tool_name": "Bash",
- "tool_input": {
-  "command": "false",
-  "description": "Run false command (exits with status 1)"
- },
- "tool_use_id": "toolu_0114MmKZQ7iX5jM82apPB444",
- "error": "Exit code 1",
- "is_interrupt": false,
- "duration_ms": 9
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-tmp-ws/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/tmp/ws",
+  "prompt_id": "49d28fba-e99a-4836-a19c-43485cfa40c5",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "false",
+    "description": "Run false command (exits with status 1)"
+  },
+  "tool_use_id": "toolu_0114MmKZQ7iX5jM82apPB444",
+  "error": "Exit code 1",
+  "is_interrupt": false,
+  "duration_ms": 9
 }
