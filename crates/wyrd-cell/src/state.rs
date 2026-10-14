@@ -46,6 +46,16 @@ pub struct SessionRecord {
     pub cgroup: Option<PathBuf>,
     pub pid: Option<u32>,
     pub runs: u32,
+    /// Agent adapter (`claude-code`, `codex`, `gemini-cli`, `fakeagent`, `generic`).
+    #[serde(default = "generic_agent")]
+    pub agent: String,
+    /// Tools the static pre-execution policy denies (Phase 4; Wasm policies replace it).
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+}
+
+fn generic_agent() -> String {
+    "generic".into()
 }
 
 impl SessionRecord {
