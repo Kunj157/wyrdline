@@ -20,9 +20,12 @@ landlock.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 wyrd-doctor = { path = "../wyrd-doctor" }
+wyrd-ledger = { path = "../wyrd-ledger" }
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true
+wyrd-schema = { path = "../wyrd-schema" }
 
 [lints]
 workspace = true

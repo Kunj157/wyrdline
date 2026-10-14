@@ -13,18 +13,26 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1.0.104"
+blake3 = "1.8.7"
 ciborium = "0.2.2"
+ed25519-dalek = "3.0.0"
+fastcdc = "5.0.0"
+getrandom = "0.4.3"
+hex = "0.4.3"
 landlock = "0.4.7"
 proptest = "1.12.0"
 schemars = "1.2.3"
 clap = { version = "4.6.7", features = ["derive"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustix = { version = "1.1.5", features = ["process", "fs"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_bytes = "0.11.19"
 serde_json = "1.0.154"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal", "fs", "process"] }
 tracing = "0.1.44"
+zstd = "0.14.2"
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 

@@ -8,7 +8,7 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check
+	schemas schemas-check test-perf
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -55,6 +55,10 @@ deny-rust:
 	$(CARGO) deny check
 deny-web:
 	$(PNPM) audit --prod --audit-level high
+
+test-perf: ## Throughput and overhead benchmarks (release build, cleaned afterwards)
+	$(CARGO) nextest run --workspace --release --locked --run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture
+	$(CARGO) clean --release
 
 secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact
