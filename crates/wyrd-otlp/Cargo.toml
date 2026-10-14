@@ -1,0 +1,18 @@
+[package]
+name = "wyrd-otlp"
+description = "Maps OpenTelemetry GenAI spans (OTLP/HTTP JSON) to intent events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wyrd-bundle = { path = "../wyrd-bundle" }
+wyrd-schema = { path = "../wyrd-schema" }
+
+[lints]
+workspace = true
