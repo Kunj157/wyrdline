@@ -179,3 +179,46 @@ fn settings_register_every_hook_and_injection_keeps_arguments() {
         ["claude", "--settings", "/s.json", "-p", "hi"]
     );
 }
+
+#[test]
+fn mcp_servers_merge_with_agent_precedence_and_stdio_ones_are_wrapped() {
+    use wyrd_adapters::claude_code::{inject_mcp_config, mcp_servers, wrap_mcp_servers};
+    let ws = std::path::Path::new("/w/shop");
+    let user = json!({
+        "mcpServers": {"fs": {"command": "user-fs"}, "web": {"type": "http", "url": "https://x"}},
+        "projects": {"/w/shop": {"mcpServers": {"db": {"command": "local-db", "args": ["--ro"]}}}}
+    });
+    let project = json!({"mcpServers": {"fs": {"command": "npx", "args": ["fs-server", "."], "env": {"A": "1"}}}});
+    let merged = mcp_servers(Some(&user), Some(&project), ws);
+    assert_eq!(merged["fs"]["command"], "npx", "project beats user");
+    assert_eq!(merged.len(), 3);
+    let wrapped = wrap_mcp_servers(&merged, std::path::Path::new("/opt/wyrd"));
+    let fs = &wrapped["mcpServers"]["fs"];
+    assert_eq!(fs["command"], "/opt/wyrd");
+    assert_eq!(
+        fs["args"],
+        json!(["mcp-proxy", "--server", "fs", "--", "npx", "fs-server", "."])
+    );
+    assert_eq!(fs["env"]["A"], "1");
+    assert_eq!(
+        wrapped["mcpServers"]["db"]["args"],
+        json!(["mcp-proxy", "--server", "db", "--", "local-db", "--ro"])
+    );
+    assert_eq!(
+        wrapped["mcpServers"]["web"],
+        json!({"type": "http", "url": "https://x"}),
+        "remote servers unchanged"
+    );
+    let cmd: Vec<String> = ["claude", "-p", "x"].map(String::from).to_vec();
+    assert_eq!(
+        inject_mcp_config(&cmd, std::path::Path::new("/m.json")),
+        [
+            "claude",
+            "--mcp-config",
+            "/m.json",
+            "--strict-mcp-config",
+            "-p",
+            "x"
+        ]
+    );
+}

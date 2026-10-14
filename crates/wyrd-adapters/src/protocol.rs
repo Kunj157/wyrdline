@@ -21,7 +21,23 @@ pub enum Request {
         adapter: String,
         payload: serde_json::Value,
     },
+    /// A JSON-RPC message seen by the MCP gateway for `server`.
+    Mcp {
+        server: String,
+        direction: Direction,
+        message: serde_json::Value,
+    },
     Ping,
+}
+
+/// Which way an MCP message travelled through the gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    /// Agent (client) → server.
+    ToServer,
+    /// Server → agent (client).
+    ToClient,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
