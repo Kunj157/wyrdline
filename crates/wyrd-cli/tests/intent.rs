@@ -417,3 +417,40 @@ fn project_mcp_servers_are_routed_through_the_gateway() {
         "the wrapped config is removed after the run"
     );
 }
+
+#[test]
+fn codex_and_gemini_are_labelled_but_not_injected() {
+    for (prog, adapter) in [("codex", "codex"), ("gemini", "gemini-cli")] {
+        let e = env();
+        let bin = e.tmp.path().join(prog);
+        let args_file = e.tmp.path().join("args.txt");
+        fs::write(
+            &bin,
+            format!("#!/bin/sh\necho \"$@\" > {}\n", args_file.display()),
+        )
+        .unwrap();
+        Command::new("chmod").arg("+x").arg(&bin).status().unwrap();
+        let out = wyrd(
+            &e,
+            &[
+                "run",
+                "--observe",
+                "--",
+                bin.to_str().unwrap(),
+                "exec",
+                "hi",
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(
+            fs::read_to_string(&args_file).unwrap().trim(),
+            "exec hi",
+            "{prog}: command untouched"
+        );
+        assert!(String::from_utf8_lossy(&out.stderr).contains(&format!("wyrd hook {adapter}")));
+        let EventBody::SessionStarted(s) = &session_events(&e)[0] else {
+            panic!()
+        };
+        assert_eq!(s.agent_kind, adapter);
+    }
+}

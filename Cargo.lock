@@ -1550,6 +1550,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wyrd-otlp"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "wyrd-bundle",
+ "wyrd-schema",
+]
+
+[[package]]
 name = "wyrd-schema"
 version = "0.0.0"
 dependencies = [

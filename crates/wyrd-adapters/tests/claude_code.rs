@@ -222,3 +222,33 @@ fn mcp_servers_merge_with_agent_precedence_and_stdio_ones_are_wrapped() {
         ]
     );
 }
+
+#[test]
+fn schema_drift_in_recorded_payloads_fails_loudly() {
+    // Remove or rename each field the mapping relies on: parsing must fail
+    // (and ingest then records a malformed payload) instead of inventing values.
+    for (_, v) in common::fixtures() {
+        let event = v["hook_event_name"].as_str().unwrap().to_string();
+        let needed: &[&str] = match event.as_str() {
+            "PreToolUse" => &["tool_name", "tool_input"],
+            "PostToolUse" | "PostToolUseFailure" => &["tool_name"],
+            _ => &[],
+        };
+        for field in needed {
+            let mut drifted = v.clone();
+            let value = drifted.as_object_mut().unwrap().remove(*field).unwrap();
+            drifted[format!("{field}_v2")] = value;
+            let err = parse(&drifted).unwrap_err();
+            assert!(err.contains(field), "{event}: {err}");
+        }
+    }
+}
+
+#[test]
+fn committed_settings_template_matches_the_generated_settings() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../integrations/claude-code/settings.json");
+    let committed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(committed, settings(std::path::Path::new("wyrd")));
+}
