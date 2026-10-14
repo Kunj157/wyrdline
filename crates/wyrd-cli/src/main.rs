@@ -11,6 +11,7 @@ pub mod exit {
     pub const OK: u8 = 0;
     pub const USAGE: u8 = 1;
     pub const CAPABILITY_MISSING: u8 = 2;
+    pub const VERIFICATION_FAILED: u8 = 3;
 }
 
 /// Causal flight recorder and rewind engine for AI coding agents.
@@ -25,6 +26,8 @@ struct Cli {
 enum Command {
     /// Report which kernel capabilities Wyrdline can use on this machine.
     Doctor(cmd::doctor::Args),
+    /// Verify a session ledger's hash chain and seal signature.
+    Verify(cmd::verify::Args),
     /// Internal: print the Landlock ABI version (runs in a throwaway child).
     #[command(name = "__probe-landlock", hide = true)]
     ProbeLandlock,
@@ -34,6 +37,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Doctor(args) => cmd::doctor::run(&args),
+        Command::Verify(args) => cmd::verify::run(&args),
         Command::ProbeLandlock => cmd::doctor::probe_landlock(),
     };
     match result {
