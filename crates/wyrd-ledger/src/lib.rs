@@ -113,6 +113,9 @@ fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    // Several processes may append to one session (the running Cell and
+    // `wyrd checkpoint`); wait for the write lock instead of failing.
+    conn.busy_timeout(std::time::Duration::from_secs(10))?;
     // Larger cache and fewer WAL checkpoints keep batched ingest fast.
     conn.pragma_update(None, "cache_size", -32_768)?;
     conn.pragma_update(None, "wal_autocheckpoint", 10_000)?;
@@ -186,21 +189,7 @@ impl Ledger {
             ));
         }
         let session_id = meta("session_id")?.unwrap_or_default();
-        let head: Option<(i64, Vec<u8>)> = conn
-            .query_row(
-                "SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        let (head_seq, head_hash) = match head {
-            Some((seq, hash)) => (
-                u64::try_from(seq).map_err(|_| LedgerError::Format("negative seq".into()))?,
-                chain::hash_from_slice(&hash)
-                    .ok_or_else(|| LedgerError::Format("bad hash length".into()))?,
-            ),
-            None => (0, GENESIS),
-        };
+        let (head_seq, head_hash) = read_head(&conn)?;
         let sealed: bool =
             conn.query_row("SELECT EXISTS (SELECT 1 FROM seal)", [], |r| r.get(0))?;
         Ok(Ledger {
@@ -236,9 +225,12 @@ impl Ledger {
         if self.sealed {
             return Err(LedgerError::Sealed);
         }
-        let tx = self.conn.transaction()?;
-        let mut seq = self.head_seq;
-        let mut prev = self.head_hash;
+        // IMMEDIATE takes the write lock up front; the head is then re-read so
+        // another process appending to the same ledger cannot fork the chain.
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let (mut seq, mut prev) = read_head(&tx)?;
         {
             let mut insert = tx.prepare_cached(
                 "INSERT INTO events (seq, kind, plane, ts_mono_ns, pid, event_cbor, prev_hash, hash)
@@ -274,6 +266,9 @@ impl Ledger {
         if self.sealed {
             return Err(LedgerError::Sealed);
         }
+        let (head_seq, head_hash) = read_head(&self.conn)?;
+        self.head_seq = head_seq;
+        self.head_hash = head_hash;
         let msg = seal_message(&self.session_id, self.head_seq, &self.head_hash);
         let seal = Seal {
             head_seq: self.head_seq,
@@ -356,6 +351,24 @@ impl Ledger {
     pub fn conn(&self) -> &Connection {
         &self.conn
     }
+}
+
+fn read_head(conn: &Connection) -> Result<(u64, Hash)> {
+    let head: Option<(i64, Vec<u8>)> = conn
+        .query_row(
+            "SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match head {
+        Some((seq, hash)) => (
+            u64::try_from(seq).map_err(|_| LedgerError::Format("negative seq".into()))?,
+            chain::hash_from_slice(&hash)
+                .ok_or_else(|| LedgerError::Format("bad hash length".into()))?,
+        ),
+        None => (0, GENESIS),
+    })
 }
 
 /// SQLite stores INTEGER as i64; sequence numbers and timestamps fit, and

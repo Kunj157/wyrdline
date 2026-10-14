@@ -12,6 +12,7 @@ pub mod exit {
     pub const USAGE: u8 = 1;
     pub const CAPABILITY_MISSING: u8 = 2;
     pub const VERIFICATION_FAILED: u8 = 3;
+    pub const CONFLICT: u8 = 4;
 }
 
 /// Causal flight recorder and rewind engine for AI coding agents.
@@ -28,6 +29,35 @@ enum Command {
     Doctor(cmd::doctor::Args),
     /// Verify a session ledger's hash chain and seal signature.
     Verify(cmd::verify::Args),
+    /// Run an agent inside a Cell and record the session.
+    Run(cmd::session::RunArgs),
+    /// List recorded sessions.
+    Sessions(cmd::session::ListArgs),
+    /// Checkpoint the current branch of a session.
+    Checkpoint(cmd::session::SessionArg),
+    /// List a session's checkpoints and branches.
+    Checkpoints(cmd::session::ListCheckpointsArgs),
+    /// Rewind a session to a checkpoint (creates a new branch).
+    Rewind(cmd::session::RewindArgs),
+    /// Fork a named branch from a checkpoint.
+    Fork(cmd::session::ForkArgs),
+    /// Show changes between two checkpoints or branches.
+    Diff(cmd::session::DiffArgs),
+    /// Apply a checkpoint or branch to the real workspace.
+    Apply(cmd::session::ApplyArgs),
+    /// Stop a running session's agent.
+    Stop(cmd::session::SessionArg),
+    /// Close a session and seal its ledger.
+    Close(cmd::session::SessionArg),
+    /// Internal: stage two of a Cell launch.
+    #[command(name = "__cell-exec", hide = true)]
+    CellExec { spec: std::path::PathBuf },
+    /// Internal: remove overlay's root-owned work directory (runs as root).
+    #[command(name = "__cell-cleanup", hide = true)]
+    CellCleanup { work: std::path::PathBuf },
+    /// Internal: check whether a user namespace can be created.
+    #[command(name = "__probe-userns", hide = true)]
+    ProbeUserns,
     /// Internal: print the Landlock ABI version (runs in a throwaway child).
     #[command(name = "__probe-landlock", hide = true)]
     ProbeLandlock,
@@ -39,6 +69,24 @@ fn main() -> ExitCode {
         Command::Doctor(args) => cmd::doctor::run(&args),
         Command::Verify(args) => cmd::verify::run(&args),
         Command::ProbeLandlock => cmd::doctor::probe_landlock(),
+        Command::Run(a) => cmd::session::run(&a),
+        Command::Sessions(a) => cmd::session::list(&a),
+        Command::Checkpoint(a) => cmd::session::checkpoint(&a),
+        Command::Checkpoints(a) => cmd::session::checkpoints(&a),
+        Command::Rewind(a) => cmd::session::rewind(&a),
+        Command::Fork(a) => cmd::session::fork(&a),
+        Command::Diff(a) => cmd::session::diff(&a),
+        Command::Apply(a) => cmd::session::apply(&a),
+        Command::Stop(a) => cmd::session::stop(&a),
+        Command::Close(a) => cmd::session::close(&a),
+        Command::CellExec { spec } => cmd::session::cell_exec(&spec),
+        Command::CellCleanup { work } => wyrd_cell::exec::cleanup_workdir(&work)
+            .map(|()| exit::OK)
+            .map_err(Into::into),
+        Command::ProbeUserns => Ok(match wyrd_cell::launch::probe_userns_in_process() {
+            Ok(()) => exit::OK,
+            Err(_) => exit::CAPABILITY_MISSING,
+        }),
     };
     match result {
         Ok(code) => ExitCode::from(code),

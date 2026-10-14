@@ -8,7 +8,7 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check test-perf
+	schemas schemas-check test-perf test-integration apparmor-install
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -59,6 +59,14 @@ deny-web:
 test-perf: ## Throughput and overhead benchmarks (release build, cleaned afterwards)
 	$(CARGO) nextest run --workspace --release --locked --run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture
 	$(CARGO) clean --release
+
+test-integration: ## Privileged Cell tests (stage two runs through passwordless sudo)
+	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features privileged-tests -E 'test(/^privileged_/)'
+
+WYRD_BIN ?= /usr/local/bin/wyrd
+apparmor-install: ## Install the AppArmor profile that allows user namespaces for $(WYRD_BIN) (needs sudo)
+	sed 's#/usr/local/bin/wyrd#$(WYRD_BIN)#' deploy/apparmor/wyrd | sudo tee /etc/apparmor.d/wyrd >/dev/null
+	sudo apparmor_parser -r /etc/apparmor.d/wyrd
 
 secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact
