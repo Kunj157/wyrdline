@@ -95,8 +95,30 @@ fn failed(payload: &Value) -> bool {
         || resp.get("interrupted").and_then(Value::as_bool) == Some(true)
 }
 
+/// A field the mapping depends on. Its absence means the agent's hook
+/// format drifted: the payload is rejected (and recorded as malformed)
+/// rather than silently recorded with placeholders.
+fn required<'a>(payload: &'a Value, key: &str) -> Result<&'a Value, String> {
+    payload.get(key).ok_or_else(|| {
+        format!(
+            "{} payload lacks required field {key} (hook format changed?)",
+            event_name(payload)
+        )
+    })
+}
+
+fn required_str<'a>(payload: &'a Value, key: &str) -> Result<&'a str, String> {
+    required(payload, key)?.as_str().ok_or_else(|| {
+        format!(
+            "{} payload field {key} is not a string",
+            event_name(payload)
+        )
+    })
+}
+
 /// Translate one hook payload. Unknown events are ignored; a payload
-/// without an event name is malformed.
+/// without an event name, or without a field the mapping needs, is
+/// malformed.
 pub fn parse(payload: &Value) -> Result<HookEvent, String> {
     if !payload.is_object() {
         return Err("hook payload is not a JSON object".into());
@@ -108,12 +130,11 @@ pub fn parse(payload: &Value) -> Result<HookEvent, String> {
         },
         "PreToolUse" => HookEvent::PreTool {
             call_id: call_id(payload),
-            tool: str_field(payload, "tool_name")
-                .unwrap_or("unknown")
-                .to_string(),
-            args: payload.get("tool_input").cloned().unwrap_or(Value::Null),
+            tool: required_str(payload, "tool_name")?.to_string(),
+            args: required(payload, "tool_input")?.clone(),
         },
         "PostToolUse" | "PostToolUseFailure" => {
+            required_str(payload, "tool_name")?;
             let code = exit_code(payload);
             let status = if failed(payload) || code.is_some_and(|c| c != 0) {
                 if payload.get("is_interrupt").and_then(Value::as_bool) == Some(true) {

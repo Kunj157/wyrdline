@@ -50,7 +50,7 @@ pub fn parse(payload: &Value) -> Result<HookEvent, String> {
             tool: payload
                 .get("tool_name")
                 .and_then(Value::as_str)
-                .unwrap_or("unknown")
+                .ok_or("BeforeTool payload lacks tool_name (hook format changed?)")?
                 .to_string(),
             args: payload.get("tool_input").cloned().unwrap_or(Value::Null),
         },
