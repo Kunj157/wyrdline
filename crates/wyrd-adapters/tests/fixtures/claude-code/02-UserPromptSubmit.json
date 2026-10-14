@@ -1,0 +1,9 @@
+{
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "transcript_path": "/home/user/.claude/projects/-tmp-ws/00000000-0000-4000-8000-000000000001.jsonl",
+ "cwd": "/tmp/ws",
+ "prompt_id": "49d28fba-e99a-4836-a19c-43485cfa40c5",
+ "permission_mode": "default",
+ "hook_event_name": "UserPromptSubmit",
+ "prompt": "Run the shell command 'ls' then run 'false', then write a file hello.txt containing 'hi', then reply with 'Done.'"
+}
