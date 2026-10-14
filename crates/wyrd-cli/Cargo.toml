@@ -14,7 +14,15 @@ name = "wyrd"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 clap.workspace = true
+landlock.workspace = true
+rustix.workspace = true
+serde_json.workspace = true
+wyrd-doctor = { path = "../wyrd-doctor" }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
