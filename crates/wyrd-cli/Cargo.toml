@@ -16,16 +16,24 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+hex.workspace = true
 landlock.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+wyrd-cell = { path = "../wyrd-cell" }
 wyrd-doctor = { path = "../wyrd-doctor" }
 wyrd-ledger = { path = "../wyrd-ledger" }
 
 [dev-dependencies]
+rustix.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 wyrd-schema = { path = "../wyrd-schema" }
+
+[features]
+# Tests that need passwordless sudo and the kernel features Cells use.
+privileged-tests = []
 
 [lints]
 workspace = true
