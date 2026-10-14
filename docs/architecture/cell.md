@@ -7,6 +7,7 @@ How `wyrd run` sandboxes an agent ([ADR-005](../adr/005-cell-design.md)).
 ```
 wyrd run (stage one, as the user)
  ├─ create session: ledger, stat baseline of the workspace, branch a
+ ├─ serve the session's intent socket and inject agent hooks (see intent.md)
  ├─ choose how to get a mount namespace
  │    observe       → no sandbox
  │    already root  → drop to SUDO_UID/SUDO_GID after mounting
@@ -37,7 +38,10 @@ cannot edit its own ledger or checkpoints.
 
 ## Checkpoints
 
-A checkpoint is the CAS manifest of the branch's upper layer. While the
+A checkpoint is the CAS manifest of the branch's upper layer. One is taken
+after every finished tool call reported by the agent's hooks
+([intent capture](intent.md)), on `wyrd checkpoint`, and when the agent
+exits. While the
 agent runs, the session cgroup is frozen (`cgroup.freeze`) for the snapshot
 and thawed afterwards. Snapshots are incremental against the branch's
 previous checkpoint. A final checkpoint is taken when the agent exits.

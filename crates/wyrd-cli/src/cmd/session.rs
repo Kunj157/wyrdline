@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Context as _;
-use wyrd_cell::session::CreateOptions;
+use wyrd_cell::session::{CreateOptions, RunOptions};
 use wyrd_cell::{CellError, DataDir, Session};
 
+use crate::cmd::intent;
 use crate::exit;
 
 #[derive(Debug, clap::Args)]
@@ -21,9 +22,13 @@ pub struct RunArgs {
     /// Workspace to sandbox (default: current directory).
     #[arg(long)]
     workspace: Option<PathBuf>,
-    /// Agent adapter name recorded in the ledger.
-    #[arg(long, default_value = "generic")]
-    agent: String,
+    /// Agent adapter (`claude-code`, `fakeagent`, `generic`); detected
+    /// from the program name when omitted.
+    #[arg(long)]
+    agent: Option<String>,
+    /// Deny a tool before it runs (exact name, or a prefix ending in `*`).
+    #[arg(long = "deny-tool", value_name = "TOOL")]
+    deny_tools: Vec<String>,
     /// Agent command, after `--`.
     #[arg(last = true, required = true)]
     command: Vec<String>,
@@ -121,7 +126,16 @@ fn read_userns_reason() -> String {
 
 fn run_session(s: &mut Session) -> anyhow::Result<u8> {
     let helper = helper()?;
-    let code = s.run(&helper, probe_userns(&helper))?;
+    let capture = intent::start(&data(), s, &helper)?;
+    let checkpoints = capture.checkpoints.clone();
+    let opts = RunOptions {
+        env: capture.env.clone(),
+        command: capture.command.clone(),
+        before_final: checkpoints
+            .map(|cp| Box::new(move || cp.stop()) as Box<dyn FnOnce() -> Option<String>>),
+    };
+    let code = s.run(&helper, probe_userns(&helper), opts)?;
+    drop(capture);
     let rec = s.record();
     writeln!(
         out(),
@@ -152,7 +166,11 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
             command: a.command.clone(),
             observe: a.observe,
             name: a.name.clone(),
-            agent_kind: a.agent.clone(),
+            agent_kind: a
+                .agent
+                .clone()
+                .unwrap_or_else(|| intent::detect_agent(&a.command)),
+            deny_tools: a.deny_tools.clone(),
             kernel_release: doctor.kernel_release.clone(),
             capabilities: doctor.capabilities(),
         },

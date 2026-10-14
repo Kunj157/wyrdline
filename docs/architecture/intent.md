@@ -1,0 +1,81 @@
+# Intent capture
+
+How Wyrdline records what an agent *says* it does: prompts, tool calls,
+their results, and the assistant's messages (plan §15.2).
+
+## The intent socket
+
+```
+wyrd run (outside the Cell)
+ ├─ binds $XDG_RUNTIME_DIR/wyrdline/intent-<session>.sock  (0600, owner only;
+ │     falls back to <session dir>/intent.sock)
+ ├─ serves it: one thread per connection, one JSON line in, one JSON line out
+ └─ starts the agent with
+      WYRD_INTENT_SOCKET  socket path
+      WYRD_MODE           cell | observe
+      WYRD_BIN            path of the wyrd binary
+
+agent (inside the Cell)
+ └─ hook → `wyrd hook claude-code` → socket → ledger
+```
+
+The socket accepts **ingest only**: hook payloads and pings. It cannot
+start, stop, rewind, or apply anything. The server checks the peer's UID
+(`SO_PEERCRED`) on top of the 0600 mode. Neither the socket nor the
+ledger is inside the Cell's Landlock write set, so the agent cannot tamper
+with either; it can only *report*, and its reports are untrusted. Kernel
+effects (Phase 5) are the ground truth intent is compared against.
+
+Everything is redacted at the `standard` level before it is appended
+([redaction](redaction.md)).
+
+## Events
+
+| Hook (Claude Code) | Ledger events |
+|---|---|
+| `UserPromptSubmit` | `intent.message` (role user; starts a new turn) |
+| `PreToolUse` | `intent.tool_call.started`, `guard.decision`, and `intent.tool_call.denied` when denied |
+| `PostToolUse` / `PostToolUseFailure` | `intent.tool_call.finished` (status, exit code from `Exit code N`, duration, short summary), then a checkpoint |
+| `Stop` / `SubagentStop` | one `intent.message` (role assistant) per text block of the turn |
+| `SessionStart`, `SessionEnd`, others | ignored |
+
+`Stop` texts come from the agent's transcript, read by the hook command
+*inside* the Cell (the agent names the path; Wyrdline outside the Cell
+never opens agent-supplied paths). The transcript may lag behind, so
+`last_assistant_message` is appended when it is not already the last text.
+
+## Decisions
+
+`PreToolUse` is answered with a decision. Until Wasm policies arrive
+(Phase 9) the policy is static: `wyrd run --deny-tool Bash --deny-tool
+'mcp__github__*'`. `allow` prints nothing, so the agent's own permission
+rules still apply — Wyrdline only ever narrows what the agent may do;
+`deny` returns `permissionDecision: deny` with a reason.
+
+Failure handling:
+
+| Situation | Cell mode | Observe mode |
+|---|---|---|
+| socket unreachable / timed out (20 s) | deny pre-checks ("wyrdline unavailable") | allow |
+| malformed payload | recorded as `guard.decision` (policy `wyrdline.ingest`), deny | recorded, allow |
+| ledger append fails | deny pre-checks | allow |
+| not under `wyrd run` (no socket variable) | no-op | no-op |
+
+Hooks other than pre-checks never block the agent.
+
+## Checkpoint per tool call
+
+After `intent.tool_call.finished`, a checkpoint attributed to that call is
+scheduled 250 ms later. If the agent starts another call first, the
+pending checkpoint is taken *before* the next call is answered, so each
+checkpoint holds the effects of exactly one call. When the agent exits,
+the pending call (if any) is attributed to the exit checkpoint; without
+one, the exit checkpoint is only kept when something changed.
+
+## Injection
+
+`wyrd run` detects the adapter from the program name (`claude` →
+`claude-code`) or takes `--agent`. For Claude Code it writes
+`claude-code-settings.json` into the session directory and inserts
+`--settings <file>` after the program name. No user or project file is
+modified; the ledger keeps the command as the user typed it.
