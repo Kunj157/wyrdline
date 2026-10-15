@@ -35,6 +35,10 @@ enum Command {
     Sessions(cmd::session::ListArgs),
     /// Print a session's ledger events.
     Events(cmd::session::EventsArgs),
+    /// Show which tool call caused which kernel effect.
+    Graph(cmd::graph::GraphArgs),
+    /// Explain one effect: its process chain and attributed call.
+    Explain(cmd::graph::ExplainArgs),
     /// Checkpoint the current branch of a session.
     Checkpoint(cmd::session::SessionArg),
     /// List a session's checkpoints and branches.
@@ -78,6 +82,8 @@ fn main() -> ExitCode {
         Command::Run(a) => cmd::session::run(&a),
         Command::Sessions(a) => cmd::session::list(&a),
         Command::Events(a) => cmd::session::events(&a),
+        Command::Graph(a) => cmd::graph::graph(&a),
+        Command::Explain(a) => cmd::graph::explain(&a),
         Command::Checkpoint(a) => cmd::session::checkpoint(&a),
         Command::Checkpoints(a) => cmd::session::checkpoints(&a),
         Command::Rewind(a) => cmd::session::rewind(&a),
