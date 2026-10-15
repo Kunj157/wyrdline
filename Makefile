@@ -82,6 +82,12 @@ sensord-install: ## Build and install wyrd-sensord as a systemd service (needs s
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
 
+wasm-parity: ## Native vs WebAssembly correlator output must be identical
+	$(CARGO) run --quiet --locked -p wyrd-correlator --features synth --example parity_fixtures -- target/wasm-parity
+	$(CARGO) build --quiet --locked --release -p wyrd-wasm --target wasm32-unknown-unknown
+	wasm-bindgen --target nodejs --out-dir target/wasm-parity/pkg target/wasm32-unknown-unknown/release/wyrd_wasm.wasm
+	node scripts/wasm-parity.mjs target/wasm-parity target/wasm-parity/pkg
+
 secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact
 
