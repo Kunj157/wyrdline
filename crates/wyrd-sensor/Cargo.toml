@@ -1,0 +1,49 @@
+[package]
+name = "wyrd-sensor"
+description = "Loads Wyrdline's eBPF programs and decodes their events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+aya.workspace = true
+rustix.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wyrd-bundle = { path = "../wyrd-bundle" }
+wyrd-common = { path = "../wyrd-common", features = ["user"] }
+wyrd-schema = { path = "../wyrd-schema" }
+
+[build-dependencies]
+anyhow.workspace = true
+aya-build.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.rust]
+# Reading raw events from the ring buffer needs one unsafe read; each use
+# carries a SAFETY comment and an explicit allow.
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+dbg_macro = "deny"
+print_stdout = "warn"
+todo = "deny"
+
+# Keep target/ small: line tables are enough for backtraces, and
+# dependencies carry no debug info.
