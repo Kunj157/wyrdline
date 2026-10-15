@@ -1,15 +1,21 @@
 use aya_ebpf::helpers::{
-    bpf_get_current_ancestor_cgroup_id, bpf_get_current_cgroup_id, bpf_get_current_comm,
-    bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
+    bpf_get_current_ancestor_cgroup_id, bpf_get_current_comm, bpf_get_current_pid_tgid,
+    bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
 };
 use aya_ebpf::macros::{map, tracepoint};
-use aya_ebpf::maps::{HashMap, PerCpuArray, RingBuf};
+use aya_ebpf::maps::{Array, HashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::TracePointContext;
 use wyrd_common::{ARG_LEN, MAX_ARGS, MAX_CGROUP_DEPTH, Offsets, RawEvent, flag, kind};
 
 /// Ring buffer to userspace (size overridden by the loader).
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
+
+/// Bit `l` is set when a registered session cgroup sits at depth `l` of the
+/// hierarchy. Zero means nothing is registered: every program returns at
+/// once, so unrelated processes pay almost nothing.
+#[map]
+static LEVELS: Array<u32> = Array::with_max_entries(1, 0);
 
 /// Registered session cgroup ids → slot.
 #[map]
@@ -19,7 +25,7 @@ static SESSIONS: HashMap<u64, u32> = HashMap::with_max_entries(1024, 0);
 #[map]
 static STARTS: HashMap<u32, u64> = HashMap::with_max_entries(65_536, 0);
 
-/// tid → syscall in progress, emitted by `sys_exit` when it succeeded.
+/// tid → syscall in progress, emitted by `sys_exit_generic` when it succeeded.
 #[map]
 static PENDING: HashMap<u32, RawEvent> = HashMap::with_max_entries(8_192, 0);
 
@@ -59,20 +65,20 @@ fn arg(ctx: &TracePointContext, i: usize) -> u64 {
 
 #[inline(always)]
 fn session_cgroup() -> Option<u64> {
-    // SAFETY: plain helper calls.
-    let id = unsafe { bpf_get_current_cgroup_id() };
-    if unsafe { SESSIONS.get(&id) }.is_some() {
-        return Some(id);
+    let levels = LEVELS.get(0).copied().unwrap_or(0);
+    if levels == 0 {
+        return None;
     }
-    let mut level = 1u32;
+    // One helper call and one lookup per depth that has sessions (usually
+    // exactly one), instead of walking every ancestor.
+    let mut level = 0u32;
     while level < MAX_CGROUP_DEPTH {
-        // SAFETY: helper returns 0 past the leaf.
-        let anc = unsafe { bpf_get_current_ancestor_cgroup_id(level as i32) };
-        if anc == 0 {
-            break;
-        }
-        if unsafe { SESSIONS.get(&anc) }.is_some() {
-            return Some(anc);
+        if levels & (1 << level) != 0 {
+            // SAFETY: helper returns 0 past the task's own depth.
+            let anc = unsafe { bpf_get_current_ancestor_cgroup_id(level as i32) };
+            if anc != 0 && unsafe { SESSIONS.get(&anc) }.is_some() {
+                return Some(anc);
+            }
         }
         level += 1;
     }
@@ -137,14 +143,75 @@ fn read_s1(ev: &mut RawEvent, ptr: u64) {
     }
 }
 
+/// `BPF_RB_NO_WAKEUP`: do not wake the reader on every event (a wakeup per
+/// syscall costs the traced process more than the capture itself); the
+/// daemon drains the ring buffer on its own short poll interval.
+const NO_WAKEUP: u64 = 1;
+
+/// Bytes emitted per event: header + first path for most kinds, both paths
+/// for renames, everything (argv) for exec. Userspace zero-fills the rest.
+const ONE_PATH: usize = core::mem::offset_of!(RawEvent, s1);
+const TWO_PATHS: usize = core::mem::offset_of!(RawEvent, argv);
+const FULL: usize = core::mem::size_of::<RawEvent>();
+
 #[inline(always)]
 fn emit(ev: &RawEvent) {
-    if EVENTS.output::<RawEvent>(ev, 0).is_err()
+    let p = ev as *const RawEvent;
+    // SAFETY: each prefix lies within the struct; RawEvent is plain data.
+    let r = match ev.kind {
+        kind::EXEC => EVENTS.output::<[u8; FULL]>(unsafe { &*(p as *const [u8; FULL]) }, NO_WAKEUP),
+        kind::RENAME => {
+            EVENTS.output::<[u8; TWO_PATHS]>(unsafe { &*(p as *const [u8; TWO_PATHS]) }, NO_WAKEUP)
+        }
+        _ => EVENTS.output::<[u8; ONE_PATH]>(unsafe { &*(p as *const [u8; ONE_PATH]) }, NO_WAKEUP),
+    };
+    if r.is_err()
         && let Some(d) = DROPS.get_ptr_mut(0)
     {
         // SAFETY: per-CPU counter.
         unsafe { *d += 1 };
     }
+}
+
+const O_ACCMODE: i64 = 0o3;
+const O_WRITE_INTENT: i64 = 0o100 | 0o1000 | 0o2000; // O_CREAT | O_TRUNC | O_APPEND
+const O_DIRECTORY: i64 = 0o200000;
+
+/// Read-only opens matter only for directories (to resolve later
+/// `*at(dirfd, …)` paths) and for paths that may hold secrets: a
+/// dot-component (`.env`, `.ssh/`, `.aws/`, …) or a key-file suffix.
+#[inline(always)]
+fn keep_read_open(ev: &RawEvent, flags: i64) -> bool {
+    if flags & O_DIRECTORY != 0 {
+        return true;
+    }
+    let len = (ev.len0 as usize).min(ev.s0.len());
+    if len == 0 {
+        return false;
+    }
+    if ev.s0[0] == b'.' {
+        return true;
+    }
+    let mut i = 0usize;
+    while i + 1 < len && i + 1 < ev.s0.len() {
+        if ev.s0[i] == b'/' && ev.s0[i + 1] == b'.' {
+            return true;
+        }
+        i += 1;
+    }
+    // len includes the NUL: the last real bytes are len-5 .. len-2.
+    if len >= 5 && len <= ev.s0.len() {
+        let t = [
+            ev.s0[len - 5],
+            ev.s0[len - 4],
+            ev.s0[len - 3],
+            ev.s0[len - 2],
+        ];
+        if &t == b".pem" || &t == b".key" || &t == b".p12" {
+            return true;
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------- processes
@@ -185,7 +252,7 @@ fn exec_enter(file: u64, argv: u64) -> u32 {
 
 /// Park an event until its syscall returns.
 #[inline(always)]
-fn pend(ev: &RawEvent) {
+fn pend(ev: &mut RawEvent) {
     let tid = ev.tid;
     let _ = PENDING.insert(&tid, ev, 0);
 }
@@ -287,6 +354,10 @@ fn path_event(k: u32, dfd: i64, path: u64, a1: i64, a2: i64) -> u32 {
         ev.a1 = a1;
         ev.a2 = a2;
         read_s0(ev, path);
+        let read_only = k == kind::OPEN && a1 & O_ACCMODE == 0 && a1 & O_WRITE_INTENT == 0;
+        if read_only && !keep_read_open(ev, a1) {
+            return 0;
+        }
         pend(ev);
     }
     0

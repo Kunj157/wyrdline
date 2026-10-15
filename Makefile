@@ -56,8 +56,9 @@ deny-rust:
 deny-web:
 	$(PNPM) audit --prod --audit-level high
 
-test-perf: ## Throughput and overhead benchmarks (release build, cleaned afterwards)
-	$(CARGO) nextest run --workspace --release --locked --run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture
+test-perf: ## Throughput and overhead measurements (release build, needs sudo; cleaned afterwards)
+	$(CARGO) nextest run --workspace --release --locked --features wyrd-sensord/privileged-tests \
+		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1
 	$(CARGO) clean --release
 
 test-integration: ## Privileged Cell, scenario, and sensor tests (through passwordless sudo)

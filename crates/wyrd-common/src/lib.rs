@@ -65,7 +65,7 @@ pub const AT_FDCWD: i64 = -100;
 /// when they succeeded; `ret` holds the return value (the new fd for opens).
 /// CONNECT is reported at entry (an attempt), with `ret` = 0.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct RawEvent {
     pub kind: u32,
     /// Thread-group id (the process id seen by users).

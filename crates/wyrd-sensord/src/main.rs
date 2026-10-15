@@ -43,6 +43,7 @@ enum Cmd {
     Register {
         conn: u64,
         cgroup_id: u64,
+        level: u32,
         workspace: PathBuf,
         tx: SyncSender<ServerMsg>,
         ack: SyncSender<Result<(), String>>,
@@ -194,6 +195,7 @@ fn serve(
         .send(Cmd::Register {
             conn,
             cgroup_id,
+            level: wyrd_sensor::loader::cgroup_level(&canon),
             workspace,
             tx,
             ack: ack_tx,
@@ -263,11 +265,12 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                 Cmd::Register {
                     conn,
                     cgroup_id,
+                    level,
                     workspace,
                     tx,
                     ack,
                 } => {
-                    if let Err(e) = sensor.register(cgroup_id, 1) {
+                    if let Err(e) = sensor.register(cgroup_id, level) {
                         let _ = ack.try_send(Err(e.to_string()));
                         continue;
                     }

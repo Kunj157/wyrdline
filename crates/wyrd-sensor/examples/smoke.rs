@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cg = std::path::Path::new("/sys/fs/cgroup/wyrdline-smoke");
     std::fs::create_dir_all(cg)?;
     let id = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(cg)?);
-    sensor.register(id, 1)?;
+    sensor.register(id, wyrd_sensor::loader::cgroup_level(cg))?;
     let dir = tempfile_dir();
     let script = format!(
         "echo $$ > {cg}/cgroup.procs; cd {dir}; echo hi > a.txt; mkdir sub; mv a.txt sub/b.txt; chmod 600 sub/b.txt; \
