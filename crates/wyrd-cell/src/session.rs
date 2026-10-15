@@ -45,6 +45,20 @@ pub struct RunOptions<'a> {
     /// the tool call the final checkpoint should be attributed to. Runs
     /// without the session lock so in-flight checkpoints can finish.
     pub before_final: Option<Box<dyn FnOnce() -> Option<String> + 'a>>,
+    /// Called once the agent's cgroup exists and before the agent may run
+    /// (it is held at the start gate), e.g. to register with the sensor.
+    pub on_started: Option<OnStarted<'a>>,
+}
+
+/// Callback run when a Cell is launched and held at its start gate.
+pub type OnStarted<'a> = Box<dyn FnOnce(&Started) + 'a>;
+
+/// What [`RunOptions::on_started`] learns about a launched Cell.
+#[derive(Debug, Clone)]
+pub struct Started {
+    pub session_id: String,
+    pub cgroup: Option<PathBuf>,
+    pub workspace: PathBuf,
 }
 
 impl std::fmt::Debug for RunOptions<'_> {
@@ -295,6 +309,7 @@ impl Session {
                 .into_iter()
                 .chain(extra_env)
                 .collect(),
+            start_gate: None,
         };
         if mode != LaunchMode::Observe {
             // A previous run may have left overlay's internal work dir behind.
@@ -326,6 +341,29 @@ impl Session {
         Ok(running)
     }
 
+    /// Record that kernel capture is incomplete: Degraded with a reason.
+    /// Safe to call from another thread while the agent runs.
+    pub fn mark_degraded(data: &DataDir, session_id: &str, reason: &str) -> Result<()> {
+        let mut s = Session::open(data, session_id)?;
+        let _lock = state::lock(&s.dir.lock())?;
+        s.reload()?;
+        if matches!(s.rec.status, SessionState::Recording) {
+            s.set_status(SessionState::Degraded, Some(reason))?;
+        }
+        Ok(())
+    }
+
+    /// Back from Degraded once capture works again.
+    pub fn mark_recovered(data: &DataDir, session_id: &str) -> Result<()> {
+        let mut s = Session::open(data, session_id)?;
+        let _lock = state::lock(&s.dir.lock())?;
+        s.reload()?;
+        if s.rec.status == SessionState::Degraded {
+            s.set_status(SessionState::Recording, Some("kernel capture resumed"))?;
+        }
+        Ok(())
+    }
+
     /// Run the agent in the current branch and wait for it to exit. Returns
     /// its exit code. A final checkpoint is taken in Cell mode.
     pub fn run(
@@ -338,8 +376,24 @@ impl Session {
             env: extra_env,
             command,
             before_final,
+            on_started,
         } = opts;
         let mut running = self.start(helper, probe_userns, command, extra_env)?;
+        // Register (callback) only once stage two has finished its setup and
+        // waits at the gate, so its own syscalls are not recorded as the agent's.
+        let at_gate = running.wait_at_gate()?;
+        if let (true, Some(cb)) = (at_gate, on_started) {
+            cb(&Started {
+                session_id: self.rec.id.clone(),
+                cgroup: running.cgroup.as_ref().map(|c| c.path().to_path_buf()),
+                workspace: self.rec.workspace.clone(),
+            });
+        }
+        if let Err(e) = running.release() {
+            let _ = running.child.kill();
+            let _ = running.child.wait();
+            return Err(e);
+        }
         let status = running.child.wait().map_err(io_err(&self.rec.workspace))?;
         if let Some(work) = running.root_workdir.as_deref() {
             // Overlay left a root-owned work/work behind; remove it the same way we got root.

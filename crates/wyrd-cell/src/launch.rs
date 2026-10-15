@@ -103,6 +103,80 @@ pub struct Running {
     /// Overlay work directory to clean up as root after the run, if the
     /// overlay was mounted by root.
     pub root_workdir: Option<PathBuf>,
+    /// Start gate stage two is blocked on (see [`Running::release`]).
+    pub gate: Option<PathBuf>,
+    /// Write end of the gate once stage two is waiting at it.
+    pub writer: Option<std::fs::File>,
+}
+
+impl Running {
+    /// Wait (up to 10 s) until stage two has finished its setup and is
+    /// blocked at the start gate. Returns `false` if it never got there.
+    pub fn wait_at_gate(&mut self) -> Result<bool> {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let Some(gate) = self.gate.clone() else {
+            return Ok(false);
+        };
+        let start = Instant::now();
+        loop {
+            // O_NONBLOCK: ENXIO until stage two has opened the FIFO for reading.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(nix::fcntl::OFlag::O_NONBLOCK.bits())
+                .open(&gate)
+            {
+                Ok(f) => {
+                    self.writer = Some(f);
+                    return Ok(true);
+                }
+                Err(e) if e.raw_os_error() == Some(nix::libc::ENXIO) => {
+                    if start.elapsed() > Duration::from_secs(10)
+                        || matches!(self.child.try_wait(), Ok(Some(_)))
+                    {
+                        return Ok(false);
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(e) => return Err(io_err(&gate)(e)),
+            }
+        }
+    }
+
+    /// Let stage two exec the agent.
+    pub fn release(&mut self) -> Result<()> {
+        self.open_gate(b"g")
+    }
+
+    /// Make stage two abort instead of running the agent.
+    pub fn abort(&mut self) -> Result<()> {
+        self.open_gate(b"x")
+    }
+
+    fn open_gate(&mut self, byte: &[u8]) -> Result<()> {
+        use std::io::Write as _;
+        let Some(gate) = self.gate.take() else {
+            return Ok(());
+        };
+        if self.writer.is_none() && !self.wait_at_gate_path(&gate)? {
+            let _ = std::fs::remove_file(&gate);
+            return Err(CellError::Sys(
+                "stage two never reached the start gate".into(),
+            ));
+        }
+        let r = match self.writer.take() {
+            Some(mut f) => f.write_all(byte).map_err(io_err(&gate)),
+            None => Ok(()),
+        };
+        let _ = std::fs::remove_file(&gate);
+        r
+    }
+
+    fn wait_at_gate_path(&mut self, gate: &Path) -> Result<bool> {
+        self.gate = Some(gate.to_path_buf());
+        let ok = self.wait_at_gate()?;
+        self.gate = None;
+        Ok(ok)
+    }
 }
 
 /// Start stage two for `spec` (already written to `spec_path`).
@@ -119,6 +193,11 @@ pub fn spawn(
         spec.cgroup_procs = Some(cg.path().join("cgroup.procs"));
         cgroup = Some(cg);
     }
+    let gate = spec_path.with_file_name("start.gate");
+    let _ = std::fs::remove_file(&gate);
+    nix::unistd::mkfifo(&gate, nix::sys::stat::Mode::from_bits_truncate(0o600))
+        .map_err(|e| CellError::Sys(format!("mkfifo {}: {e}", gate.display())))?;
+    spec.start_gate = Some(gate.clone());
     let bytes = serde_json::to_vec_pretty(spec).map_err(|e| CellError::Invalid(e.to_string()))?;
     std::fs::write(spec_path, bytes).map_err(io_err(spec_path))?;
 
@@ -163,6 +242,8 @@ pub fn spawn(
         child,
         cgroup,
         root_workdir,
+        gate: Some(gate),
+        writer: None,
     })
 }
 

@@ -1775,6 +1775,7 @@ dependencies = [
  "wyrd-gateway",
  "wyrd-ledger",
  "wyrd-schema",
+ "wyrd-sensor",
 ]
 
 [[package]]
