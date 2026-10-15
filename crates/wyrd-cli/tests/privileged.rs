@@ -525,3 +525,49 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
         "{events:#?}"
     );
 }
+
+#[test]
+fn privileged_sensor_restart_recovers_the_session() {
+    use wyrd_schema::{EventBody as B, SessionState};
+    let e = env();
+    let first = sensord(&e);
+    let socket = first.socket.clone();
+    let agent = script(
+        &e,
+        "restart.sh",
+        "echo before > a.txt; sleep 6; echo after > after.txt",
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+        .args(["run", "--", &agent])
+        .current_dir(&e.ws)
+        .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_PRIVILEGED_HELPER", "sudo")
+        .env("WYRD_SENSORD_SOCKET", &socket)
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    drop(first); // daemon gone
+    let second = sensord(&e); // same socket path, fresh daemon
+    assert_eq!(second.socket, socket);
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    let events = ledger_events(&e, &only_session(&e));
+    let pos = |f: &dyn Fn(&B) -> bool| events.iter().position(f);
+    let lost = pos(&|b| matches!(b, B::SensorLost(_))).expect("sensor-lost recorded");
+    let kinds: Vec<String> = events
+        .iter()
+        .map(|b| format!("{} {}", b.kind(), serde_json_lite(b)))
+        .collect();
+    let resumed = pos(&|b| matches!(b, B::SensorResumed(_)))
+        .unwrap_or_else(|| panic!("sensor-resumed not recorded: {kinds:#?}"));
+    assert!(lost < resumed);
+    assert!(events.iter().any(|b| matches!(b, B::SessionStateChanged(s) if s.from == SessionState::Degraded && s.to == SessionState::Recording)));
+    let after = pos(&|b| matches!(b, B::FileOpenWrite(f) if f.file.path.ends_with("/after.txt")));
+    assert!(
+        after.is_some_and(|a| a > resumed),
+        "effects after the restart are captured: {events:#?}"
+    );
+}
+
+fn serde_json_lite(b: &wyrd_schema::EventBody) -> String {
+    format!("{b:?}").chars().take(120).collect()
+}
