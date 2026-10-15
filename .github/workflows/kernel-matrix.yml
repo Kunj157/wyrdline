@@ -67,7 +67,7 @@ jobs:
           VMTEST_VERSION: v0.18.0
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 > /dev/null
+          sudo apt-get install -y -qq qemu-system-x86 qemu-guest-agent > /dev/null
           curl -sSL -o vmtest "https://github.com/danobi/vmtest/releases/download/${VMTEST_VERSION}/vmtest-x86_64"
           chmod +x vmtest
       - name: Fetch kernel ${{ matrix.kernel }}
