@@ -1,0 +1,29 @@
+[package]
+name = "wyrd-sensord"
+description = "Privileged daemon that owns Wyrdline's eBPF sensor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+rustix.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+wyrd-sensor = { path = "../wyrd-sensor" }
+
+[dev-dependencies]
+tempfile.workspace = true
+wyrd-schema = { path = "../wyrd-schema" }
+
+[features]
+# Tests that need passwordless sudo (the daemon must run as root).
+privileged-tests = []
+
+[lints]
+workspace = true

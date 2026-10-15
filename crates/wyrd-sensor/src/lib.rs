@@ -2,10 +2,12 @@
 //! register session cgroups, read the ring buffer, decode raw events into
 //! `wyrd-schema` effect events.
 
+pub mod client;
 pub mod decode;
 pub mod loader;
 pub mod tracefs;
 
+pub use client::{ClientMsg, SensorClient, ServerMsg};
 pub use decode::{Decoded, Decoder};
 pub use loader::{LoadReport, Sensor, SensorConfig};
 
