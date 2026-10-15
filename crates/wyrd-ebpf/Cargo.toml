@@ -1,0 +1,21 @@
+[package]
+name = "wyrd-ebpf"
+description = "Wyrdline kernel programs (eBPF)"
+version.workspace = true
+edition.workspace = true
+license = "MIT OR GPL-2.0"
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+aya-ebpf = "0.2.1"
+wyrd-common = { path = "../wyrd-common" }
+
+[[bin]]
+name = "wyrd-ebpf"
+path = "src/main.rs"
+
+[lints.rust]
+# eBPF helpers and map access are unsafe by nature; every block has a SAFETY note.
+unsafe_code = "allow"
