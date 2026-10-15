@@ -73,7 +73,8 @@ fn wait_until_recording(e: &Env) -> String {
             .output()
             .unwrap();
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
-            && v[0]["status"] == "recording"
+            // Without a sensor the running session is Degraded, not Recording.
+            && (v[0]["status"] == "recording" || v[0]["status"] == "degraded")
             && !v[0]["cgroup"].is_null()
         {
             return v[0]["id"].as_str().unwrap().to_string();
@@ -334,5 +335,193 @@ fn privileged_every_tool_call_gets_its_own_checkpoint() {
             .status
             .code(),
         Some(0)
+    );
+}
+
+/// `wyrd-sensord` built on demand (it is another package's binary) and run
+/// through `sudo -n` on a temporary socket; exits when dropped.
+struct Sensord {
+    child: std::process::Child,
+    socket: PathBuf,
+}
+
+impl Drop for Sensord {
+    fn drop(&mut self) {
+        drop(self.child.stdin.take());
+        let _ = self.child.wait();
+    }
+}
+
+fn sensord_bin() -> PathBuf {
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--quiet", "--locked", "-p", "wyrd-sensord"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    Path::new(env!("CARGO_BIN_EXE_wyrd")).with_file_name("wyrd-sensord")
+}
+
+fn sensord(e: &Env) -> Sensord {
+    let socket = e.outside.join("sensord.sock");
+    let child = Command::new("sudo")
+        .args(["-n", "--"])
+        .arg(sensord_bin())
+        .args(["--exit-on-stdin-eof", "--socket"])
+        .arg(&socket)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while !socket.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "sensord did not start"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Sensord { child, socket }
+}
+
+fn wyrd_with_sensor(e: &Env, socket: &Path, args: &[&str]) -> Output {
+    let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+        .args(args)
+        .current_dir(&e.ws)
+        .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_PRIVILEGED_HELPER", "sudo")
+        .env("WYRD_SENSORD_SOCKET", socket)
+        .output()
+        .unwrap();
+    eprintln!(
+        "wyrd {args:?} -> {:?}\n{}{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+#[test]
+fn privileged_kernel_effects_are_recorded_from_the_first_syscall() {
+    use wyrd_schema::EventBody as B;
+    let e = env();
+    let d = sensord(&e);
+    let agent = script(
+        &e,
+        "agent.sh",
+        "echo edit >> a.txt\nmkdir out\nmv b.txt out/c.txt\nrm a.txt\nexit 4",
+    );
+    let out = wyrd_with_sensor(&e, &d.socket, &["run", "--", &agent]);
+    assert_eq!(out.status.code(), Some(4));
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("warning"),
+        "no capture warning expected"
+    );
+    let sid = only_session(&e);
+    let events = ledger_events(&e, &sid);
+    let ws = fs::canonicalize(&e.ws).unwrap().display().to_string();
+    let effects: Vec<String> = events
+        .iter()
+        .filter_map(|b| match b {
+            B::ProcExec(x) => Some(format!(
+                "exec {}",
+                x.filename.rsplit('/').next().unwrap_or(&x.filename)
+            )),
+            B::FileOpenWrite(x) if x.file.in_cell => {
+                Some(format!("write {}", x.file.path.trim_start_matches(&ws)))
+            }
+            B::FileMkdir(x) if x.in_cell => {
+                Some(format!("mkdir {}", x.path.trim_start_matches(&ws)))
+            }
+            B::FileRename(x) => Some(format!(
+                "rename {} {}",
+                x.from.path.trim_start_matches(&ws),
+                x.to.path.trim_start_matches(&ws)
+            )),
+            B::FileUnlink(x) if x.file.in_cell => {
+                Some(format!("unlink {}", x.file.path.trim_start_matches(&ws)))
+            }
+            B::ProcExit(x) if x.exit_code == 4 => Some("exit 4".into()),
+            _ => None,
+        })
+        .collect();
+    // The agent's own exec is the first effect: nothing before the gate leaks in,
+    // nothing of the agent is lost.
+    assert_eq!(
+        effects.first().map(String::as_str),
+        Some("exec agent.sh"),
+        "{effects:#?}"
+    );
+    for want in [
+        "write /a.txt",
+        "exec mkdir",
+        "mkdir /out",
+        "exec mv",
+        "rename /b.txt /out/c.txt",
+        "exec rm",
+        "unlink /a.txt",
+        "exit 4",
+    ] {
+        assert!(
+            effects.iter().any(|x| x == want),
+            "missing {want}: {effects:#?}"
+        );
+    }
+    assert!(!events.iter().any(|b| matches!(b, B::SensorLost(_))));
+    let ledger = e.data.join("sessions").join(&sid).join("ledger.wyrdledger");
+    assert_eq!(
+        wyrd(&e, &["verify", ledger.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn privileged_missing_sensor_marks_the_session_degraded() {
+    use wyrd_schema::{EventBody as B, SessionState};
+    let e = env();
+    let agent = script(&e, "agent.sh", "echo x > a.txt");
+    let missing = e.outside.join("no-such.sock");
+    let out = wyrd_with_sensor(&e, &missing, &["run", "--", &agent]);
+    assert_eq!(out.status.code(), Some(0), "the Cell still runs");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("wyrd-sensord is not running"));
+    let events = ledger_events(&e, &only_session(&e));
+    assert!(events.iter().any(|b| matches!(b, B::SensorLost(_))));
+    assert!(
+        events
+            .iter()
+            .any(|b| matches!(b, B::SessionStateChanged(s) if s.to == SessionState::Degraded))
+    );
+    assert!(
+        events.iter().any(|b| matches!(b, B::CheckpointCreated(_))),
+        "checkpoints still work"
+    );
+}
+
+#[test]
+fn privileged_sensor_loss_mid_run_is_recorded() {
+    use wyrd_schema::EventBody as B;
+    let e = env();
+    let d = sensord(&e);
+    let agent = script(&e, "slow.sh", "echo 1 > a.txt; sleep 1.5; echo 2 > b.txt");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+        .args(["run", "--", &agent])
+        .current_dir(&e.ws)
+        .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_PRIVILEGED_HELPER", "sudo")
+        .env("WYRD_SENSORD_SOCKET", &d.socket)
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    drop(d); // daemon exits
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    let events = ledger_events(&e, &only_session(&e));
+    assert!(
+        events.iter().any(|b| matches!(b, B::FileOpenWrite(_))),
+        "effects before the loss are kept"
+    );
+    assert!(
+        events.iter().any(|b| matches!(b, B::SensorLost(_))),
+        "{events:#?}"
     );
 }

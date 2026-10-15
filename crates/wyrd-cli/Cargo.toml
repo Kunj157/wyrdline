@@ -28,6 +28,7 @@ wyrd-doctor = { path = "../wyrd-doctor" }
 wyrd-gateway = { path = "../wyrd-gateway" }
 wyrd-ledger = { path = "../wyrd-ledger" }
 wyrd-schema = { path = "../wyrd-schema" }
+wyrd-sensor = { path = "../wyrd-sensor" }
 
 [dev-dependencies]
 rustix.workspace = true
