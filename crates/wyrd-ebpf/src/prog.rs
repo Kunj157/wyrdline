@@ -1,0 +1,505 @@
+use aya_ebpf::helpers::{
+    bpf_get_current_ancestor_cgroup_id, bpf_get_current_cgroup_id, bpf_get_current_comm,
+    bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
+};
+use aya_ebpf::macros::{map, tracepoint};
+use aya_ebpf::maps::{HashMap, PerCpuArray, RingBuf};
+use aya_ebpf::programs::TracePointContext;
+use wyrd_common::{ARG_LEN, MAX_ARGS, MAX_CGROUP_DEPTH, Offsets, RawEvent, flag, kind};
+
+/// Ring buffer to userspace (size overridden by the loader).
+#[map]
+static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
+
+/// Registered session cgroup ids → slot.
+#[map]
+static SESSIONS: HashMap<u64, u32> = HashMap::with_max_entries(1024, 0);
+
+/// tgid → process start time (ns), recorded at process creation.
+#[map]
+static STARTS: HashMap<u32, u64> = HashMap::with_max_entries(65_536, 0);
+
+/// tid → syscall in progress, emitted by `sys_exit` when it succeeded.
+#[map]
+static PENDING: HashMap<u32, RawEvent> = HashMap::with_max_entries(8_192, 0);
+
+/// Per-CPU scratch event: too large for the 512-byte BPF stack.
+#[map]
+static SCRATCH: PerCpuArray<RawEvent> = PerCpuArray::with_max_entries(1, 0);
+
+/// Per-CPU count of events lost because the ring buffer was full.
+#[map]
+static DROPS: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Layout-dependent tracepoint offsets, set by userspace before loading.
+#[unsafe(no_mangle)]
+static OFFSETS: Offsets = Offsets {
+    newtask_pid: 8,
+    newtask_clone_flags: 32,
+    exit_pid: 24,
+    exit_group_dead: 32,
+};
+
+const CLONE_THREAD: u64 = 0x0001_0000;
+const AF_INET: u16 = 2;
+const AF_INET6: u16 = 10;
+
+fn offsets() -> Offsets {
+    // SAFETY: read-only global patched by the loader; volatile so the
+    // compiler cannot constant-fold the default values.
+    unsafe { core::ptr::read_volatile(&OFFSETS) }
+}
+
+/// Syscall argument `i` of a `sys_enter_*` tracepoint.
+#[inline(always)]
+fn arg(ctx: &TracePointContext, i: usize) -> u64 {
+    // SAFETY: syscall tracepoints place args[6] at offset 16.
+    unsafe { ctx.read_at::<u64>(16 + 8 * i) }.unwrap_or(0)
+}
+
+#[inline(always)]
+fn session_cgroup() -> Option<u64> {
+    // SAFETY: plain helper calls.
+    let id = unsafe { bpf_get_current_cgroup_id() };
+    if unsafe { SESSIONS.get(&id) }.is_some() {
+        return Some(id);
+    }
+    let mut level = 1u32;
+    while level < MAX_CGROUP_DEPTH {
+        // SAFETY: helper returns 0 past the leaf.
+        let anc = unsafe { bpf_get_current_ancestor_cgroup_id(level as i32) };
+        if anc == 0 {
+            break;
+        }
+        if unsafe { SESSIONS.get(&anc) }.is_some() {
+            return Some(anc);
+        }
+        level += 1;
+    }
+    None
+}
+
+/// Fill the common header of the scratch event, or `None` when the task is
+/// not part of a session.
+#[inline(always)]
+fn begin(k: u32) -> Option<&'static mut RawEvent> {
+    let cg = session_cgroup()?;
+    let ptr = SCRATCH.get_ptr_mut(0)?;
+    // SAFETY: per-CPU slot, not shared with other CPUs; programs do not nest.
+    let ev = unsafe { &mut *ptr };
+    let pt = bpf_get_current_pid_tgid();
+    let tgid = (pt >> 32) as u32;
+    ev.kind = k;
+    ev.tgid = tgid;
+    ev.tid = pt as u32;
+    ev.ppid = 0;
+    ev.cgroup_id = cg;
+    // SAFETY: helper call.
+    ev.ts_ns = unsafe { bpf_ktime_get_ns() };
+    ev.start_ns = unsafe { STARTS.get(&tgid) }.copied().unwrap_or(0);
+    ev.a0 = 0;
+    ev.a1 = 0;
+    ev.a2 = 0;
+    ev.ret = 0;
+    ev.len0 = 0;
+    ev.len1 = 0;
+    ev.argc = 0;
+    ev.flags = 0;
+    ev.comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    Some(ev)
+}
+
+#[inline(always)]
+fn read_s0(ev: &mut RawEvent, ptr: u64) {
+    if ptr == 0 {
+        return;
+    }
+    // SAFETY: bounded user-memory read into a fixed buffer.
+    if let Ok(s) = unsafe { bpf_probe_read_user_str_bytes(ptr as *const u8, &mut ev.s0) } {
+        ev.len0 = s.len() as u16;
+        if s.len() >= ev.s0.len() - 1 {
+            ev.flags |= flag::S0_TRUNCATED;
+        }
+    }
+}
+
+#[inline(always)]
+fn read_s1(ev: &mut RawEvent, ptr: u64) {
+    if ptr == 0 {
+        return;
+    }
+    // SAFETY: as above.
+    if let Ok(s) = unsafe { bpf_probe_read_user_str_bytes(ptr as *const u8, &mut ev.s1) } {
+        ev.len1 = s.len() as u16;
+        if s.len() >= ev.s1.len() - 1 {
+            ev.flags |= flag::S1_TRUNCATED;
+        }
+    }
+}
+
+#[inline(always)]
+fn emit(ev: &RawEvent) {
+    if EVENTS.output::<RawEvent>(ev, 0).is_err()
+        && let Some(d) = DROPS.get_ptr_mut(0)
+    {
+        // SAFETY: per-CPU counter.
+        unsafe { *d += 1 };
+    }
+}
+
+// ---------------------------------------------------------------- processes
+
+fn exec_enter(file: u64, argv: u64) -> u32 {
+    let Some(ev) = begin(kind::EXEC) else {
+        return 0;
+    };
+    read_s0(ev, file);
+    if argv != 0 {
+        let base = argv as *const u64;
+        let mut i = 0usize;
+        while i < MAX_ARGS {
+            // SAFETY: reading the i-th argv pointer from user memory.
+            let p = unsafe { bpf_probe_read_user(base.add(i)) }.unwrap_or(0);
+            if p == 0 {
+                break;
+            }
+            // SAFETY: bounded user string read.
+            match unsafe { bpf_probe_read_user_str_bytes(p as *const u8, &mut ev.argv[i]) } {
+                Ok(s) if s.len() >= ARG_LEN - 1 => ev.flags |= flag::ARGV_TRUNCATED,
+                _ => {}
+            }
+            ev.argc += 1;
+            i += 1;
+        }
+        if i == MAX_ARGS {
+            // SAFETY: as above.
+            let more = unsafe { bpf_probe_read_user(base.add(MAX_ARGS)) }.unwrap_or(0);
+            if more != 0 {
+                ev.flags |= flag::ARGV_TRUNCATED;
+            }
+        }
+    }
+    pend(ev);
+    0
+}
+
+/// Park an event until its syscall returns.
+#[inline(always)]
+fn pend(ev: &RawEvent) {
+    let tid = ev.tid;
+    let _ = PENDING.insert(&tid, ev, 0);
+}
+
+/// Attached to the `sys_exit_*` tracepoint of every parked syscall:
+/// emit the parked event when the call succeeded.
+#[tracepoint]
+pub fn sys_exit_generic(ctx: TracePointContext) -> u32 {
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let Some(p) = PENDING.get_ptr_mut(&tid) else {
+        return 0;
+    };
+    // SAFETY: sys_exit_* has `long ret` at offset 16.
+    let ret = unsafe { ctx.read_at::<i64>(16) }.unwrap_or(-1);
+    if ret >= 0 {
+        // SAFETY: map value owned by this tid.
+        let ev = unsafe { &mut *p };
+        ev.ret = ret;
+        ev.ts_ns = unsafe { bpf_ktime_get_ns() };
+        if ev.kind == kind::EXEC {
+            // The new image's name.
+            ev.comm = bpf_get_current_comm().unwrap_or(ev.comm);
+        }
+        emit(ev);
+    }
+    let _ = PENDING.remove(&tid);
+    0
+}
+
+#[tracepoint]
+pub fn sys_enter_execve(ctx: TracePointContext) -> u32 {
+    exec_enter(arg(&ctx, 0), arg(&ctx, 1))
+}
+
+#[tracepoint]
+pub fn sys_enter_execveat(ctx: TracePointContext) -> u32 {
+    exec_enter(arg(&ctx, 1), arg(&ctx, 2))
+}
+
+/// `task:task_newtask` runs in the parent; `clone_flags` tells threads
+/// apart from new processes.
+#[tracepoint]
+pub fn task_newtask(ctx: TracePointContext) -> u32 {
+    let o = offsets();
+    // SAFETY: offsets come from this kernel's tracefs format.
+    let child = unsafe { ctx.read_at::<i32>(o.newtask_pid as usize) }.unwrap_or(0) as u32;
+    let flags = unsafe { ctx.read_at::<u64>(o.newtask_clone_flags as usize) }.unwrap_or(0);
+    if child == 0 || flags & CLONE_THREAD != 0 {
+        return 0;
+    }
+    let Some(ev) = begin(kind::FORK) else {
+        return 0;
+    };
+    let now = ev.ts_ns;
+    let _ = STARTS.insert(&child, &now, 0);
+    ev.a0 = i64::from(child);
+    ev.ppid = ev.tgid;
+    emit(ev);
+    0
+}
+
+#[tracepoint]
+pub fn sched_process_exit(ctx: TracePointContext) -> u32 {
+    let o = offsets();
+    // SAFETY: offsets come from tracefs.
+    let pid = unsafe { ctx.read_at::<i32>(o.exit_pid as usize) }.unwrap_or(0) as u32;
+    let group_dead = if o.exit_group_dead == u32::MAX {
+        let pt = bpf_get_current_pid_tgid();
+        (pt >> 32) as u32 == pid
+    } else {
+        unsafe { ctx.read_at::<u8>(o.exit_group_dead as usize) }.unwrap_or(0) != 0
+    };
+    if !group_dead {
+        return 0;
+    }
+    if let Some(ev) = begin(kind::EXIT) {
+        ev.flags |= flag::GROUP_DEAD;
+        emit(ev);
+    }
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let _ = STARTS.remove(&tgid);
+    0
+}
+
+#[tracepoint]
+pub fn sys_enter_exit_group(ctx: TracePointContext) -> u32 {
+    if let Some(ev) = begin(kind::EXIT_GROUP) {
+        ev.a0 = arg(&ctx, 0) as i32 as i64;
+        emit(ev);
+    }
+    0
+}
+
+// ---------------------------------------------------------------- files
+
+fn path_event(k: u32, dfd: i64, path: u64, a1: i64, a2: i64) -> u32 {
+    if let Some(ev) = begin(k) {
+        ev.a0 = dfd;
+        ev.a1 = a1;
+        ev.a2 = a2;
+        read_s0(ev, path);
+        pend(ev);
+    }
+    0
+}
+
+const FDCWD: i64 = wyrd_common::AT_FDCWD;
+
+#[tracepoint]
+pub fn sys_enter_openat(ctx: TracePointContext) -> u32 {
+    path_event(
+        kind::OPEN,
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i64,
+        arg(&ctx, 3) as i64,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
+    // struct open_how { u64 flags; u64 mode; u64 resolve; }
+    let how = arg(&ctx, 2) as *const u64;
+    // SAFETY: user pointer read.
+    let flags = if how.is_null() {
+        0
+    } else {
+        unsafe { bpf_probe_read_user(how) }.unwrap_or(0)
+    };
+    let mode = if how.is_null() {
+        0
+    } else {
+        unsafe { bpf_probe_read_user(how.add(1)) }.unwrap_or(0)
+    };
+    path_event(
+        kind::OPEN,
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        flags as i64,
+        mode as i64,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_open(ctx: TracePointContext) -> u32 {
+    path_event(
+        kind::OPEN,
+        FDCWD,
+        arg(&ctx, 0),
+        arg(&ctx, 1) as i64,
+        arg(&ctx, 2) as i64,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_creat(ctx: TracePointContext) -> u32 {
+    // creat(path, mode) == open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)
+    path_event(kind::OPEN, FDCWD, arg(&ctx, 0), 0o1101, arg(&ctx, 1) as i64)
+}
+
+#[tracepoint]
+pub fn sys_enter_unlinkat(ctx: TracePointContext) -> u32 {
+    path_event(
+        kind::UNLINK,
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i64,
+        0,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_unlink(ctx: TracePointContext) -> u32 {
+    path_event(kind::UNLINK, FDCWD, arg(&ctx, 0), 0, 0)
+}
+
+#[tracepoint]
+pub fn sys_enter_rmdir(ctx: TracePointContext) -> u32 {
+    // AT_REMOVEDIR
+    path_event(kind::UNLINK, FDCWD, arg(&ctx, 0), 0x200, 0)
+}
+
+fn rename_event(olddfd: i64, old: u64, newdfd: i64, new: u64, flags: i64) -> u32 {
+    if let Some(ev) = begin(kind::RENAME) {
+        ev.a0 = olddfd;
+        ev.a1 = newdfd;
+        ev.a2 = flags;
+        read_s0(ev, old);
+        read_s1(ev, new);
+        pend(ev);
+    }
+    0
+}
+
+#[tracepoint]
+pub fn sys_enter_renameat2(ctx: TracePointContext) -> u32 {
+    rename_event(
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i32 as i64,
+        arg(&ctx, 3),
+        arg(&ctx, 4) as i64,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_renameat(ctx: TracePointContext) -> u32 {
+    rename_event(
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i32 as i64,
+        arg(&ctx, 3),
+        0,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_rename(ctx: TracePointContext) -> u32 {
+    rename_event(FDCWD, arg(&ctx, 0), FDCWD, arg(&ctx, 1), 0)
+}
+
+#[tracepoint]
+pub fn sys_enter_mkdirat(ctx: TracePointContext) -> u32 {
+    path_event(
+        kind::MKDIR,
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i64,
+        0,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_mkdir(ctx: TracePointContext) -> u32 {
+    path_event(kind::MKDIR, FDCWD, arg(&ctx, 0), arg(&ctx, 1) as i64, 0)
+}
+
+#[tracepoint]
+pub fn sys_enter_fchmodat(ctx: TracePointContext) -> u32 {
+    path_event(
+        kind::CHMOD,
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i64,
+        0,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_fchmodat2(ctx: TracePointContext) -> u32 {
+    path_event(
+        kind::CHMOD,
+        arg(&ctx, 0) as i32 as i64,
+        arg(&ctx, 1),
+        arg(&ctx, 2) as i64,
+        0,
+    )
+}
+
+#[tracepoint]
+pub fn sys_enter_chmod(ctx: TracePointContext) -> u32 {
+    path_event(kind::CHMOD, FDCWD, arg(&ctx, 0), arg(&ctx, 1) as i64, 0)
+}
+
+#[tracepoint]
+pub fn sys_enter_truncate(ctx: TracePointContext) -> u32 {
+    // a0 carries the length for TRUNCATE (no dfd: path is cwd-relative).
+    path_event(kind::TRUNCATE, arg(&ctx, 1) as i64, arg(&ctx, 0), 0, 0)
+}
+
+// ---------------------------------------------------------------- network
+
+#[tracepoint]
+pub fn sys_enter_connect(ctx: TracePointContext) -> u32 {
+    let sa = arg(&ctx, 1) as *const u8;
+    if sa.is_null() {
+        return 0;
+    }
+    // SAFETY: user sockaddr reads with fixed offsets per family.
+    let family = unsafe { bpf_probe_read_user(sa as *const u16) }.unwrap_or(0);
+    if family != AF_INET && family != AF_INET6 {
+        return 0;
+    }
+    let Some(ev) = begin(kind::CONNECT) else {
+        return 0;
+    };
+    let port_be = unsafe { bpf_probe_read_user(sa.add(2) as *const u16) }.unwrap_or(0);
+    ev.a0 = i64::from(family);
+    ev.a1 = i64::from(u16::from_be(port_be));
+    if family == AF_INET {
+        let a = unsafe { bpf_probe_read_user(sa.add(4) as *const [u8; 4]) }.unwrap_or([0; 4]);
+        ev.s0[..4].copy_from_slice(&a);
+        ev.len0 = 4;
+    } else {
+        let a = unsafe { bpf_probe_read_user(sa.add(8) as *const [u8; 16]) }.unwrap_or([0; 16]);
+        ev.s0[..16].copy_from_slice(&a);
+        ev.len0 = 16;
+    }
+    emit(ev);
+    0
+}
+
+// ---------------------------------------------------------------- cwd
+
+#[tracepoint]
+pub fn sys_enter_chdir(ctx: TracePointContext) -> u32 {
+    path_event(kind::CHDIR, FDCWD, arg(&ctx, 0), 0, 0)
+}
+
+#[tracepoint]
+pub fn sys_enter_fchdir(ctx: TracePointContext) -> u32 {
+    if let Some(ev) = begin(kind::FCHDIR) {
+        ev.a0 = arg(&ctx, 0) as i32 as i64;
+        pend(ev);
+    }
+    0
+}
