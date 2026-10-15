@@ -60,9 +60,10 @@ test-perf: ## Throughput and overhead benchmarks (release build, cleaned afterwa
 	$(CARGO) nextest run --workspace --release --locked --run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture
 	$(CARGO) clean --release
 
-test-integration: ## Privileged Cell tests and scenarios (stage two runs through passwordless sudo)
-	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent \
-		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests -E 'test(/^privileged_/)'
+test-integration: ## Privileged Cell, scenario, and sensor tests (through passwordless sudo)
+	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord \
+		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests \
+		-E 'test(/^privileged_/)'
 
 test-scenarios: ## Fakeagent-driven full-pipeline scenarios (unprivileged; Cell ones run in test-integration)
 	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent
@@ -72,6 +73,13 @@ WYRD_BIN ?= /usr/local/bin/wyrd
 apparmor-install: ## Install the AppArmor profile that allows user namespaces for $(WYRD_BIN) (needs sudo)
 	sed 's#/usr/local/bin/wyrd#$(WYRD_BIN)#' deploy/apparmor/wyrd | sudo tee /etc/apparmor.d/wyrd >/dev/null
 	sudo apparmor_parser -r /etc/apparmor.d/wyrd
+
+sensord-install: ## Build and install wyrd-sensord as a systemd service (needs sudo; system change)
+	$(CARGO) build --release --locked -p wyrd-sensord
+	sudo install -m 0755 target/release/wyrd-sensord /usr/local/bin/wyrd-sensord
+	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now wyrd-sensord.service
 
 secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact
