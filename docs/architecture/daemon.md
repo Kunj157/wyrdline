@@ -105,3 +105,25 @@ different method, path, or body → 422 `idempotency-key-reused`; while the
 first request still runs → 409 `idempotency-in-flight`. 5xx answers are
 not kept, so a retry can succeed. Keys live in memory: a daemon restart
 forgets them.
+
+## Ingest: hooks and OTLP
+
+| Endpoint | Body |
+|---|---|
+| `POST /v1/sessions/{sid}/otlp/v1/traces` | OTLP/HTTP **JSON** trace export; answers `{ "partialSuccess": {} }` |
+| `POST /v1/sessions/{sid}/ingest/hooks/{adapter}` | A hook payload; answers the session's response (a decision for pre-execution hooks) |
+
+Both forward to the live session's intent socket: `wyrd run` stays the
+session's only ledger writer, and spans are redacted at ingest like every
+other intent. A session that is not recording answers 409
+`session-not-live`; protobuf bodies answer 415 (`OTEL_EXPORTER_OTLP_PROTOCOL=http/json`
+is required, which keeps protobuf out of the dependency tree). Bodies may be
+up to 8 MiB.
+
+On TCP these two routes take a **per-session ingest token**, never the
+daemon token: `BLAKE3-keyed(key = BLAKE3(daemon token), "wyrdline ingest v1\0" ‖ sid)`.
+It opens only that session's ingest routes, so an agent can hold it
+without reaching the mutating API (plan §17.8). `wyrd run` gives it to the
+agent through `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `…_PROTOCOL=http/json`
+and `…_HEADERS`, unless the user already set an OTLP endpoint
+(`WYRD_DAEMON_LISTEN` overrides the address).

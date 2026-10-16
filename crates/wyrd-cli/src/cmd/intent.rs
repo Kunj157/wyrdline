@@ -266,6 +266,8 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         (wyrd_adapters::MODE_ENV.into(), mode.into()),
         (wyrd_adapters::BIN_ENV.into(), wyrd.display().to_string()),
     ];
+    let mut env = env;
+    env.extend(otlp_env(&rec.id));
     let mut mcp_config = None;
     let command = if rec.agent == claude_code::NAME {
         let file = session.dir().root().join("claude-code-settings.json");
@@ -310,6 +312,22 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         command,
         mcp_config,
     })
+}
+
+/// Point the agent's OpenTelemetry trace exporter at the daemon, with a
+/// token that opens only this session's ingest routes. Nothing when no
+/// daemon token exists yet or the user set their own endpoint.
+fn otlp_env(session_id: &str) -> Vec<(String, String)> {
+    let listen = std::env::var("WYRD_DAEMON_LISTEN")
+        .unwrap_or_else(|_| wyrd_adapters::daemon::DEFAULT_LISTEN.to_string());
+    match std::fs::read_to_string(wyrd_adapters::daemon::default_token_path()) {
+        Ok(token) if !token.trim().is_empty() => {
+            wyrd_adapters::daemon::otlp_env(&listen, session_id, token.trim(), |k| {
+                std::env::var_os(k).is_some()
+            })
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Adapter implied by the agent program, when `--agent` is not given.

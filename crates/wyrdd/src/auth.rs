@@ -4,7 +4,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
@@ -14,18 +14,7 @@ use axum::response::{IntoResponse as _, Response};
 
 use crate::problem::Problem;
 
-/// `$XDG_STATE_HOME/wyrdline/token`, else `~/.local/state/wyrdline/token`.
-pub fn default_token_path() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").map_or_else(
-        || {
-            std::env::var_os("HOME")
-                .map_or_else(|| PathBuf::from("/"), PathBuf::from)
-                .join(".local/state")
-        },
-        PathBuf::from,
-    );
-    base.join("wyrdline/token")
-}
+pub use wyrd_adapters::daemon::{default_token_path, ingest_token};
 
 /// Read the token at `path`, creating it (0600, directory 0700) if absent.
 pub fn load_or_create_token(path: &Path) -> std::io::Result<String> {
@@ -66,16 +55,6 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         return false;
     }
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
-/// The ingest token of session `sid`: derived one-way from the daemon
-/// token, so an agent can be given it without learning the daemon token.
-pub fn ingest_token(daemon_token: &str, sid: &str) -> String {
-    let key = blake3::hash(daemon_token.as_bytes());
-    let mut h = blake3::Hasher::new_keyed(key.as_bytes());
-    h.update(b"wyrdline ingest v1\0");
-    h.update(sid.as_bytes());
-    h.finalize().to_hex().to_string()
 }
 
 fn bearer(req: &Request) -> Option<&str> {
@@ -129,16 +108,6 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(constant_time_eq(b"", b""));
-    }
-
-    #[test]
-    fn ingest_tokens_are_per_session_and_per_daemon() {
-        let a = ingest_token("daemon-1", "01aaa");
-        assert_eq!(a.len(), 64);
-        assert_eq!(a, ingest_token("daemon-1", "01aaa"));
-        assert_ne!(a, ingest_token("daemon-1", "01aab"));
-        assert_ne!(a, ingest_token("daemon-2", "01aaa"));
-        assert!(!a.contains("daemon-1"));
     }
 
     #[test]

@@ -10,7 +10,7 @@ from the kernel for every agent regardless of its adapter.
 | Codex CLI | `codex` | manual (see below) | same as Claude Code: Codex hooks use the same payload and decision format (`hook_event_name`, `tool_use_id`, `tool_input`, `tool_response`, `last_assistant_message`, `hookSpecificOutput.permissionDecision`) | field names checked against Codex 0.160; no live hook run yet |
 | Gemini CLI | `gemini-cli` | manual (see below) | prompts (`BeforeAgent`), tool calls (`BeforeTool`/`AfterTool`, paired by a hash of tool + input), final message (`AfterAgent`); no exit codes or durations | built from the documented contract; not installed on the development machine, not verified live |
 | Any MCP client | — (gateway) | wrap each server as `wyrd mcp-proxy --server <name> -- <cmd>` | MCP requests/responses, `tools/call` as tool calls, decisions, tool pinning | gateway e2e tests |
-| OpenTelemetry GenAI | — (OTLP) | receiver lands with the daemon API (Phase 7) | `execute_tool` spans as tool calls; model-call spans counted, not recorded (no event kind in schema v1) | mapping unit tests |
+| OpenTelemetry GenAI | — (OTLP/HTTP JSON to `wyrdd`) | `wyrd run` sets `OTEL_EXPORTER_OTLP_TRACES_*` to the daemon with a per-session ingest token (unless the user set an endpoint) | `execute_tool` spans as tool calls; model-call spans counted, not recorded (no event kind in schema v1) | mapping unit tests; daemon ingest tests; end-to-end `wyrd run` + `wyrdd` with a scripted exporter |
 | `wyrd-fakeagent` | speaks `claude-code` | automatic (sets `--agent fakeagent`) | everything Claude Code reports | scenario tests |
 
 Without hooks (manual wiring skipped), an agent's session still records
