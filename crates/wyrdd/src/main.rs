@@ -23,9 +23,22 @@ struct Args {
     /// Serve the unix socket only.
     #[arg(long)]
     no_tcp: bool,
+    /// Built Studio to serve on loopback (default `$WYRD_STUDIO_DIR`, else
+    /// `share/wyrdline/studio` next to the installed binary).
+    #[arg(long)]
+    studio: Option<PathBuf>,
     /// Bearer token file (default `$XDG_STATE_HOME/wyrdline/token`).
     #[arg(long)]
     token_file: Option<PathBuf>,
+}
+
+/// Where the built Studio is, if anywhere.
+fn studio_dir(arg: Option<PathBuf>) -> Option<PathBuf> {
+    arg.or_else(|| std::env::var_os("WYRD_STUDIO_DIR").map(PathBuf::from))
+        .or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            Some(exe.parent()?.parent()?.join("share/wyrdline/studio"))
+        })
 }
 
 /// `wyrd` next to this binary, else whatever `PATH` finds.
@@ -55,7 +68,14 @@ async fn shutdown_signal() {
 }
 
 async fn serve(args: Args) -> anyhow::Result<()> {
-    let state = Arc::new(AppState::new(DataDir::from_env(), wyrd_bin()));
+    let state = Arc::new(
+        AppState::new(DataDir::from_env(), wyrd_bin()).with_studio(studio_dir(args.studio.clone())),
+    );
+    if let Some(dir) = &state.studio {
+        tracing::info!(studio = %dir.display(), "serving Studio");
+    } else {
+        tracing::info!("no Studio build found; serving the API only");
+    }
     let socket = args
         .socket
         .unwrap_or_else(wyrd_adapters::daemon::default_socket);

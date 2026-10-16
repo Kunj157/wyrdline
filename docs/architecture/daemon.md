@@ -151,3 +151,25 @@ test compares the routes registered in `routes/mod.rs` with the document
 and validates real responses (successes and problems) against their
 schemas; a Vitest test checks that every client call hits a documented
 route and method.
+
+## Studio
+
+On loopback TCP the daemon also serves the built Studio (`--studio <dir>`,
+`$WYRD_STUDIO_DIR`, or `share/wyrdline/studio` next to the installed
+binary; nothing is served without an `index.html` there). Any GET outside
+`/v1/` is a Studio file, and unknown paths fall back to `index.html` for
+client-side routes; unknown `/v1/` paths stay problem+json, and every API
+route still needs the token. Static files need no token: they hold no
+data.
+
+`wyrd studio` checks the daemon and opens
+`http://127.0.0.1:7717/#token=<token>`. The token rides in the URL
+fragment, which browsers never send to a server; Studio moves it to
+session storage and removes it from the address bar (`--print` prints the
+URL instead of opening a browser).
+
+Every response carries `Content-Security-Policy` (only same-origin
+scripts, styles, and connections, plus `wasm-unsafe-eval` for the
+correlator; no framing, no plugins, no base or form targets),
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and
+`X-Frame-Options: DENY`.
