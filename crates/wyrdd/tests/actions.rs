@@ -4,7 +4,7 @@
 //! is written directly, as overlayfs would leave it).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,7 @@ use wyrdd::AppState;
 struct Env {
     tmp: tempfile::TempDir,
     data: DataDir,
+    ws: PathBuf,
     id: String,
 }
 
@@ -49,7 +50,7 @@ fn env() -> Env {
     std::fs::write(up.join("b.txt"), "new\n").unwrap();
     s.checkpoint(None).unwrap();
     let id = s.record().id.clone();
-    Env { tmp, data, id }
+    Env { tmp, data, ws, id }
 }
 
 fn app(e: &Env, wyrd_bin: &Path) -> axum::Router {
@@ -214,6 +215,37 @@ async fn rewind_fork_diff_and_stop() {
         k.iter().filter(|k| *k == "state.checkpoint.forked").count(),
         1
     );
+}
+
+#[tokio::test]
+async fn apply_dry_run_conflicts_and_force() {
+    let e = env();
+    let app = app(&e, Path::new("/nonexistent"));
+    let path = format!("/v1/sessions/{}/checkpoints/c1/apply", e.id);
+    let (st, _, v) = call(&app, "POST", &path, Some(json!({ "dry_run": true })), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["applied"], false);
+    assert_ne!(v["ops"].as_array().unwrap().len(), 0);
+    assert_eq!(std::fs::read_to_string(e.ws.join("a.txt")).unwrap(), "a\n");
+
+    std::fs::write(e.ws.join("a.txt"), "changed by the user meanwhile\n").unwrap();
+    let (st, _, v) = call(&app, "POST", &path, None, None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    assert_eq!(v["type"], "workspace-changed");
+    assert!(v["detail"].as_str().unwrap().contains("a.txt"));
+
+    let (st, _, v) = call(&app, "POST", &path, Some(json!({ "force": true })), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["applied"], true);
+    assert_eq!(
+        std::fs::read_to_string(e.ws.join("a.txt")).unwrap(),
+        "edited\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(e.ws.join("b.txt")).unwrap(),
+        "new\n"
+    );
+    assert!(kinds(&e).iter().any(|k| k == "state.checkpoint.applied"));
 }
 
 #[tokio::test]

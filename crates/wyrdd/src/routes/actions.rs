@@ -1,4 +1,5 @@
-//! Mutating session operations: stop, checkpoint, rewind, fork, diff. Each writes its ledger event through `wyrd-cell`, as the CLI does.
+//! Mutating session operations: stop, checkpoint, rewind, fork, diff,
+//! apply. Each writes its ledger event through `wyrd-cell`, as the CLI does.
 
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -205,6 +206,38 @@ pub async fn diff(
     blocking(move || {
         let s = open(&data, &sid)?;
         Ok(Json(json!({ "changes": to_json(&s.diff(&a, &b)?)? })))
+    })
+    .await
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyBody {
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    force: bool,
+}
+
+pub async fn apply(
+    State(st): State<Arc<AppState>>,
+    Path((sid, target)): Path<(String, String)>,
+    JsonBody(body): JsonBody<ApplyBody>,
+) -> Result<Json<Value>, Problem> {
+    check_target(&target)?;
+    let data = st.data.clone();
+    blocking(move || {
+        let mut s = open(&data, &sid)?;
+        let report = s.apply(&target, body.dry_run, body.force)?;
+        if !report.conflicts.is_empty() && !report.applied && !body.dry_run {
+            return Err(Problem::new(
+                StatusCode::CONFLICT,
+                "workspace-changed",
+                "The real workspace changed since the session started",
+            )
+            .detail(report.conflicts.join(", ")));
+        }
+        Ok(Json(to_json(&report)?))
     })
     .await
 }
