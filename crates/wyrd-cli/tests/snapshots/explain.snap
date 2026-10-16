@@ -1,0 +1,8 @@
+---
+source: crates/wyrd-cli/tests/inspect.rs
+expression: "run(&e, &[\"explain\", &e.id, &seq]).1"
+---
+effect   8 — fork → 1002
+cause    window (80 % confidence)
+call     s3c0 Bash pnpm test
+process  agent(1000)

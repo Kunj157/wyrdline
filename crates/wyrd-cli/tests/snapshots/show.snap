@@ -1,0 +1,14 @@
+---
+source: crates/wyrd-cli/tests/inspect.rs
+expression: "run(&e, &[\"show\", &e.id]).1"
+---
+session   [SID] (golden)
+status    preparing
+agent     fakeagent  mode cell
+workspace [TMP]/ws
+command   agent --task demo
+events    140  head b3:[HASH]
+chain     ✓ intact, not sealed
+branch    a of 1
+  c1    branch a    seq      2  1 files
+  c2    branch a    seq      3  2 files

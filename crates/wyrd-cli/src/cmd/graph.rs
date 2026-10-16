@@ -23,6 +23,9 @@ pub struct ExplainArgs {
     session: String,
     /// Ledger sequence number of the effect.
     seq: u64,
+    /// Print the explanation as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 fn load(session: &str) -> anyhow::Result<Vec<Event>> {
@@ -162,7 +165,24 @@ pub fn explain(a: &ExplainArgs) -> anyhow::Result<u8> {
         .iter()
         .find(|e| e.seq == a.seq)
         .context("event missing")?;
+    let chain = process_chain(&graph, ev);
     let mut out = std::io::stdout().lock();
+    if a.json {
+        let call = eff.call_id.as_deref().and_then(|id| graph.call(id));
+        let processes: Vec<_> = chain
+            .iter()
+            .map(|(pid, name)| serde_json::json!({ "pid": pid, "program": name }))
+            .collect();
+        let v = serde_json::json!({
+            "effect": eff,
+            "event": ev,
+            "call": call,
+            "process_chain": processes,
+        });
+        serde_json::to_writer_pretty(&mut out, &v)?;
+        writeln!(out)?;
+        return Ok(exit::OK);
+    }
     writeln!(out, "effect   {} — {}", a.seq, describe(&ev.body))?;
     writeln!(
         out,
@@ -188,16 +208,29 @@ pub fn explain(a: &ExplainArgs) -> anyhow::Result<u8> {
         (None, false) => writeln!(out, "calls    one of {}", eff.candidates.join(", "))?,
         (None, true) => writeln!(out, "call     none")?,
     }
-    // Process chain from the effect's process up to the agent.
-    let mut pid = ev.process.map(|p| (p.pid, p.start_ns));
     write!(out, "process ")?;
+    for (i, (pid, name)) in chain.iter().enumerate() {
+        if i > 0 {
+            write!(out, " ←")?;
+        }
+        write!(out, " {name}({pid})")?;
+    }
+    writeln!(out)?;
+    Ok(exit::OK)
+}
+
+/// The effect's process and its ancestors up to the agent, as
+/// (pid, program); at most 32 steps.
+fn process_chain(graph: &Graph, ev: &Event) -> Vec<(u32, String)> {
+    let mut chain = Vec::new();
+    let mut pid = ev.process.map(|p| (p.pid, p.start_ns));
     for _ in 0..32 {
         let Some(k) = pid else { break };
         let p = graph.processes.iter().find(|p| (p.pid, p.start_ns) == k);
         let name = p
             .and_then(|p| p.argv.first().cloned())
             .unwrap_or_else(|| "?".into());
-        write!(out, " {}({})", name, k.0)?;
+        chain.push((k.0, name));
         pid = p.and_then(|p| {
             graph
                 .processes
@@ -209,8 +242,6 @@ pub fn explain(a: &ExplainArgs) -> anyhow::Result<u8> {
         if pid == Some(k) {
             break;
         }
-        write!(out, " ←")?;
     }
-    writeln!(out)?;
-    Ok(exit::OK)
+    chain
 }
