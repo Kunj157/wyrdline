@@ -1945,6 +1945,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "wyrd-bundle",
+ "wyrd-otlp",
  "wyrd-schema",
 ]
 
@@ -2168,6 +2169,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "axum",
+ "blake3",
  "clap",
  "futures-util",
  "getrandom",
@@ -2183,6 +2185,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "wyrd-adapters",
  "wyrd-cell",
  "wyrd-correlator",
  "wyrd-doctor",

@@ -145,6 +145,7 @@ pub fn cors(listen: &str, extra: Option<&str>) -> CorsLayer {
 /// listener, so no token is needed).
 pub fn unix_app(state: Arc<AppState>) -> Router {
     routes::api()
+        .merge(routes::ingest())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             idempotency::idempotent,
@@ -156,12 +157,21 @@ pub fn unix_app(state: Arc<AppState>) -> Router {
 /// The API as served on loopback TCP: bearer token and CORS.
 pub fn tcp_app(state: Arc<AppState>, token: &str, cors: CorsLayer) -> Router {
     let token: Arc<str> = Arc::from(token);
+    // The last route layer runs first: authentication happens before an
+    // idempotency key is ever claimed (a test pins this).
     routes::api()
-        .layer(middleware::from_fn_with_state(
+        .route_layer(middleware::from_fn_with_state(
             state.clone(),
             idempotency::idempotent,
         ))
-        .layer(middleware::from_fn_with_state(token, auth::require_token))
+        .route_layer(middleware::from_fn_with_state(
+            token.clone(),
+            auth::require_token,
+        ))
+        .merge(routes::ingest().route_layer(middleware::from_fn_with_state(
+            token,
+            auth::require_ingest_token,
+        )))
         .layer(cors)
         .layer(middleware::from_fn_with_state(state.clone(), observe))
         .with_state(state)

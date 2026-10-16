@@ -4,7 +4,7 @@
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +16,21 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Unix socket paths are limited to 107 bytes.
 pub const MAX_SOCKET_PATH: usize = 107;
+
+/// Where the intent socket of a session lives: under `$XDG_RUNTIME_DIR`
+/// when possible (short path, never writable by the Cell), else in the
+/// session directory.
+pub fn socket_path(session_dir: &Path, session_id: &str) -> PathBuf {
+    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let dir = PathBuf::from(rt).join("wyrdline");
+        let ok = std::fs::create_dir_all(&dir).is_ok()
+            && std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).is_ok();
+        if ok {
+            return dir.join(format!("intent-{session_id}.sock"));
+        }
+    }
+    session_dir.join("intent.sock")
+}
 
 /// Bind the socket at `path` (replacing a stale one) with mode 0600.
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
