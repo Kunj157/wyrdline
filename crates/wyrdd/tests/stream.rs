@@ -125,7 +125,7 @@ async fn read(
                 }
             }
             Ok(_) => return parse(&buf),
-            Err(_) => panic!("stream deadline; got {:?}", parse(&buf).len()),
+            Err(elapsed) => panic!("{elapsed}: got {} messages", parse(&buf).len()),
         }
     }
 }
