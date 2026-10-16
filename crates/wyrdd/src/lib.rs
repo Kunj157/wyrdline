@@ -28,7 +28,7 @@ pub use routes::doctor_report;
 pub static REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 /// Default loopback address (plan §11.1).
-pub const DEFAULT_LISTEN: &str = "127.0.0.1:7717";
+pub const DEFAULT_LISTEN: &str = wyrd_adapters::daemon::DEFAULT_LISTEN;
 
 /// Everything the handlers need.
 #[derive(Debug)]

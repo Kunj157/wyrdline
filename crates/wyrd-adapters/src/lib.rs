@@ -8,6 +8,7 @@
 //! ground truth intent is checked against.
 
 pub mod claude_code;
+pub mod daemon;
 pub mod gemini_cli;
 pub mod hook;
 pub mod ingest;
