@@ -12,6 +12,8 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
+ts-rs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -2,6 +2,7 @@
 //! over the session data directory, on a unix socket (same UID only) and on
 //! loopback TCP (bearer token).
 
+pub mod api;
 pub mod auth;
 pub mod idempotency;
 pub mod listen;

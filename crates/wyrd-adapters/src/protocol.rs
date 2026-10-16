@@ -45,7 +45,7 @@ pub enum Direction {
     ToClient,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
     /// Decision for a pre-execution check.

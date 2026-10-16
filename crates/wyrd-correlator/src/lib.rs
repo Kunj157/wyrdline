@@ -38,7 +38,9 @@ pub const AMBIGUOUS: u16 = 5_000;
 /// Process identity: pid plus start time (PID-reuse safe).
 pub type ProcKey = (u32, u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Attribution {
     Direct,
@@ -51,7 +53,7 @@ pub enum Attribution {
 }
 
 /// One tool call with its time window.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Call {
     pub call_id: String,
     pub tool: String,
@@ -75,7 +77,7 @@ pub struct Call {
 }
 
 /// One process of the session.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Process {
     pub pid: u32,
     pub start_ns: u64,
@@ -90,7 +92,7 @@ pub struct Process {
 }
 
 /// One effect and its cause.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Effect {
     pub seq: u64,
     pub kind: String,
@@ -105,7 +107,9 @@ pub struct Effect {
 }
 
 /// The causal graph of a session.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS,
+)]
 pub struct Graph {
     pub calls: Vec<Call>,
     pub processes: Vec<Process>,

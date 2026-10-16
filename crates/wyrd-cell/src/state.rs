@@ -9,7 +9,7 @@ use wyrd_schema::{CaptureMode, SessionState};
 
 use crate::{CellError, Result, SessionDir, io_err};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Branch {
     pub id: String,
     pub name: String,
@@ -17,7 +17,7 @@ pub struct Branch {
     pub created_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct CheckpointRecord {
     pub id: String,
     pub branch: String,
@@ -30,7 +30,7 @@ pub struct CheckpointRecord {
     pub bytes_read: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct SessionRecord {
     pub id: String,
     pub name: Option<String>,
