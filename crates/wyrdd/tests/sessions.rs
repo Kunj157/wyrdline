@@ -177,6 +177,32 @@ async fn verify_and_checkpoints() {
 }
 
 #[tokio::test]
+async fn graph_and_tool_calls() {
+    let e = env();
+    let id = recorded(&e);
+    let app = app(&e);
+    let (s, g) = get(&app, &format!("/v1/sessions/{id}/graph")).await;
+    assert_eq!(s, StatusCode::OK);
+    let all_effects = g["effects"].as_array().unwrap().len();
+    assert!(all_effects > 0 && !g["calls"].as_array().unwrap().is_empty());
+    let first = g["effects"][0]["seq"].as_u64().unwrap();
+    let (_, part) = get(
+        &app,
+        &format!("/v1/sessions/{id}/graph?from_seq={first}&to_seq={first}"),
+    )
+    .await;
+    assert_eq!(part["effects"].as_array().unwrap().len(), 1);
+
+    let call = g["calls"][0]["call_id"].as_str().unwrap().to_string();
+    let (s, v) = get(&app, &format!("/v1/sessions/{id}/tool-calls/{call}")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["call"]["call_id"], call.as_str());
+    let (s, v) = get(&app, &format!("/v1/sessions/{id}/tool-calls/nope")).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(v["type"], "not-found");
+}
+
+#[tokio::test]
 async fn bad_unknown_and_ambiguous_ids_are_problems() {
     let e = env();
     recorded(&e);
