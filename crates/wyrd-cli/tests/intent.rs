@@ -28,6 +28,7 @@ fn wyrd(e: &Env, args: &[&str]) -> Output {
         .args(args)
         .current_dir(&e.ws)
         .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_SENSORD_SOCKET", "/nonexistent/wyrd-sensord.sock")
         .output()
         .unwrap();
     eprintln!(
@@ -114,6 +115,9 @@ hook '{{"hook_event_name":"Stop","last_assistant_message":"Tidied."}}'"#,
         [
             "meta.session.started",
             "meta.session.state_changed",
+            // No sensor in this test: capture is reported lost, session Degraded.
+            "meta.sensor.lost",
+            "meta.session.state_changed",
             "intent.message",
             "intent.tool_call.started",
             "guard.decision",
@@ -125,11 +129,11 @@ hook '{{"hook_event_name":"Stop","last_assistant_message":"Tidied."}}'"#,
             "meta.session.state_changed",
         ]
     );
-    let EventBody::GuardDecision(g) = &events[7] else {
+    let EventBody::GuardDecision(g) = &events[9] else {
         panic!()
     };
     assert_eq!(g.decision, Decision::Deny);
-    let EventBody::Message(m) = &events[9] else {
+    let EventBody::Message(m) = &events[11] else {
         panic!()
     };
     assert_eq!((m.turn, m.text.as_str()), (1, "Tidied."));
@@ -377,6 +381,7 @@ fn project_mcp_servers_are_routed_through_the_gateway() {
         .args(["run", "--observe", "--", claude.to_str().unwrap()])
         .current_dir(&e.ws)
         .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_SENSORD_SOCKET", "/nonexistent/wyrd-sensord.sock")
         .env("HOME", &home)
         .env_remove("CLAUDE_CONFIG_DIR")
         .output()

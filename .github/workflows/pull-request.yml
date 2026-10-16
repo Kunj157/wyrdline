@@ -28,9 +28,11 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install nightly for the eBPF object
+        run: rustup toolchain install nightly --profile minimal --component rust-src
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest,bpf-linker
       - name: Format
         run: make fmt-check-rust
       - name: Clippy
@@ -51,9 +53,11 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install nightly for the eBPF object
+        run: rustup toolchain install nightly --profile minimal --component rust-src
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest,bpf-linker
       - name: Start a systemd user manager (session cgroups)
         run: |
           sudo loginctl enable-linger "$USER"

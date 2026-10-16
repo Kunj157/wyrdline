@@ -43,6 +43,22 @@ pub struct LaunchSpec {
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// FIFO stage two reads one byte from before doing anything else, so
+    /// stage one can finish setup (e.g. sensor registration) first.
+    #[serde(default)]
+    pub start_gate: Option<PathBuf>,
+}
+
+/// Block until stage one opens the gate. A gate closed without the go
+/// byte means stage one gave up: abort instead of running unobserved.
+fn wait_gate(gate: &Path) -> Result<()> {
+    use std::io::Read as _;
+    let mut f = fs::File::open(gate).map_err(io_err(gate))?;
+    let mut b = [0u8; 1];
+    match f.read(&mut b) {
+        Ok(1) if b[0] == b'g' => Ok(()),
+        _ => Err(CellError::Invalid("stage one aborted the launch".into())),
+    }
 }
 
 /// Overlay option values cannot contain separators or escapes.
@@ -143,6 +159,11 @@ pub fn run(spec: &LaunchSpec) -> Result<Infallible> {
                 "Landlock write confinement is not fully enforced"
             );
         }
+    }
+    // Setup is done; block here so stage one registers the cgroup with the
+    // sensor only now: the ledger then holds the agent's effects, not ours.
+    if let Some(gate) = &spec.start_gate {
+        wait_gate(gate)?;
     }
     let (prog, args) = spec
         .command

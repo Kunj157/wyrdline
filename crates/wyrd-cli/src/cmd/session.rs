@@ -41,6 +41,18 @@ pub struct ListArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct EventsArgs {
+    /// Session id or unique prefix.
+    session: String,
+    /// Only this plane (meta, intent, effect, state, guard, verdict).
+    #[arg(long)]
+    plane: Option<String>,
+    /// One JSON event per line.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct SessionArg {
     /// Session id or unique prefix.
     session: String,
@@ -128,13 +140,33 @@ fn run_session(s: &mut Session) -> anyhow::Result<u8> {
     let helper = helper()?;
     let capture = intent::start(&data(), s, &helper)?;
     let checkpoints = capture.checkpoints.clone();
+    let data_dir = data();
+    let ledger = s.dir().ledger();
+    let mut effects: Option<super::effects::EffectCapture> = None;
     let opts = RunOptions {
         env: capture.env.clone(),
         command: capture.command.clone(),
         before_final: checkpoints
             .map(|cp| Box::new(move || cp.stop()) as Box<dyn FnOnce() -> Option<String>>),
+        on_started: Some(Box::new(|st: &wyrd_cell::session::Started| {
+            effects = Some(super::effects::start(
+                &data_dir,
+                &st.session_id,
+                ledger.clone(),
+                st.cgroup.as_deref(),
+                &st.workspace,
+            ));
+        })),
     };
-    let code = s.run(&helper, probe_userns(&helper), opts)?;
+    let code = s.run(&helper, probe_userns(&helper), opts);
+    if let Some(e) = effects {
+        let warning = e.warning.lock().ok().and_then(|w| w.clone());
+        e.finish();
+        if let Some(w) = warning {
+            let _ = writeln!(std::io::stderr(), "wyrd: warning: {w}");
+        }
+    }
+    let code = code?;
     drop(capture);
     let rec = s.record();
     writeln!(
@@ -374,4 +406,35 @@ pub fn cell_exec(spec_path: &Path) -> anyhow::Result<u8> {
             Ok(127)
         }
     }
+}
+
+pub fn events(a: &EventsArgs) -> anyhow::Result<u8> {
+    let s = Session::open(&data(), &a.session)?;
+    let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
+    let mut o = out();
+    let mut after = 0;
+    loop {
+        let batch = ledger.events_after(after, 1000)?;
+        let Some(last) = batch.last() else { break };
+        after = last.seq;
+        for ev in batch {
+            if a.plane.as_deref().is_some_and(|p| p != ev.plane().as_str()) {
+                continue;
+            }
+            if a.json {
+                serde_json::to_writer(&mut o, &ev)?;
+                writeln!(o)?;
+            } else {
+                let pid = ev.process.map(|p| p.pid.to_string()).unwrap_or_default();
+                let payload = serde_json::to_value(&ev.body)?;
+                let mut detail = payload["payload"].to_string();
+                if detail.len() > 140 {
+                    detail.truncate(140);
+                    detail.push('…');
+                }
+                writeln!(o, "{:>6} {:>7} {:<30} {detail}", ev.seq, pid, ev.kind())?;
+            }
+        }
+    }
+    Ok(exit::OK)
 }

@@ -23,8 +23,18 @@ wyrd run (stage one, as the user)
         ├─ (root mode) setgroups/setgid/setuid to the caller
         ├─ Landlock: writes only beneath the workspace, /tmp, /var/tmp, /dev,
         │    /proc/self and agent state dirs (~/.claude, ~/.codex, ~/.gemini, ~/.config, ~/.cache, ~/.npm)
+        ├─ wait at the start gate (FIFO in the session dir)
         └─ exec the agent
 ```
+
+**Start gate.** Stage one waits until stage two has finished all setup
+and blocks at the gate, then registers the session cgroup with
+`wyrd-sensord` (which acknowledges only once the cgroup is in the kernel
+map), and only then releases the gate. The ledger therefore contains the
+agent's effects from its very first syscall and none of Wyrdline's own
+setup. If no sensor is available, the session is marked Degraded with
+`meta.sensor.lost` and the agent still runs; a lost connection mid-run is
+recorded the same way, and a reconnection with `meta.sensor.resumed`.
 
 The `probe` used to decide "userns works" performs the full sequence
 (unshare, uid/gid maps, a mount-propagation change). Under Ubuntu's

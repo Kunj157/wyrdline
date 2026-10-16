@@ -33,6 +33,8 @@ enum Command {
     Run(cmd::session::RunArgs),
     /// List recorded sessions.
     Sessions(cmd::session::ListArgs),
+    /// Print a session's ledger events.
+    Events(cmd::session::EventsArgs),
     /// Checkpoint the current branch of a session.
     Checkpoint(cmd::session::SessionArg),
     /// List a session's checkpoints and branches.
@@ -75,6 +77,7 @@ fn main() -> ExitCode {
         Command::ProbeLandlock => cmd::doctor::probe_landlock(),
         Command::Run(a) => cmd::session::run(&a),
         Command::Sessions(a) => cmd::session::list(&a),
+        Command::Events(a) => cmd::session::events(&a),
         Command::Checkpoint(a) => cmd::session::checkpoint(&a),
         Command::Checkpoints(a) => cmd::session::checkpoints(&a),
         Command::Rewind(a) => cmd::session::rewind(&a),

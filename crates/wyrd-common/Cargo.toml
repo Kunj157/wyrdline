@@ -1,0 +1,24 @@
+[package]
+name = "wyrd-common"
+description = "Raw kernel event layout shared by the eBPF programs and userspace"
+version.workspace = true
+edition.workspace = true
+license = "MIT OR GPL-2.0"
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Userspace: implements aya::Pod so maps can hold these types.
+user = ["dep:aya"]
+
+[dependencies]
+aya = { version = "0.14.0", optional = true }
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+# `unsafe impl aya::Pod` (feature `user`) is the only unsafe code.
+unsafe_code = "allow"
