@@ -1,5 +1,6 @@
 //! Route table.
 
+mod actions;
 mod sessions;
 mod stream;
 mod system;
@@ -7,7 +8,7 @@ mod system;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 
 pub use system::doctor_report;
 
@@ -30,7 +31,20 @@ pub fn api() -> Router<Arc<AppState>> {
         )
         .route("/v1/sessions/{sid}/stream", get(stream::stream))
         .route("/v1/sessions/{sid}/verify", get(sessions::verify))
-        .route("/v1/sessions/{sid}/checkpoints", get(sessions::checkpoints))
+        .route(
+            "/v1/sessions/{sid}/checkpoints",
+            get(sessions::checkpoints).post(actions::checkpoint),
+        )
+        .route("/v1/sessions/{sid}/stop", post(actions::stop))
+        .route(
+            "/v1/sessions/{sid}/checkpoints/{target}/rewind",
+            post(actions::rewind),
+        )
+        .route(
+            "/v1/sessions/{sid}/checkpoints/{target}/fork",
+            post(actions::fork),
+        )
+        .route("/v1/sessions/{sid}/diff/{a}/{b}", get(actions::diff))
         .fallback(fallback)
 }
 
