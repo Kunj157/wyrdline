@@ -1645,6 +1645,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tower-http"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
+dependencies = [
+ "bitflags",
+ "bytes",
+ "http",
+ "percent-encoding",
+ "pin-project-lite",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "tower-layer"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2154,11 +2169,18 @@ dependencies = [
  "axum",
  "getrandom",
  "hex",
+ "http-body-util",
  "rustix",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
+ "tower",
+ "tower-http",
  "tracing",
+ "ulid",
+ "wyrd-cell",
+ "wyrd-doctor",
 ]
 
 [[package]]
