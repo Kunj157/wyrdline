@@ -6,3 +6,5 @@ pnpm-lock.yaml
 packages/schemas/src/generated/
 docs/schemas/
 *.md
+packages/schemas/src/generated-api/
+docs/api/

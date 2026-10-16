@@ -1,5 +1,6 @@
 //! The `OpenAPI` 3.1 document of the daemon API, built from the same
-//! schemars schemas as the event schema.
+//! schemars schemas as the event schema. `wyrdd-gen-api` writes it to
+//! `docs/api/openapi.json`; tests check it against the router.
 
 use schemars::JsonSchema;
 use schemars::generate::{SchemaGenerator, SchemaSettings};
@@ -460,6 +461,94 @@ pub fn document() -> Value {
     })
 }
 
+/// Check `value` against `schema` within `doc` (subset: `$ref`, `type`,
+/// `required`, `properties`, `items`, `oneOf`, `anyOf`, `allOf`, `enum`,
+/// `const`). Returns the first mismatch.
+pub fn check(doc: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), String> {
+    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+        let name = r.trim_start_matches("#/components/schemas/");
+        let target = &doc["components"]["schemas"][name];
+        if target.is_null() {
+            return Err(format!("{at}: unresolved {r}"));
+        }
+        return check(doc, target, value, at);
+    }
+    for key in ["oneOf", "anyOf"] {
+        if let Some(alts) = schema.get(key).and_then(Value::as_array)
+            && !alts.iter().any(|a| check(doc, a, value, at).is_ok())
+        {
+            return Err(format!("{at}: matches no alternative of {key}"));
+        }
+    }
+    for a in schema
+        .get("allOf")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        check(doc, a, value, at)?;
+    }
+    if let Some(c) = schema.get("const")
+        && c != value
+    {
+        return Err(format!("{at}: expected const {c}"));
+    }
+    if let Some(e) = schema.get("enum").and_then(Value::as_array)
+        && !e.contains(value)
+    {
+        return Err(format!("{at}: {value} not in enum"));
+    }
+    if let Some(t) = schema.get("type") {
+        let types: Vec<&str> = match t {
+            Value::String(s) => vec![s.as_str()],
+            Value::Array(a) => a.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        let ok = types.iter().any(|t| match *t {
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            "string" => value.is_string(),
+            "integer" => value.is_i64() || value.is_u64(),
+            "number" => value.is_number(),
+            "boolean" => value.is_boolean(),
+            "null" => value.is_null(),
+            _ => true,
+        });
+        if !ok {
+            return Err(format!("{at}: expected {types:?}, got {value}"));
+        }
+    }
+    if let Some(obj) = value.as_object() {
+        for req in schema
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let k = req.as_str().unwrap_or_default();
+            if !obj.contains_key(k) {
+                return Err(format!("{at}: missing required {k}"));
+            }
+        }
+        for (k, sub) in schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(v) = obj.get(k) {
+                check(doc, sub, v, &format!("{at}/{k}"))?;
+            }
+        }
+    }
+    if let (Some(arr), Some(items)) = (value.as_array(), schema.get("items")) {
+        for (i, v) in arr.iter().enumerate() {
+            check(doc, items, v, &format!("{at}/{i}"))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,5 +577,14 @@ mod tests {
                 "unresolved {r}"
             );
         }
+    }
+
+    #[test]
+    fn check_reports_missing_fields_and_wrong_types() {
+        let doc = json!({ "components": { "schemas": {} } });
+        let schema = json!({ "type": "object", "required": ["a"], "properties": { "a": { "type": "integer" } } });
+        assert!(check(&doc, &schema, &json!({ "a": 1 }), "").is_ok());
+        assert!(check(&doc, &schema, &json!({}), "").is_err());
+        assert!(check(&doc, &schema, &json!({ "a": "x" }), "").is_err());
     }
 }
