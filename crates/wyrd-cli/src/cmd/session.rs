@@ -408,6 +408,32 @@ pub fn cell_exec(spec_path: &Path) -> anyhow::Result<u8> {
     }
 }
 
+/// One event per line: JSON, or seq, pid, kind, and a payload excerpt.
+pub fn print_event(
+    o: &mut impl std::io::Write,
+    ev: &wyrd_schema::Event,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        serde_json::to_writer(&mut *o, ev)?;
+        writeln!(o)?;
+        return Ok(());
+    }
+    let pid = ev.process.map(|p| p.pid.to_string()).unwrap_or_default();
+    let payload = serde_json::to_value(&ev.body)?;
+    let mut detail = payload["payload"].to_string();
+    if detail.len() > 140 {
+        let mut cut = 140;
+        while !detail.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        detail.truncate(cut);
+        detail.push('…');
+    }
+    writeln!(o, "{:>6} {:>7} {:<30} {detail}", ev.seq, pid, ev.kind())?;
+    Ok(())
+}
+
 pub fn events(a: &EventsArgs) -> anyhow::Result<u8> {
     let s = Session::open(&data(), &a.session)?;
     let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
@@ -421,19 +447,7 @@ pub fn events(a: &EventsArgs) -> anyhow::Result<u8> {
             if a.plane.as_deref().is_some_and(|p| p != ev.plane().as_str()) {
                 continue;
             }
-            if a.json {
-                serde_json::to_writer(&mut o, &ev)?;
-                writeln!(o)?;
-            } else {
-                let pid = ev.process.map(|p| p.pid.to_string()).unwrap_or_default();
-                let payload = serde_json::to_value(&ev.body)?;
-                let mut detail = payload["payload"].to_string();
-                if detail.len() > 140 {
-                    detail.truncate(140);
-                    detail.push('…');
-                }
-                writeln!(o, "{:>6} {:>7} {:<30} {detail}", ev.seq, pid, ev.kind())?;
-            }
+            print_event(&mut o, &ev, a.json)?;
         }
     }
     Ok(exit::OK)

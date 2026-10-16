@@ -13,6 +13,7 @@ pub mod exit {
     pub const CAPABILITY_MISSING: u8 = 2;
     pub const VERIFICATION_FAILED: u8 = 3;
     pub const CONFLICT: u8 = 4;
+    pub const DAEMON_UNAVAILABLE: u8 = 5;
 }
 
 /// Causal flight recorder and rewind engine for AI coding agents.
@@ -32,7 +33,12 @@ enum Command {
     /// Run an agent inside a Cell and record the session.
     Run(cmd::session::RunArgs),
     /// List recorded sessions.
+    #[command(visible_alias = "ls")]
     Sessions(cmd::session::ListArgs),
+    /// Show one session: record, ledger head, verification, checkpoints.
+    Show(cmd::inspect::ShowArgs),
+    /// Follow a session's ledger until it closes.
+    Tail(cmd::inspect::TailArgs),
     /// Print a session's ledger events.
     Events(cmd::session::EventsArgs),
     /// Show which tool call caused which kernel effect.
@@ -55,6 +61,12 @@ enum Command {
     Stop(cmd::session::SessionArg),
     /// Close a session and seal its ledger.
     Close(cmd::session::SessionArg),
+    /// Manage the daemon token.
+    #[command(subcommand)]
+    Token(cmd::daemon::TokenCmd),
+    /// Talk to the daemon.
+    #[command(subcommand)]
+    Daemon(cmd::daemon::DaemonCmd),
     /// Forward an agent hook payload (stdin) to the running session.
     Hook(cmd::hook::Args),
     /// Proxy a stdio MCP server, recording and checking its traffic.
@@ -82,6 +94,10 @@ fn main() -> ExitCode {
         Command::Run(a) => cmd::session::run(&a),
         Command::Sessions(a) => cmd::session::list(&a),
         Command::Events(a) => cmd::session::events(&a),
+        Command::Show(a) => cmd::inspect::show(&a),
+        Command::Tail(a) => cmd::inspect::tail(&a),
+        Command::Token(c) => cmd::daemon::token(&c),
+        Command::Daemon(c) => cmd::daemon::daemon(&c),
         Command::Graph(a) => cmd::graph::graph(&a),
         Command::Explain(a) => cmd::graph::explain(&a),
         Command::Checkpoint(a) => cmd::session::checkpoint(&a),

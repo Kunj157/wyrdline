@@ -32,9 +32,12 @@ wyrd-schema = { path = "../wyrd-schema" }
 wyrd-sensor = { path = "../wyrd-sensor" }
 
 [dev-dependencies]
+insta.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+wyrd-correlator = { path = "../wyrd-correlator", features = ["synth"] }
+wyrd-ledger = { path = "../wyrd-ledger" }
 wyrd-schema = { path = "../wyrd-schema" }
 
 [features]

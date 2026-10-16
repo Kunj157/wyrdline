@@ -1,0 +1,7 @@
+---
+source: crates/wyrd-cli/tests/inspect.rs
+expression: "run(&e, &[\"checkpoints\", &e.id]).1"
+---
+* branch a [a]
+    c1    seq 2      1 files  b3:[HASH]
+    c2    seq 3      2 files  b3:[HASH]

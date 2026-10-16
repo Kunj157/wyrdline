@@ -16,6 +16,14 @@ CORS only for the daemon's own origin (Studio is served by `wyrdd`) and an
 optional development origin from `WYRD_STUDIO_ORIGIN`. No cookies are used,
 so cross-site requests cannot ride on ambient credentials.
 
+`wyrd token rotate` writes a new token atomically (0600); the daemon
+re-reads the file when it changes, so the rotation takes effect without a
+restart (an emptied or missing file keeps the last good token). Ingest
+tokens already handed to agents are derived from the old token and stop
+working. `wyrd token path` prints where the file is, never the token.
+`wyrd daemon status [--json]` checks `/v1/health` over the unix socket and
+exits 5 when nothing answers.
+
 A stale socket file is replaced on start; a socket a live daemon still
 answers on is an error. SIGINT/SIGTERM remove the socket.
 

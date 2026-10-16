@@ -9,15 +9,23 @@ use crate::exit;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    /// Path to a session ledger file.
-    path: PathBuf,
+    /// Session id (or unique prefix), or the path of a ledger file.
+    target: String,
     /// Print the result as JSON.
     #[arg(long)]
     json: bool,
 }
 
 pub fn run(args: &Args) -> anyhow::Result<u8> {
-    let v = wyrd_ledger::verify(&args.path)?;
+    let path = PathBuf::from(&args.target);
+    let path = if path.exists() {
+        path
+    } else {
+        wyrd_cell::Session::open(&wyrd_cell::DataDir::from_env(), &args.target)?
+            .dir()
+            .ledger()
+    };
+    let v = wyrd_ledger::verify(&path)?;
     let mut out = std::io::stdout().lock();
     if args.json {
         serde_json::to_writer_pretty(&mut out, &v)?;
