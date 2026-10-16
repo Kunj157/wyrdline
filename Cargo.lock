@@ -2166,7 +2166,9 @@ dependencies = [
 name = "wyrdd"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "axum",
+ "clap",
  "getrandom",
  "hex",
  "http-body-util",
@@ -2178,6 +2180,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "ulid",
  "wyrd-cell",
  "wyrd-doctor",
