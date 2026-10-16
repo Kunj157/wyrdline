@@ -8,7 +8,8 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check test-perf test-integration test-scenarios apparmor-install
+	schemas schemas-check test-perf test-integration test-scenarios apparmor-install \
+	test-e2e test-e2e-webgpu e2e-build
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -60,6 +61,16 @@ test-perf: ## Throughput and overhead measurements (release build, needs sudo; c
 	$(CARGO) nextest run --workspace --release --locked --features wyrd-sensord/privileged-tests \
 		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1
 	$(CARGO) clean --release
+
+e2e-build:
+	$(CARGO) build --locked -p wyrdd --bin wyrdd --example e2e_fixture
+	$(PNPM) --filter @wyrdline/studio build
+
+test-e2e: e2e-build ## Studio end to end: Playwright (headless Chromium) against a real wyrdd
+	$(PNPM) exec playwright test -c tests/e2e --project=chromium
+
+test-e2e-webgpu: e2e-build ## The WebGPU river, headed Chromium with SwiftShader on a virtual display
+	WYRD_E2E_WEBGPU=1 xvfb-run -a $(PNPM) exec playwright test -c tests/e2e --project=webgpu
 
 test-integration: ## Privileged Cell, scenario, and sensor tests (through passwordless sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord -p wyrdd \
