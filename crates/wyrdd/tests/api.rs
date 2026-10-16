@@ -10,16 +10,15 @@ use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 use wyrd_cell::DataDir;
-use wyrdd::{AppState, Metrics};
+use wyrdd::AppState;
 
 const TOKEN: &str = "0123456789abcdef";
 
 fn state(dir: &std::path::Path) -> Arc<AppState> {
-    Arc::new(AppState {
-        data: DataDir::new(dir.join("data")),
-        wyrd_bin: "/nonexistent/wyrd".into(),
-        metrics: Metrics::default(),
-    })
+    Arc::new(AppState::new(
+        DataDir::new(dir.join("data")),
+        "/nonexistent/wyrd".into(),
+    ))
 }
 
 fn tcp(dir: &std::path::Path) -> axum::Router {

@@ -14,7 +14,7 @@ use serde_json::Value;
 use tower::ServiceExt as _;
 use wyrd_cell::session::CreateOptions;
 use wyrd_cell::{DataDir, Session};
-use wyrdd::{AppState, Metrics};
+use wyrdd::AppState;
 
 struct Env {
     _tmp: tempfile::TempDir,
@@ -62,11 +62,10 @@ fn recorded(e: &Env) -> String {
 }
 
 fn app(e: &Env) -> axum::Router {
-    wyrdd::unix_app(Arc::new(AppState {
-        data: e.data.clone(),
-        wyrd_bin: "/nonexistent/wyrd".into(),
-        metrics: Metrics::default(),
-    }))
+    wyrdd::unix_app(Arc::new(AppState::new(
+        e.data.clone(),
+        "/nonexistent/wyrd".into(),
+    )))
 }
 
 async fn get(app: &axum::Router, path: &str) -> (StatusCode, Value) {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use clap::Parser;
 use wyrd_cell::DataDir;
-use wyrdd::{AppState, Metrics, auth, listen::SameUidListener};
+use wyrdd::{AppState, auth, listen::SameUidListener};
 
 /// Per-user Wyrdline daemon.
 #[derive(Debug, Parser)]
@@ -66,11 +66,7 @@ async fn shutdown_signal() {
 }
 
 async fn serve(args: Args) -> anyhow::Result<()> {
-    let state = Arc::new(AppState {
-        data: DataDir::from_env(),
-        wyrd_bin: wyrd_bin(),
-        metrics: Metrics::default(),
-    });
+    let state = Arc::new(AppState::new(DataDir::from_env(), wyrd_bin()));
     let socket = args.socket.unwrap_or_else(default_socket);
     let unix =
         SameUidListener::bind(&socket).with_context(|| format!("binding {}", socket.display()))?;
