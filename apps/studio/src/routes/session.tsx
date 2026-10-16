@@ -8,6 +8,7 @@ import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
 import { type Renderer, RiverCanvas } from "../river/RiverCanvas";
+import { RIVER_HEIGHT } from "../river/theme";
 import { Transcript } from "../components/Transcript";
 import {
   offlineSource,
@@ -20,6 +21,9 @@ import {
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
 import { statusMeaning } from "./sessions";
+
+/** The river plus its toolbar row (27px) and gap (8px). */
+const RIVER_BLOCK = RIVER_HEIGHT + 35;
 
 /** Above this many knots the SVG fallback is too slow; the table remains. */
 const SVG_LIMIT = 5000;
@@ -90,9 +94,17 @@ export function SessionPage() {
       </header>
 
       {events.isPending ? (
-        <Shimmer>Loading the river…</Shimmer>
+        // Reserve the river's height so the panels below do not jump when it
+        // arrives.
+        <div style={{ minHeight: RIVER_BLOCK }}>
+          <Shimmer>Loading the river…</Shimmer>
+        </div>
       ) : (
-        <section aria-label="Causal river" className="flex flex-col gap-2">
+        <section
+          aria-label="Causal river"
+          className="flex flex-col gap-2"
+          style={{ minHeight: RIVER_BLOCK }}
+        >
           <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
             <label className="flex items-center gap-1">
               Renderer
