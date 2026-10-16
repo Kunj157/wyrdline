@@ -1,5 +1,5 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -33,6 +33,7 @@ async function until(what: string, ok: () => boolean | Promise<boolean>, ms = 15
 export default async function globalSetup() {
   for (const need of [
     join(bin, "wyrdd"),
+    join(bin, "wyrd"),
     join(bin, "examples/e2e_fixture"),
     join(studio, "index.html"),
   ]) {
@@ -41,9 +42,13 @@ export default async function globalSetup() {
   // A short directory: unix socket paths are limited to 107 bytes.
   const dir = mkdtempSync(join(tmpdir(), "wyrd-e2e-"));
   const data = join(dir, "data");
-  const sid = execFileSync(join(bin, "examples/e2e_fixture"), [data, join(dir, "ws")], {
-    encoding: "utf8",
-  }).trim();
+  const [sid = "", liveSid = ""] = execFileSync(
+    join(bin, "examples/e2e_fixture"),
+    [data, join(dir, "ws")],
+    { encoding: "utf8" },
+  )
+    .trim()
+    .split("\n");
   const port = await freePort();
   const env = {
     ...process.env,
@@ -68,9 +73,19 @@ export default async function globalSetup() {
       return false;
     }
   });
+  // An export of the same session for the offline-replay spec, served
+  // next to the Studio build.
+  const exported = execFileSync(join(bin, "wyrd"), ["events", sid, "--json"], {
+    encoding: "utf8",
+    env,
+  });
+  writeFileSync(join(studio, "e2e-offline.jsonl"), exported);
   process.env.WYRD_E2E_BASE = base;
   process.env.WYRD_E2E_TOKEN = token;
   process.env.WYRD_E2E_SID = sid;
+  process.env.WYRD_E2E_LIVE_SID = liveSid;
+  process.env.WYRD_E2E_DATA = data;
+  process.env.WYRD_E2E_FIXTURE = join(bin, "examples/e2e_fixture");
   return () => {
     daemon.kill("SIGTERM");
     rmSync(dir, { recursive: true, force: true });

@@ -4,7 +4,7 @@ import { Badge, Button, Dialog } from "@wyrdline/ui";
 import { GitBranch, GitCompare, GitFork, History, Upload } from "lucide-react";
 import { useState } from "react";
 
-import { useSessionActions } from "../lib/api";
+import { offlineSource, useSessionActions } from "../lib/api";
 import { describe, irreversibleAfter } from "../lib/model";
 import { DiffView } from "./DiffView";
 
@@ -21,8 +21,16 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
   const [action, setAction] = useState<Action>(null);
   if (!checkpoints) return null;
   const close = () => setAction(null);
+  // A replayed export has no daemon and no content store behind it.
+  const readOnly = offlineSource() !== null;
   return (
     <section aria-label="Checkpoints and branches">
+      {readOnly && (
+        <p className="mb-2 text-xs text-text-muted">
+          Read-only replay: rewind, fork, diff, and apply need the daemon and the session's content
+          store.
+        </p>
+      )}
       <ul className="flex flex-col gap-1">
         {checkpoints.branches.map((b) => (
           <li key={b.id}>
@@ -39,9 +47,9 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
                   <li key={c.id} className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-mono">{c.id}</span>
                     <span className="text-xs text-text-muted">
-                      seq {c.seq} · {c.files} files
+                      seq {c.seq} · {c.files} {c.files === 1 ? "file" : "files"}
                     </span>
-                    <span className="ml-auto flex gap-1">
+                    <span className={readOnly ? "hidden" : "ml-auto flex gap-1"}>
                       <Button
                         size="sm"
                         variant="ghost"

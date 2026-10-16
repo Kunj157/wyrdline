@@ -1,10 +1,58 @@
-import { Link } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Badge, Card, Kbd } from "@wyrdline/ui";
 import { GitFork, Radio } from "lucide-react";
 
+import { useState } from "react";
+
 import { AnimatedNumber } from "../components/AnimatedNumber";
-import { useCapabilities, useSessions } from "../lib/api";
+import { setOffline, useCapabilities, useSessions } from "../lib/api";
+import { createOfflineClient, loadCorrelator, parseExport } from "../lib/offline";
 import { statusMeaning } from "./sessions";
+
+/** Replay an exported session (`wyrd events <session> --json`) without a daemon. */
+function OpenExport() {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  async function open(file: File) {
+    try {
+      const events = parseExport(await file.text());
+      const client = createOfflineClient(events, file.name, await loadCorrelator());
+      setOffline(file.name, client);
+      qc.clear();
+      const sid = (await client.sessions()).sessions[0]?.id;
+      if (sid) await navigate({ to: "/sessions/$sid", params: { sid } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return (
+    <div className="mt-3 text-sm">
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-sm border border-border-strong bg-surface-1 px-3 py-1.5 font-medium hover:bg-surface-2">
+        Open a session file
+        <input
+          type="file"
+          accept=".json,.jsonl,application/json"
+          className="sr-only"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void open(f);
+          }}
+        />
+      </label>
+      <span className="ml-2 text-text-muted">
+        from <code className="font-mono">wyrd events &lt;session&gt; --json</code> — replayed
+        locally, nothing is uploaded
+      </span>
+      {error && (
+        <p role="alert" className="mt-2 text-verdict-denied">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function OverviewPage() {
   const sessions = useSessions();
@@ -26,6 +74,7 @@ export function OverviewPage() {
       <p className="mt-2 max-w-2xl text-text-secondary">
         Press <Kbd>Ctrl</Kbd> <Kbd>K</Kbd> to jump to a session, a checkpoint, or an event.
       </p>
+      <OpenExport />
 
       <div className="mt-8 grid auto-rows-[minmax(8rem,auto)] grid-cols-1 gap-4 md:grid-cols-6">
         <Card

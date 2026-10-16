@@ -64,6 +64,8 @@ test-perf: ## Throughput and overhead measurements (release build, needs sudo; c
 
 e2e-build:
 	$(CARGO) build --locked -p wyrdd --bin wyrdd --example e2e_fixture
+	$(CARGO) build --locked -p wyrd-cli
+	scripts/build-studio-wasm.sh
 	$(PNPM) --filter @wyrdline/studio build
 
 test-e2e: e2e-build ## Studio end to end: Playwright (headless Chromium) against a real wyrdd
@@ -92,6 +94,9 @@ sensord-install: ## Build and install wyrd-sensord as a systemd service (needs s
 	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
+
+studio-wasm: ## Build the WebAssembly correlator into the Studio (offline mode)
+	scripts/build-studio-wasm.sh
 
 wasm-parity: ## Native vs WebAssembly correlator output must be identical
 	$(CARGO) run --quiet --locked -p wyrd-correlator --features synth --example parity_fixtures -- target/wasm-parity
