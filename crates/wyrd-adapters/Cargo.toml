@@ -18,6 +18,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wyrd-bundle = { path = "../wyrd-bundle" }
+wyrd-otlp = { path = "../wyrd-otlp" }
 wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]

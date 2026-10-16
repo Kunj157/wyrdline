@@ -188,3 +188,30 @@ fn turns_continue_from_the_ledger() {
     };
     assert_eq!(m.turn, 5);
 }
+
+#[test]
+fn otlp_tool_spans_become_tool_calls_and_secrets_are_redacted() {
+    let i = ingest(CaptureMode::Cell, &[]);
+    let secret = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+    let attr = |k: &str, v: &str| json!({"key": k, "value": {"stringValue": v}});
+    let req = json!({"resourceSpans": [{"scopeSpans": [{"spans": [{
+        "traceId": "5b8efff798038103d269b633813fc60c", "spanId": "a1", "name": "tool",
+        "startTimeUnixNano": "1000", "endTimeUnixNano": "2000",
+        "attributes": [
+            attr("gen_ai.operation.name", "execute_tool"),
+            attr("gen_ai.tool.name", "shell"),
+            attr("gen_ai.tool.call.id", "call_1"),
+            attr("gen_ai.tool.call.arguments", &format!("{{\"command\":\"echo {secret}\"}}")),
+        ],
+        "status": {"code": 1}
+    }]}]}]});
+    assert_eq!(i.handle(Request::Otlp { request: req }), Response::Ok);
+    let events = i.sink().events.lock().unwrap();
+    let kinds: Vec<_> = events.iter().map(EventBody::kind).collect();
+    assert_eq!(
+        kinds,
+        ["intent.tool_call.started", "intent.tool_call.finished"]
+    );
+    let text = serde_json::to_string(&*events).unwrap();
+    assert!(!text.contains(&secret), "redacted at ingest");
+}

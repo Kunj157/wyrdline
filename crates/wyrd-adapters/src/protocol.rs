@@ -27,6 +27,11 @@ pub enum Request {
         direction: Direction,
         message: serde_json::Value,
     },
+    /// An OTLP/HTTP JSON trace export (forwarded by the daemon); its
+    /// generative-AI tool spans become intent events.
+    Otlp {
+        request: serde_json::Value,
+    },
     Ping,
 }
 

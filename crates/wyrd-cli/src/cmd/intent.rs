@@ -176,22 +176,7 @@ fn last_turn(ledger: &Ledger) -> anyhow::Result<u32> {
         .unwrap_or(0))
 }
 
-/// Where the intent socket of a session lives: under `$XDG_RUNTIME_DIR`
-/// when possible (short path, never writable by the Cell), else in the
-/// session directory.
-pub fn socket_path(session_dir: &Path, session_id: &str) -> PathBuf {
-    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
-        let dir = PathBuf::from(rt).join("wyrdline");
-        let ok = std::fs::create_dir_all(&dir).is_ok() && {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).is_ok()
-        };
-        if ok {
-            return dir.join(format!("intent-{session_id}.sock"));
-        }
-    }
-    session_dir.join("intent.sock")
-}
+pub use wyrd_adapters::server::socket_path;
 
 /// Intent capture for one run.
 #[derive(Debug)]
