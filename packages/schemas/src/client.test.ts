@@ -84,16 +84,19 @@ describe("daemon client", () => {
       c.apply("s", "c1", {}),
       c.diff("s", "a", "b"),
     ]);
-    const templates = Object.keys(doc.paths).map((p) => ({
-      p,
-      re: new RegExp(`^${p.replace(/\{[^}]+\}/g, "[^/]+")}$`),
-    }));
+    // Segment-wise match: `{param}` matches any one segment.
+    const matches = (template: string, path: string) => {
+      const t = template.split("/");
+      const p = path.split("/");
+      return t.length === p.length && t.every((seg, i) => seg.startsWith("{") || seg === p[i]);
+    };
+    const templates = Object.keys(doc.paths);
     for (const { url, init } of f.calls) {
       const path = url.split("?")[0] ?? "";
-      const match = templates.find((t) => t.re.test(path));
+      const match = templates.find((t) => matches(t, path));
       expect(match, path).toBeDefined();
       const method = (init.method ?? "GET").toLowerCase();
-      expect(doc.paths[match?.p ?? ""]?.[method], `${method} ${path}`).toBeDefined();
+      expect(doc.paths[match ?? ""]?.[method], `${method} ${path}`).toBeDefined();
     }
   });
 });
