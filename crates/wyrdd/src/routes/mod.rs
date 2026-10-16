@@ -51,6 +51,10 @@ pub fn api() -> Router<Arc<AppState>> {
             post(actions::apply),
         )
         .route("/v1/sessions/{sid}/diff/{a}/{b}", get(actions::diff))
+        .route(
+            "/v1/sessions/{sid}/diff/{a}/{b}/file",
+            get(actions::diff_file),
+        )
         .fallback(fallback)
 }
 

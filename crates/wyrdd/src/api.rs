@@ -92,6 +92,24 @@ pub struct Changes {
     pub changes: Vec<Change>,
 }
 
+/// One side of a file diff.
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct FileSide {
+    pub source: wyrd_cell::session::FileSource,
+    /// UTF-8 text; null when absent or binary.
+    pub text: Option<String>,
+    pub binary: bool,
+    /// Longer than the limit; `text` holds the beginning.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct FileDiff {
+    pub path: String,
+    pub before: FileSide,
+    pub after: FileSide,
+}
+
 /// The apply report (re-exported for the contract).
 pub type ApplyResult = ApplyReport;
 

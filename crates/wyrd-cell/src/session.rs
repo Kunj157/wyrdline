@@ -70,6 +70,47 @@ impl std::fmt::Debug for RunOptions<'_> {
     }
 }
 
+/// Where [`Session::file_at`] found a path's content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FileSource {
+    /// The checkpoint's upper layer (the agent changed it).
+    Checkpoint,
+    /// The real workspace below the Cell (unchanged in the Cell).
+    Workspace,
+    /// The path does not exist at that checkpoint.
+    Absent,
+}
+
+/// A path's content at a checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileAt {
+    pub source: FileSource,
+    pub bytes: Option<Vec<u8>>,
+    /// More than the requested limit exists.
+    pub truncated: bool,
+}
+
+impl FileAt {
+    fn absent() -> Self {
+        FileAt {
+            source: FileSource::Absent,
+            bytes: None,
+            truncated: false,
+        }
+    }
+
+    fn bytes(mut bytes: Vec<u8>, limit: usize, source: FileSource) -> Self {
+        let truncated = bytes.len() > limit;
+        bytes.truncate(limit);
+        FileAt {
+            source,
+            bytes: Some(bytes),
+            truncated,
+        }
+    }
+}
+
 /// An open session.
 #[derive(Debug)]
 pub struct Session {
@@ -627,6 +668,74 @@ impl Session {
         let ma = self.manifest(&self.resolve(a)?.manifest)?;
         let mb = self.manifest(&self.resolve(b)?.manifest)?;
         Ok(diff::diff(&ma, &mb))
+    }
+
+    /// The content of `path` (relative, `/`-separated) as seen inside the
+    /// Cell at checkpoint `target`: from the checkpoint's upper layer when
+    /// the path changed there, absent when it (or a parent) was deleted or
+    /// hidden by an opaque directory, else the real workspace file the
+    /// Cell's lower layer shows. At most `limit` bytes are returned.
+    pub fn file_at(&self, target: &str, path: &str, limit: usize) -> Result<FileAt> {
+        use wyrd_cas::EntryKind;
+        if path.is_empty()
+            || path.starts_with('/')
+            || path
+                .split('/')
+                .any(|c| c.is_empty() || c == "." || c == "..")
+        {
+            return Err(CellError::Invalid(format!("bad path {path:?}")));
+        }
+        let m = self.manifest(&self.resolve(target)?.manifest)?;
+        let mut hidden = false;
+        let mut prefix = String::new();
+        for comp in path.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(comp);
+            let last = prefix.len() == path.len();
+            let Some(e) = m.get(prefix.as_bytes()) else {
+                continue;
+            };
+            match e.kind {
+                EntryKind::Whiteout => return Ok(FileAt::absent()),
+                EntryKind::File if last => {
+                    let mut bytes = Vec::new();
+                    for c in &e.chunks {
+                        bytes.extend(self.cas.get(*c)?);
+                        if bytes.len() > limit {
+                            break;
+                        }
+                    }
+                    return Ok(FileAt::bytes(bytes, limit, FileSource::Checkpoint));
+                }
+                EntryKind::Symlink if last => {
+                    let t = e.target.as_ref().map(|t| t.to_vec()).unwrap_or_default();
+                    return Ok(FileAt::bytes(t, limit, FileSource::Checkpoint));
+                }
+                EntryKind::Dir if last => return Ok(FileAt::absent()),
+                // The lower layer below an opaque directory is invisible.
+                EntryKind::Dir if e.opaque => hidden = true,
+                _ => {}
+            }
+        }
+        if hidden {
+            return Ok(FileAt::absent());
+        }
+        let real = self.rec.workspace.join(path);
+        match fs::symlink_metadata(&real) {
+            Ok(md) if md.is_file() => {
+                let mut bytes = Vec::new();
+                fs::File::open(&real)
+                    .and_then(|f| {
+                        use std::io::Read as _;
+                        f.take(limit as u64 + 1).read_to_end(&mut bytes)
+                    })
+                    .map_err(io_err(&real))?;
+                Ok(FileAt::bytes(bytes, limit, FileSource::Workspace))
+            }
+            _ => Ok(FileAt::absent()),
+        }
     }
 
     /// Apply a checkpoint/branch to the real workspace.

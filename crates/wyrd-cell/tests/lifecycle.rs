@@ -391,3 +391,45 @@ fn overlay_paths_with_separators_are_rejected() {
     assert!(check_overlay_path(Path::new("/home/u/a,b")).is_err());
     assert!(check_overlay_path(Path::new("/home/u/a:b")).is_err());
 }
+
+#[test]
+fn file_at_reads_the_checkpoint_the_workspace_or_nothing() {
+    use wyrd_cell::session::FileSource;
+    let e = env();
+    let mut s = create(&e);
+    let up = upper(&s);
+    fs::write(up.join("keep.txt"), "agent edit\n").unwrap();
+    whiteout(&up.join("victim.txt"));
+    fs::create_dir(up.join("src")).unwrap();
+    rustix::fs::setxattr(
+        up.join("src"),
+        "user.overlay.opaque",
+        b"y",
+        rustix::fs::XattrFlags::empty(),
+    )
+    .unwrap();
+    fs::write(up.join("src/new.rs"), "fn new() {}\n").unwrap();
+    let c = s.checkpoint(None).unwrap();
+
+    let f = s.file_at(&c.id, "keep.txt", 1 << 20).unwrap();
+    assert_eq!(f.source, FileSource::Checkpoint);
+    assert_eq!(f.bytes.as_deref(), Some(&b"agent edit\n"[..]));
+
+    let f = s.file_at(&c.id, "victim.txt", 1 << 20).unwrap();
+    assert_eq!((f.source, f.bytes), (FileSource::Absent, None), "whiteout");
+
+    let f = s.file_at(&c.id, "src/lib.rs", 1 << 20).unwrap();
+    assert_eq!(f.source, FileSource::Absent, "hidden by the opaque dir");
+    let f = s.file_at(&c.id, "src/new.rs", 1 << 20).unwrap();
+    assert_eq!(f.source, FileSource::Checkpoint);
+
+    fs::write(e.ws.join("untouched.txt"), "below the cell\n").unwrap();
+    let f = s.file_at(&c.id, "untouched.txt", 5).unwrap();
+    assert_eq!(f.source, FileSource::Workspace);
+    assert_eq!(f.bytes.as_deref(), Some(&b"below"[..]));
+    assert!(f.truncated);
+
+    for bad in ["", "/etc/passwd", "../x", "a/../b", "a//b", "./a"] {
+        assert!(s.file_at(&c.id, bad, 10).is_err(), "{bad:?}");
+    }
+}

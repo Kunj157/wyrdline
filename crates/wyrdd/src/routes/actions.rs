@@ -16,7 +16,8 @@ use wyrd_cell::state::CheckpointRecord;
 use super::sessions::{blocking, open};
 use crate::AppState;
 use crate::api::{
-    ApplyBody, ApplyResult, BranchCreated, Changes, ForkBody, Relaunching, RewindBody, Stopped,
+    ApplyBody, ApplyResult, BranchCreated, Changes, FileDiff, FileSide, ForkBody, Relaunching,
+    RewindBody, Stopped,
 };
 use crate::problem::Problem;
 
@@ -223,6 +224,60 @@ pub async fn apply(
             .detail(report.conflicts.join(", ")));
         }
         Ok(Json(report))
+    })
+    .await
+}
+
+/// Largest side of a file diff returned.
+pub const FILE_LIMIT: usize = 1 << 20;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct FileQuery {
+    path: String,
+}
+
+fn side(f: wyrd_cell::session::FileAt) -> FileSide {
+    let (text, binary) = match f.bytes {
+        None => (None, false),
+        Some(b) if b.contains(&0) => (None, true),
+        Some(b) => match String::from_utf8(b) {
+            Ok(t) => (Some(t), false),
+            // A cut through a multi-byte character is still text.
+            Err(e) if f.truncated && e.utf8_error().error_len().is_none() => {
+                let valid = e.utf8_error().valid_up_to();
+                let mut b = e.into_bytes();
+                b.truncate(valid);
+                (String::from_utf8(b).ok(), false)
+            }
+            Err(_) => (None, true),
+        },
+    };
+    FileSide {
+        source: f.source,
+        text,
+        binary,
+        truncated: f.truncated,
+    }
+}
+
+/// Both sides of one changed file, for a line diff in Studio.
+pub async fn diff_file(
+    State(st): State<Arc<AppState>>,
+    Path((sid, a, b)): Path<(String, String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> Result<Json<FileDiff>, Problem> {
+    check_target(&a)?;
+    check_target(&b)?;
+    let data = st.data.clone();
+    blocking(move || {
+        let s = open(&data, &sid)?;
+        let before = side(s.file_at(&a, &q.path, FILE_LIMIT)?);
+        let after = side(s.file_at(&b, &q.path, FILE_LIMIT)?);
+        Ok(Json(FileDiff {
+            path: q.path,
+            before,
+            after,
+        }))
     })
     .await
 }

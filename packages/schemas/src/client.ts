@@ -133,6 +133,8 @@ export function createClient(options: ClientOptions = {}) {
       ),
     diff: (sid: string, a: string, b: string) =>
       request<api.Changes>("GET", `${s(sid)}/diff/${seg(a)}/${seg(b)}`),
+    diffFile: (sid: string, a: string, b: string, path: string) =>
+      request<api.FileDiff>("GET", `${s(sid)}/diff/${seg(a)}/${seg(b)}/file${query({ path })}`),
     /** URL for an `EventSource`; resume with `afterSeq` (or the browser's Last-Event-ID). */
     streamUrl: (sid: string, afterSeq?: number) =>
       `${base}${s(sid)}/stream${query({ after_seq: afterSeq })}`,

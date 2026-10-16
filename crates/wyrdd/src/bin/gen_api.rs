@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     api::BranchCreated::export_all(&cfg)?;
     api::Relaunching::export_all(&cfg)?;
     api::Changes::export_all(&cfg)?;
+    api::FileDiff::export_all(&cfg)?;
     api::OtlpExportResponse::export_all(&cfg)?;
     api::RewindBody::export_all(&cfg)?;
     api::ForkBody::export_all(&cfg)?;

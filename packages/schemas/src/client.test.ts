@@ -83,6 +83,7 @@ describe("daemon client", () => {
       c.fork("s", "c1", { name: "n" }),
       c.apply("s", "c1", {}),
       c.diff("s", "a", "b"),
+      c.diffFile("s", "a", "b", "src/x.ts"),
     ]);
     // Segment-wise match: `{param}` matches any one segment.
     const matches = (template: string, path: string) => {
