@@ -8,7 +8,8 @@ export default defineConfig({
   base: process.env.WYRD_SITE_BASE ?? "/wyrdline/",
   plugins: [react(), tailwindcss()],
   server: { port: 5718 },
-  build: { target: "es2023", sourcemap: true },
+  // The lazy 3D chunk is ~140 kB gzip, inside the 250 kB budget (plan §16.1b).
+  build: { target: "es2023", sourcemap: true, chunkSizeWarningLimit: 600 },
   test: {
     environment: "jsdom",
     globals: true,
