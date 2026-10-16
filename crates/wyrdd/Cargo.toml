@@ -24,8 +24,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
 wyrd-cell = { path = "../wyrd-cell" }
+wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-doctor = { path = "../wyrd-doctor" }
 wyrd-ledger = { path = "../wyrd-ledger" }
+wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
 http-body-util.workspace = true

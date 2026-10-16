@@ -37,3 +37,27 @@ answers on is an error. SIGINT/SIGTERM remove the socket.
 | `GET /v1/ready` | 200 when the data directory is writable, else 503 |
 | `GET /v1/capabilities` | `wyrd doctor` report (Landlock probed through `wyrd __probe-landlock`) |
 | `GET /v1/metrics` | Prometheus text: requests by status class |
+| `GET /v1/sessions?status=&agent=&repo=&since=` | Sessions, newest first; `repo` is a workspace path prefix, `since` ms since the epoch |
+| `GET /v1/sessions/{sid}` | Session record plus `head_seq`, `head_hash`, `sealed` |
+| `GET /v1/sessions/{sid}/events?plane=&kind=&after_seq=&limit=` | A page of events (default 500, max 5 000); `kind` is exact or a dotted prefix; `next_after_seq` is null on the last page |
+| `GET /v1/sessions/{sid}/graph?from_seq=&to_seq=` | Correlator graph; attribution is computed over the whole session, then calls and effects are cut to the range |
+| `GET /v1/sessions/{sid}/tool-calls/{tcid}` | One call and every effect attributed to it or listing it as a candidate |
+| `GET /v1/sessions/{sid}/verify` | Chain and seal verification (`ok`, first problem) |
+| `GET /v1/sessions/{sid}/checkpoints` | Checkpoints, branches, current branch |
+
+## Session and checkpoint ids
+
+Session ids are lowercase ULIDs; a unique prefix is accepted, as in the
+CLI. Ids are checked before any lookup: malformed → 400 `invalid-id`,
+unknown → 404, ambiguous prefix → 409 `ambiguous`.
+
+Checkpoint ids are per session (`c1`, `c2`, …), so checkpoint routes are
+scoped under their session (`/v1/sessions/{sid}/checkpoints/…`) rather
+than the global `/v1/checkpoints/{cid}` sketched in plan §14.1.
+
+## Live sessions
+
+`wyrd run` owns a live session: it holds the agent, the session's single
+ledger writer, and the intent socket. The daemon reads the ledger
+read-only (SQLite WAL readers never block the writer) and reaches a live
+session only through that intent socket.

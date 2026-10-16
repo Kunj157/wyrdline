@@ -8,6 +8,8 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wyrd_cell::{CellError, DataDir, Session};
+use wyrd_correlator::Graph;
+use wyrd_schema::Event;
 
 use crate::AppState;
 use crate::problem::Problem;
@@ -72,6 +74,19 @@ pub fn open(data: &DataDir, sid: &str) -> Result<Session, Problem> {
 impl From<wyrd_ledger::LedgerError> for Problem {
     fn from(e: wyrd_ledger::LedgerError) -> Self {
         Problem::internal(e.to_string())
+    }
+}
+
+/// Every event of a session, in order.
+pub fn all_events(s: &Session) -> Result<Vec<Event>, Problem> {
+    let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
+    let mut all: Vec<Event> = Vec::new();
+    loop {
+        let batch = ledger.events_after(all.last().map_or(0, |e| e.seq), MAX_LIMIT)?;
+        if batch.is_empty() {
+            return Ok(all);
+        }
+        all.extend(batch);
     }
 }
 
@@ -182,6 +197,55 @@ pub async fn events(
         let (head, _) = ledger.head();
         let next = (after < head).then_some(after);
         Ok(Json(json!({ "events": out, "next_after_seq": next })))
+    })
+    .await
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RangeQuery {
+    from_seq: Option<u64>,
+    to_seq: Option<u64>,
+}
+
+/// Correlate the whole session (attribution needs every window), then keep
+/// the calls and effects inside the requested range.
+pub async fn graph(
+    State(st): State<Arc<AppState>>,
+    Path(sid): Path<String>,
+    Query(q): Query<RangeQuery>,
+) -> Result<Json<Value>, Problem> {
+    let data = st.data.clone();
+    blocking(move || {
+        let s = open(&data, &sid)?;
+        let mut g: Graph = wyrd_correlator::correlate(&all_events(&s)?);
+        let (lo, hi) = (q.from_seq.unwrap_or(0), q.to_seq.unwrap_or(u64::MAX));
+        g.effects.retain(|e| (lo..=hi).contains(&e.seq));
+        g.calls
+            .retain(|c| c.started_seq <= hi && c.finished_seq.unwrap_or(u64::MAX) >= lo);
+        Ok(Json(to_json(&g)?))
+    })
+    .await
+}
+
+pub async fn tool_call(
+    State(st): State<Arc<AppState>>,
+    Path((sid, tcid)): Path<(String, String)>,
+) -> Result<Json<Value>, Problem> {
+    let data = st.data.clone();
+    blocking(move || {
+        let s = open(&data, &sid)?;
+        let g: Graph = wyrd_correlator::correlate(&all_events(&s)?);
+        let call = g
+            .call(&tcid)
+            .ok_or_else(|| Problem::not_found(format!("tool call {tcid}")))?;
+        let effects: Vec<_> = g
+            .effects
+            .iter()
+            .filter(|e| e.call_id.as_deref() == Some(tcid.as_str()) || e.candidates.contains(&tcid))
+            .collect();
+        Ok(Json(
+            json!({ "call": to_json(call)?, "effects": to_json(&effects)? }),
+        ))
     })
     .await
 }
