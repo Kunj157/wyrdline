@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 use wyrd_cas::{EntryKind, Manifest};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {
     Added,
@@ -13,7 +13,7 @@ pub enum ChangeKind {
     Modified,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Change {
     pub path: String,
     pub kind: ChangeKind,

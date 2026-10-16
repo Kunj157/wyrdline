@@ -20,6 +20,8 @@ tracing.workspace = true
 wyrd-bundle = { path = "../wyrd-bundle" }
 wyrd-otlp = { path = "../wyrd-otlp" }
 wyrd-schema = { path = "../wyrd-schema" }
+schemars.workspace = true
+ts-rs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
