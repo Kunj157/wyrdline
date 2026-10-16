@@ -19,7 +19,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "pnpm --filter @wyrdline/site exec vite preview --port 4733 --strictPort",
+    // Bind IPv4 explicitly: on the runners "localhost" resolves to ::1.
+    command:
+      "pnpm --filter @wyrdline/site exec vite preview --host 127.0.0.1 --port 4733 --strictPort",
+    stdout: "pipe",
     url: "http://127.0.0.1:4733/wyrdline/",
     reuseExistingServer: false,
   },
