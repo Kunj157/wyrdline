@@ -18,6 +18,7 @@ Asserted: captured ≤ 5 % and loaded-but-unregistered ≤ 5 %.
 | Date | Machine | No sensor | Loaded, not registered | Captured | Effects per run |
 |---|---|---|---|---|---|
 | 2026-10-16 | workstation, load ~1.5 | 7.95 s | 7.96 s (**+0.2 %**) | 8.01 s (**+0.8 %**) | 1 880 |
+| 2026-10-16 | hosted runner (run 38897030147) | 11.24 s | 11.37 s (**+1.2 %**) | 11.41 s (**+1.5 %**) | 1 880 |
 
 The plan also names `pnpm test` of the demo repository; that repository
 (`demo/victim-shop`) does not exist yet and is measured once it does.
@@ -32,7 +33,8 @@ pays stays asserted at ≤ 5 %.
 
 | Date | Machine | Loaded, not registered | Captured |
 |---|---|---|---|
-| 2026-10-16 | hosted runner (nightly) | +1.6 % | +9.1 % |
+| 2026-10-16 | hosted runner (nightly 38865958905) | +1.6 % | +9.1 % |
+| 2026-10-16 | hosted runner (run 38897030147) | +1.3 % | +9.4 % |
 | 2026-10-16 | workstation, load ~1.5 | +0.9 % | +5.9 % |
 
 ## Throughput and loss
