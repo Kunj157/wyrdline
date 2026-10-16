@@ -3,8 +3,12 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { apiClient } from "./lib/api";
 import { makeRouter } from "./router";
 import "./styles.css";
+
+// Take the token out of the address bar before anything renders.
+apiClient();
 
 const queryClient = new QueryClient();
 const router = makeRouter();
