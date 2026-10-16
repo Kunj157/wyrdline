@@ -185,14 +185,22 @@ fn mcp_servers_merge_with_agent_precedence_and_stdio_ones_are_wrapped() {
     use wyrd_adapters::claude_code::{inject_mcp_config, mcp_servers, wrap_mcp_servers};
     let ws = std::path::Path::new("/w/shop");
     let user = json!({
-        "mcpServers": {"fs": {"command": "user-fs"}, "web": {"type": "http", "url": "https://x"}},
+        "mcpServers": {
+            "fs": {"command": "user-fs"},
+            "web": {"type": "http", "url": "https://x", "headers": {"authorization": "Bearer t"}},
+            "legacy": {"type": "sse", "url": "https://y"}
+        },
         "projects": {"/w/shop": {"mcpServers": {"db": {"command": "local-db", "args": ["--ro"]}}}}
     });
     let project = json!({"mcpServers": {"fs": {"command": "npx", "args": ["fs-server", "."], "env": {"A": "1"}}}});
     let merged = mcp_servers(Some(&user), Some(&project), ws);
     assert_eq!(merged["fs"]["command"], "npx", "project beats user");
-    assert_eq!(merged.len(), 3);
-    let wrapped = wrap_mcp_servers(&merged, std::path::Path::new("/opt/wyrd"));
+    assert_eq!(merged.len(), 4);
+    let (wrapped, remotes) = wrap_mcp_servers(
+        &merged,
+        std::path::Path::new("/opt/wyrd"),
+        std::path::Path::new("/s/1"),
+    );
     let fs = &wrapped["mcpServers"]["fs"];
     assert_eq!(fs["command"], "/opt/wyrd");
     assert_eq!(
@@ -204,10 +212,34 @@ fn mcp_servers_merge_with_agent_precedence_and_stdio_ones_are_wrapped() {
         wrapped["mcpServers"]["db"]["args"],
         json!(["mcp-proxy", "--server", "db", "--", "local-db", "--ro"])
     );
+    let web = &wrapped["mcpServers"]["web"];
+    assert_eq!(web["type"], "stdio");
     assert_eq!(
-        wrapped["mcpServers"]["web"],
-        json!({"type": "http", "url": "https://x"}),
-        "remote servers unchanged"
+        web["args"],
+        json!([
+            "mcp-proxy",
+            "--server",
+            "web",
+            "--remote",
+            "/s/1/mcp-remote-web.json"
+        ])
+    );
+    assert!(
+        web.get("headers").is_none(),
+        "credentials leave the agent config"
+    );
+    assert!(!web.to_string().contains("Bearer"));
+    assert_eq!(
+        remotes,
+        vec![(
+            std::path::PathBuf::from("/s/1/mcp-remote-web.json"),
+            json!({"url": "https://x", "headers": {"authorization": "Bearer t"}})
+        )]
+    );
+    assert_eq!(
+        wrapped["mcpServers"]["legacy"],
+        json!({"type": "sse", "url": "https://y"}),
+        "legacy SSE servers unchanged"
     );
     let cmd: Vec<String> = ["claude", "-p", "x"].map(String::from).to_vec();
     assert_eq!(

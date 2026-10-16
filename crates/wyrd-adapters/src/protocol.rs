@@ -27,6 +27,11 @@ pub enum Request {
         direction: Direction,
         message: serde_json::Value,
     },
+    /// An OTLP/HTTP JSON trace export (forwarded by the daemon); its
+    /// generative-AI tool spans become intent events.
+    Otlp {
+        request: serde_json::Value,
+    },
     Ping,
 }
 
@@ -40,8 +45,10 @@ pub enum Direction {
     ToClient,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[schemars(rename = "IntentResponse")]
+#[ts(rename = "IntentResponse")]
 pub enum Response {
     /// Decision for a pre-execution check.
     Decision {

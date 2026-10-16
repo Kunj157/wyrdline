@@ -1,7 +1,9 @@
+pub mod daemon;
 pub mod doctor;
 pub mod effects;
 pub mod graph;
 pub mod hook;
+pub mod inspect;
 pub mod intent;
 pub mod mcp_proxy;
 pub mod session;

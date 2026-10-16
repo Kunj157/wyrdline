@@ -136,6 +136,13 @@ impl<S: Sink> Ingest<S> {
                 direction,
                 message,
             } => self.mcp(&server, direction, &message),
+            Request::Otlp { request } => {
+                let mapped = wyrd_otlp::map_traces(&request, INGEST_LEVEL);
+                match self.append(mapped.events) {
+                    Ok(()) => Response::Ok,
+                    Err(r) => r,
+                }
+            }
         }
     }
 

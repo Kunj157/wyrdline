@@ -10,8 +10,10 @@ use crate::key::{fingerprint, verify_signature};
 use crate::{FORMAT_ID, Hash, Ledger, Result, seal_message};
 
 /// The first problem found, if any.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(tag = "problem", rename_all = "snake_case")]
+#[schemars(rename = "ChainProblem")]
+#[ts(rename = "ChainProblem")]
 pub enum Problem {
     /// `seq` values are not dense starting at 1.
     SequenceGap { expected: u64, found: u64 },
@@ -28,7 +30,7 @@ pub enum Problem {
 }
 
 /// Verification result.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Verification {
     pub session_id: String,
     pub events: u64,

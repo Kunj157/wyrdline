@@ -1,0 +1,4780 @@
+{
+  "components": {
+    "schemas": {
+      "ApplyBody": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "List the operations without changing anything.",
+            "type": "boolean"
+          },
+          "force": {
+            "default": false,
+            "description": "Apply even if the real workspace changed since the session started.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ApplyReport": {
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/Op"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ops",
+          "conflicts",
+          "applied"
+        ],
+        "type": "object"
+      },
+      "Attribution": {
+        "oneOf": [
+          {
+            "enum": [
+              "direct",
+              "window",
+              "ambiguous",
+              "agent_runtime",
+              "unattributed"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "infrastructure",
+            "description": "Wyrdline's own helper processes (hook adapters) that the agent runs.",
+            "type": "string"
+          }
+        ]
+      },
+      "Branch": {
+        "properties": {
+          "created_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "forked_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "forked_from",
+          "created_ms"
+        ],
+        "type": "object"
+      },
+      "BranchCreated": {
+        "properties": {
+          "branch": {
+            "$ref": "#/components/schemas/Branch"
+          }
+        },
+        "required": [
+          "branch"
+        ],
+        "type": "object"
+      },
+      "Call": {
+        "description": "One tool call with its time window.",
+        "properties": {
+          "call_id": {
+            "type": "string"
+          },
+          "command": {
+            "description": "Shell command for command tools.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effects": {
+            "description": "Effects attributed to this call (sequence numbers).",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "end_ns": {
+            "description": "End of the window; open calls extend to the end of the session.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exit_code": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "finished_seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "nested_in": {
+            "description": "MCP calls that are the gateway's view of a hook call carry the hook\ncall's id here; they never compete with it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/IntentSource"
+          },
+          "start_ns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_path": {
+            "description": "Target file for edit/write tools.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "tool",
+          "source",
+          "started_seq",
+          "finished_seq",
+          "start_ns",
+          "end_ns",
+          "status",
+          "exit_code",
+          "command",
+          "target_path",
+          "nested_in",
+          "effects"
+        ],
+        "type": "object"
+      },
+      "CallStatus": {
+        "enum": [
+          "ok",
+          "error",
+          "denied",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CaptureMode": {
+        "oneOf": [
+          {
+            "const": "cell",
+            "description": "Copy-on-write sandbox with checkpoints and rewind.",
+            "type": "string"
+          },
+          {
+            "const": "observe",
+            "description": "Observation only, no sandbox and no rewind.",
+            "type": "string"
+          }
+        ]
+      },
+      "ChainProblem": {
+        "description": "The first problem found, if any.",
+        "oneOf": [
+          {
+            "description": "`seq` values are not dense starting at 1.",
+            "properties": {
+              "expected": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "found": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "problem": {
+                "const": "sequence_gap",
+                "type": "string"
+              }
+            },
+            "required": [
+              "problem",
+              "expected",
+              "found"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Stored `prev_hash` does not match the previous row's hash.",
+            "properties": {
+              "problem": {
+                "const": "broken_link",
+                "type": "string"
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "problem",
+              "seq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Stored `hash` does not match the recomputed hash of the row.",
+            "properties": {
+              "problem": {
+                "const": "hash_mismatch",
+                "type": "string"
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "problem",
+              "seq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The event bytes do not decode, or the indexed columns disagree with them.",
+            "properties": {
+              "problem": {
+                "const": "bad_event",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "problem",
+              "seq",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The seal does not refer to the last event.",
+            "properties": {
+              "actual_seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "problem": {
+                "const": "seal_head_mismatch",
+                "type": "string"
+              },
+              "sealed_seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "problem",
+              "sealed_seq",
+              "actual_seq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The seal signature does not verify.",
+            "properties": {
+              "problem": {
+                "const": "bad_signature",
+                "type": "string"
+              }
+            },
+            "required": [
+              "problem"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Change": {
+        "properties": {
+          "entry": {
+            "description": "What the path is in the newer manifest (or the older one when removed).",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChangeKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "entry"
+        ],
+        "type": "object"
+      },
+      "ChangeKind": {
+        "enum": [
+          "added",
+          "removed",
+          "modified"
+        ],
+        "type": "string"
+      },
+      "Changes": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/Change"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "changes"
+        ],
+        "type": "object"
+      },
+      "Check": {
+        "description": "One line of the report.",
+        "properties": {
+          "consequence": {
+            "description": "What the user loses when the status is not `ok`.",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/CheckId"
+          },
+          "required_for_capture": {
+            "type": "boolean"
+          },
+          "required_for_cell": {
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "detail",
+          "consequence",
+          "required_for_cell",
+          "required_for_capture"
+        ],
+        "type": "object"
+      },
+      "CheckId": {
+        "description": "Stable identifiers of the checks, used by `WYRD_DOCTOR_MASK`.",
+        "enum": [
+          "kernel",
+          "btf",
+          "ringbuf",
+          "cgroup_v2",
+          "cgroup_delegation",
+          "landlock",
+          "bpf_lsm",
+          "userns",
+          "overlay_userns",
+          "cgroup_sock_addr",
+          "sensord"
+        ],
+        "type": "string"
+      },
+      "CheckpointApplied": {
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "files": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checkpoint_id",
+          "files"
+        ],
+        "type": "object"
+      },
+      "CheckpointCreated": {
+        "additionalProperties": false,
+        "properties": {
+          "after_call_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch_id": {
+            "type": "string"
+          },
+          "bytes_added": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "files_changed": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "manifest": {
+            "description": "BLAKE3 of the manifest, `b3:` + hex.",
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "checkpoint_id",
+          "branch_id",
+          "parent_id",
+          "after_call_id",
+          "manifest",
+          "files_changed",
+          "bytes_added",
+          "duration_ms"
+        ],
+        "type": "object"
+      },
+      "CheckpointForked": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_id": {
+            "type": "string"
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkpoint_id",
+          "branch_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "CheckpointRecord": {
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "bytes_read": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "files": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "manifest": {
+            "description": "Manifest hash, `b3:` + hex.",
+            "type": "string"
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "branch",
+          "parent",
+          "manifest",
+          "seq",
+          "created_ms",
+          "files",
+          "bytes_read"
+        ],
+        "type": "object"
+      },
+      "CheckpointRewound": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_id": {
+            "type": "string"
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "irreversible_seqs": {
+            "description": "Effects that could not be undone (escaped the Cell or hit the network).",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "checkpoint_id",
+          "branch_id",
+          "irreversible_seqs"
+        ],
+        "type": "object"
+      },
+      "Checkpoints": {
+        "properties": {
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/Branch"
+            },
+            "type": "array"
+          },
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/CheckpointRecord"
+            },
+            "type": "array"
+          },
+          "current_branch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_branch",
+          "branches",
+          "checkpoints"
+        ],
+        "type": "object"
+      },
+      "ClaimExtracted": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_id": {
+            "type": "string"
+          },
+          "claim_type": {
+            "$ref": "#/components/schemas/ClaimType"
+          },
+          "extractor": {
+            "$ref": "#/components/schemas/Extractor"
+          },
+          "quote": {
+            "description": "Verbatim substring of the referenced assistant turn.",
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "turn": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_id",
+          "turn",
+          "claim_type",
+          "subject",
+          "quote",
+          "extractor"
+        ],
+        "type": "object"
+      },
+      "ClaimType": {
+        "enum": [
+          "tests_pass",
+          "build_ok",
+          "ran_command",
+          "changed_only",
+          "did_not_change",
+          "no_network",
+          "fixed_issue",
+          "other"
+        ],
+        "type": "string"
+      },
+      "Decision": {
+        "enum": [
+          "allow",
+          "deny",
+          "ask"
+        ],
+        "type": "string"
+      },
+      "DivergenceRaised": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence_bp": {
+            "description": "Confidence in basis points (0–10000), integer for deterministic hashing.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "divergence_id": {
+            "type": "string"
+          },
+          "evidence_seqs": {
+            "description": "Ledger events that prove the divergence.",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "rule_id": {
+            "description": "Rule identifier, e.g. `D001`.",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "divergence_id",
+          "rule_id",
+          "severity",
+          "claim_id",
+          "evidence_seqs",
+          "confidence_bp",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "DivergenceStatus": {
+        "enum": [
+          "open",
+          "acknowledged",
+          "false_positive"
+        ],
+        "type": "string"
+      },
+      "DivergenceUpdated": {
+        "additionalProperties": false,
+        "properties": {
+          "divergence_id": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/DivergenceStatus"
+          }
+        },
+        "required": [
+          "divergence_id",
+          "status",
+          "note"
+        ],
+        "type": "object"
+      },
+      "DnsQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "Effect": {
+        "description": "One effect and its cause.",
+        "properties": {
+          "attribution": {
+            "$ref": "#/components/schemas/Attribution"
+          },
+          "call_id": {
+            "description": "The attributed call, when there is exactly one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "candidates": {
+            "description": "For ambiguous effects: every call whose window contains it.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "confidence_bp": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ts_ns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "ts_ns",
+          "pid",
+          "call_id",
+          "candidates",
+          "attribution",
+          "confidence_bp"
+        ],
+        "type": "object"
+      },
+      "Event": {
+        "additionalProperties": false,
+        "description": "One entry of the session event stream.",
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/EventBody",
+            "description": "Kind-specific content."
+          },
+          "drops_since_last": {
+            "description": "Ring-buffer drops observed by the sensor since the previous event.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "process": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Process that caused the event, when there is one."
+          },
+          "seq": {
+            "description": "Dense sequence number within the session, starting at 1.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ts_mono_ns": {
+            "description": "`CLOCK_MONOTONIC` nanoseconds (kernel or daemon clock).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ts_wall_ms": {
+            "description": "Wall-clock milliseconds since the Unix epoch, for display only.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "ts_mono_ns",
+          "ts_wall_ms",
+          "process",
+          "drops_since_last",
+          "body"
+        ],
+        "type": "object"
+      },
+      "EventBody": {
+        "description": "Every event kind of schema v1, adjacently tagged as\n`{ \"kind\": \"effect.file.write\", \"payload\": { … } }`.",
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.session.started",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/SessionStarted"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.session.closed",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/SessionClosed"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.session.state_changed",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/SessionStateChanged"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.sensor.lost",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/SensorLost"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.sensor.resumed",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/SensorResumed"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "intent.tool_call.started",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ToolCallStarted"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "intent.tool_call.finished",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ToolCallFinished"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "intent.tool_call.denied",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ToolCallDenied"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "intent.message",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/Message"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "intent.mcp.request",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/McpRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "intent.mcp.response",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/McpResponse"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.proc.exec",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ProcExec"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.proc.fork",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ProcFork"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.proc.exit",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ProcExit"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.open_write",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FileOpenWrite"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.write",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FileWrite"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.rename",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FileRename"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.unlink",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FileUnlink"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.mkdir",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FilePath"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.chmod",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FileChmod"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.truncate",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FileTruncate"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.file.read_sensitive",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/FilePath"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.net.connect",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NetConnect"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "effect.net.dns_query",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/DnsQuery"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "state.checkpoint.created",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/CheckpointCreated"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "state.checkpoint.rewound",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/CheckpointRewound"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "state.checkpoint.forked",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/CheckpointForked"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "state.checkpoint.applied",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/CheckpointApplied"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "guard.decision",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/GuardDecision"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "verdict.claim.extracted",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ClaimExtracted"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "verdict.divergence.raised",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/DivergenceRaised"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "verdict.divergence.updated",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/DivergenceUpdated"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "EventPage": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array"
+          },
+          "next_after_seq": {
+            "description": "Pass as `after_seq` for the next page; null on the last page.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "events",
+          "next_after_seq"
+        ],
+        "type": "object"
+      },
+      "Extractor": {
+        "enum": [
+          "rule",
+          "llm"
+        ],
+        "type": "string"
+      },
+      "FileChmod": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/FilePath"
+          },
+          "mode": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "FileOpenWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/FilePath"
+          },
+          "flags": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "flags"
+        ],
+        "type": "object"
+      },
+      "FilePath": {
+        "additionalProperties": false,
+        "description": "A path as observed in the kernel.",
+        "properties": {
+          "in_cell": {
+            "description": "True when the path is inside the session's Cell (rewindable).",
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "truncated": {
+            "description": "True when path resolution hit its component limit.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "in_cell",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "FileRename": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/FilePath"
+          },
+          "to": {
+            "$ref": "#/components/schemas/FilePath"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "FileTruncate": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/FilePath"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "size"
+        ],
+        "type": "object"
+      },
+      "FileUnlink": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/FilePath"
+          },
+          "is_dir": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file",
+          "is_dir"
+        ],
+        "type": "object"
+      },
+      "FileWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "description": "Bytes written, aggregated per file descriptor per window.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "file": {
+            "$ref": "#/components/schemas/FilePath"
+          }
+        },
+        "required": [
+          "file",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "ForkBody": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Name of the new branch.",
+            "type": "string"
+          },
+          "relaunch": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "Graph": {
+        "description": "The causal graph of a session.",
+        "properties": {
+          "agent_root": {
+            "description": "The agent's root process (first exec of the session), if seen.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/Call"
+            },
+            "type": "array"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/Effect"
+            },
+            "type": "array"
+          },
+          "processes": {
+            "items": {
+              "$ref": "#/components/schemas/Process"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "calls",
+          "processes",
+          "effects",
+          "agent_root"
+        ],
+        "type": "object"
+      },
+      "GuardDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "call_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
+          "policy_id": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/GuardStage"
+          },
+          "subject_seq": {
+            "description": "Effect event the decision refers to, when it is effect-time.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "stage",
+          "decision",
+          "policy_id",
+          "policy_version",
+          "reason",
+          "call_id",
+          "subject_seq"
+        ],
+        "type": "object"
+      },
+      "GuardStage": {
+        "enum": [
+          "hook",
+          "gateway",
+          "kernel",
+          "effect"
+        ],
+        "type": "string"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "type": "object"
+      },
+      "IntentResponse": {
+        "oneOf": [
+          {
+            "description": "Decision for a pre-execution check.",
+            "properties": {
+              "decision": {
+                "$ref": "#/components/schemas/Decision"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "const": "decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "decision",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "ok",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "const": "error",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "message"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "IntentSource": {
+        "enum": [
+          "hook",
+          "mcp",
+          "otlp"
+        ],
+        "type": "string"
+      },
+      "McpRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "params": {
+            "description": "Redacted params."
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "request_id",
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      "McpResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "is_error": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "result_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "request_id",
+          "is_error",
+          "result_summary"
+        ],
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "text": {
+            "description": "Redacted message text.",
+            "type": "string"
+          },
+          "turn": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "role",
+          "turn",
+          "text"
+        ],
+        "type": "object"
+      },
+      "NetConnect": {
+        "additionalProperties": false,
+        "properties": {
+          "addr": {
+            "type": "string"
+          },
+          "dns_name": {
+            "description": "Most recent DNS name that resolved to `addr` in this session.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "family": {
+            "description": "`4` or `6`.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "port": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/NetVerdict"
+          }
+        },
+        "required": [
+          "family",
+          "addr",
+          "port",
+          "dns_name",
+          "verdict"
+        ],
+        "type": "object"
+      },
+      "NetVerdict": {
+        "enum": [
+          "allowed",
+          "denied"
+        ],
+        "type": "string"
+      },
+      "Op": {
+        "oneOf": [
+          {
+            "properties": {
+              "op": {
+                "const": "write",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "mkdir",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "symlink",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "delete",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "replace_dir",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "OtlpExportResponse": {
+        "description": "The OTLP `ExportTraceServiceResponse` (always a full success).",
+        "properties": {
+          "partialSuccess": {
+            "$ref": "#/components/schemas/PartialSuccess"
+          }
+        },
+        "required": [
+          "partialSuccess"
+        ],
+        "type": "object"
+      },
+      "PartialSuccess": {
+        "type": "object"
+      },
+      "Problem": {
+        "description": "An error answered as `application/problem+json`.",
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "description": "A stable, relative identifier of the problem kind, e.g. `unauthorized`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProcExec": {
+        "additionalProperties": false,
+        "properties": {
+          "argv": {
+            "description": "First arguments, each possibly truncated (see `truncated`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "filename",
+          "argv",
+          "cwd",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "ProcExit": {
+        "additionalProperties": false,
+        "properties": {
+          "exit_code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "signal": {
+            "description": "Terminating signal, if the process was killed.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "exit_code",
+          "signal"
+        ],
+        "type": "object"
+      },
+      "ProcFork": {
+        "additionalProperties": false,
+        "properties": {
+          "child_pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "child_start_ns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "child_pid",
+          "child_start_ns"
+        ],
+        "type": "object"
+      },
+      "Process": {
+        "description": "One process of the session.",
+        "properties": {
+          "argv": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "attribution": {
+            "$ref": "#/components/schemas/Attribution"
+          },
+          "call_id": {
+            "description": "Call that started this process (or an ancestor), if known.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exec_seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ppid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start_ns": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pid",
+          "start_ns",
+          "ppid",
+          "exe",
+          "argv",
+          "exec_seq",
+          "exit_code",
+          "call_id",
+          "attribution"
+        ],
+        "type": "object"
+      },
+      "ProcessRef": {
+        "additionalProperties": false,
+        "description": "Identity of a process, robust against PID reuse.",
+        "properties": {
+          "cgroup_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ppid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start_ns": {
+            "description": "Process start time in monotonic nanoseconds; `(pid, start_ns)` is unique.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pid",
+          "tid",
+          "ppid",
+          "start_ns",
+          "cgroup_id"
+        ],
+        "type": "object"
+      },
+      "Ready": {
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Relaunching": {
+        "description": "A rewind or fork handed to a detached `wyrd … --relaunch` (202).",
+        "properties": {
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "relaunching": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "relaunching",
+          "pid"
+        ],
+        "type": "object"
+      },
+      "Report": {
+        "description": "Full report.",
+        "properties": {
+          "cell_mode": {
+            "type": "boolean"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "type": "array"
+          },
+          "kernel_capture": {
+            "type": "boolean"
+          },
+          "kernel_network_enforcement": {
+            "type": "boolean"
+          },
+          "kernel_release": {
+            "type": "string"
+          },
+          "masked": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kernel_release",
+          "checks",
+          "cell_mode",
+          "kernel_capture",
+          "kernel_network_enforcement",
+          "masked"
+        ],
+        "type": "object"
+      },
+      "RewindBody": {
+        "additionalProperties": false,
+        "properties": {
+          "relaunch": {
+            "default": false,
+            "description": "Start the agent again on the new branch (handled by a detached `wyrd`).",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "user",
+          "assistant"
+        ],
+        "type": "string"
+      },
+      "SensorLost": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "SensorResumed": {
+        "additionalProperties": false,
+        "properties": {
+          "dropped": {
+            "description": "Events known to be lost while the sensor was unavailable.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dropped"
+        ],
+        "type": "object"
+      },
+      "SessionClosed": {
+        "additionalProperties": false,
+        "properties": {
+          "exit_code": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "exit_code"
+        ],
+        "type": "object"
+      },
+      "SessionDetail": {
+        "properties": {
+          "agent": {
+            "default": "generic",
+            "description": "Agent adapter (`claude-code`, `codex`, `gemini-cli`, `fakeagent`, `generic`).",
+            "type": "string"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/Branch"
+            },
+            "type": "array"
+          },
+          "cgroup": {
+            "description": "cgroup of the running Cell, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/CheckpointRecord"
+            },
+            "type": "array"
+          },
+          "command": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "current_branch": {
+            "type": "string"
+          },
+          "deny_tools": {
+            "default": [],
+            "description": "Tools the static pre-execution policy denies (Phase 4; Wasm policies replace it).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "head_hash": {
+            "description": "`b3:` + hex of the last event's hash.",
+            "type": "string"
+          },
+          "head_seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CaptureMode"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runs": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sealed": {
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionState"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "workspace",
+          "command",
+          "mode",
+          "created_ms",
+          "status",
+          "current_branch",
+          "branches",
+          "checkpoints",
+          "cgroup",
+          "pid",
+          "runs",
+          "agent",
+          "deny_tools",
+          "head_seq",
+          "head_hash",
+          "sealed"
+        ],
+        "type": "object"
+      },
+      "SessionList": {
+        "properties": {
+          "sessions": {
+            "description": "Newest first.",
+            "items": {
+              "$ref": "#/components/schemas/SessionRecord"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "type": "object"
+      },
+      "SessionRecord": {
+        "properties": {
+          "agent": {
+            "default": "generic",
+            "description": "Agent adapter (`claude-code`, `codex`, `gemini-cli`, `fakeagent`, `generic`).",
+            "type": "string"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/Branch"
+            },
+            "type": "array"
+          },
+          "cgroup": {
+            "description": "cgroup of the running Cell, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/CheckpointRecord"
+            },
+            "type": "array"
+          },
+          "command": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "current_branch": {
+            "type": "string"
+          },
+          "deny_tools": {
+            "default": [],
+            "description": "Tools the static pre-execution policy denies (Phase 4; Wasm policies replace it).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CaptureMode"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runs": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionState"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "workspace",
+          "command",
+          "mode",
+          "created_ms",
+          "status",
+          "current_branch",
+          "branches",
+          "checkpoints",
+          "cgroup",
+          "pid",
+          "runs",
+          "agent",
+          "deny_tools"
+        ],
+        "type": "object"
+      },
+      "SessionStarted": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_kind": {
+            "description": "Adapter name, e.g. `claude-code`, `codex`, `gemini-cli`, `mcp`, `fakeagent`.",
+            "type": "string"
+          },
+          "agent_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "Capability name → available, as reported by `wyrd doctor`.",
+            "type": "object"
+          },
+          "command": {
+            "description": "Redacted agent command line.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kernel_release": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CaptureMode"
+          },
+          "policy_set_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "agent_kind",
+          "agent_version",
+          "command",
+          "workspace_root",
+          "mode",
+          "kernel_release",
+          "capabilities",
+          "policy_set_hash"
+        ],
+        "type": "object"
+      },
+      "SessionState": {
+        "enum": [
+          "preparing",
+          "recording",
+          "paused",
+          "rewinding",
+          "degraded",
+          "closing",
+          "closed",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "SessionStateChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/SessionState"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "$ref": "#/components/schemas/SessionState"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "Severity": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ],
+        "type": "string"
+      },
+      "Status": {
+        "description": "Outcome of one check.",
+        "enum": [
+          "ok",
+          "degraded",
+          "missing",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "Stopped": {
+        "properties": {
+          "stopped": {
+            "description": "False when no agent was running.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stopped"
+        ],
+        "type": "object"
+      },
+      "ToolCallDenied": {
+        "additionalProperties": false,
+        "properties": {
+          "call_id": {
+            "type": "string"
+          },
+          "policy_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "policy_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ToolCallDetail": {
+        "properties": {
+          "call": {
+            "$ref": "#/components/schemas/Call"
+          },
+          "effects": {
+            "description": "Effects attributed to the call or naming it as an ambiguous candidate.",
+            "items": {
+              "$ref": "#/components/schemas/Effect"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "call",
+          "effects"
+        ],
+        "type": "object"
+      },
+      "ToolCallFinished": {
+        "additionalProperties": false,
+        "properties": {
+          "call_id": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exit_code": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CallStatus"
+          },
+          "summary": {
+            "description": "Short redacted summary of the result.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "call_id",
+          "status",
+          "exit_code",
+          "summary",
+          "duration_ms"
+        ],
+        "type": "object"
+      },
+      "ToolCallStarted": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "description": "Redacted tool arguments."
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/IntentSource"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "turn": {
+            "description": "Transcript turn that issued the call, when known.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "call_id",
+          "source",
+          "tool",
+          "args",
+          "turn"
+        ],
+        "type": "object"
+      },
+      "VerifyReport": {
+        "description": "Verification result.",
+        "properties": {
+          "events": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "head_hash": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChainProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sealed": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "signer_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "session_id",
+          "events",
+          "head_hash",
+          "sealed",
+          "signer_fingerprint",
+          "problem",
+          "ok"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "daemonToken": {
+        "description": "The daemon token in $XDG_STATE_HOME/wyrdline/token",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "ingestToken": {
+        "description": "Per-session ingest token, derived one-way from the daemon token",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "unixSocket": {
+        "description": "No credential is sent: the unix socket admits only the daemon's own UID (SO_PEERCRED)",
+        "in": "header",
+        "name": "X-Unix-Socket",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "wyrdd, served on a same-UID unix socket and on loopback TCP. See docs/architecture/daemon.md.",
+    "title": "Wyrdline daemon API",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/capabilities": {
+      "get": {
+        "operationId": "getCapabilities",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            },
+            "description": "Report"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Kernel capability report (wyrd doctor)"
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Alive"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Liveness and version"
+      }
+    },
+    "/v1/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "description": "Prometheus text format 0.0.4",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Text exposition"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Prometheus metrics"
+      }
+    },
+    "/v1/ready": {
+      "get": {
+        "operationId": "getReady",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ready"
+                }
+              }
+            },
+            "description": "Ready"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Data directory usable"
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "operationId": "getSessions",
+        "parameters": [
+          {
+            "description": "Session status",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Agent adapter",
+            "in": "query",
+            "name": "agent",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Workspace path prefix",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Created at or after (ms since the epoch)",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionList"
+                }
+              }
+            },
+            "description": "Sessions"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "List sessions, newest first"
+      }
+    },
+    "/v1/sessions/{sid}": {
+      "get": {
+        "operationId": "getSessionsSid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetail"
+                }
+              }
+            },
+            "description": "Session"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "One session with its ledger head"
+      }
+    },
+    "/v1/sessions/{sid}/checkpoints": {
+      "get": {
+        "operationId": "getSessionsSidCheckpoints",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Checkpoints"
+                }
+              }
+            },
+            "description": "Checkpoints"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Checkpoints and branches"
+      },
+      "post": {
+        "operationId": "postSessionsSidCheckpoints",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointRecord"
+                }
+              }
+            },
+            "description": "Checkpoint"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Checkpoint the current branch"
+      }
+    },
+    "/v1/sessions/{sid}/checkpoints/{target}/apply": {
+      "post": {
+        "operationId": "postSessionsSidCheckpointsTargetApply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyReport"
+                }
+              }
+            },
+            "description": "Apply report"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Apply a checkpoint to the real workspace"
+      }
+    },
+    "/v1/sessions/{sid}/checkpoints/{target}/fork": {
+      "post": {
+        "operationId": "postSessionsSidCheckpointsTargetFork",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchCreated"
+                }
+              }
+            },
+            "description": "New branch"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Relaunching"
+                }
+              }
+            },
+            "description": "Handed to a detached wyrd with --relaunch"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Fork a named branch"
+      }
+    },
+    "/v1/sessions/{sid}/checkpoints/{target}/rewind": {
+      "post": {
+        "operationId": "postSessionsSidCheckpointsTargetRewind",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewindBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchCreated"
+                }
+              }
+            },
+            "description": "New branch"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Relaunching"
+                }
+              }
+            },
+            "description": "Handed to a detached wyrd with --relaunch"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Rewind to a checkpoint (new branch)"
+      }
+    },
+    "/v1/sessions/{sid}/diff/{a}/{b}": {
+      "get": {
+        "operationId": "getSessionsSidDiffAB",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "a",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "b",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Changes"
+                }
+              }
+            },
+            "description": "Changes"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Changes between two checkpoints or branches"
+      }
+    },
+    "/v1/sessions/{sid}/events": {
+      "get": {
+        "operationId": "getSessionsSidEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only this plane",
+            "in": "query",
+            "name": "plane",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact kind or dotted prefix",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Start after this seq",
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page size (default 500, max 5000)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            },
+            "description": "Events"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "A page of ledger events"
+      }
+    },
+    "/v1/sessions/{sid}/graph": {
+      "get": {
+        "operationId": "getSessionsSidGraph",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "First seq kept",
+            "in": "query",
+            "name": "from_seq",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Last seq kept",
+            "in": "query",
+            "name": "to_seq",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Graph"
+                }
+              }
+            },
+            "description": "Graph"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Causal graph (correlator)"
+      }
+    },
+    "/v1/sessions/{sid}/ingest/hooks/{adapter}": {
+      "post": {
+        "operationId": "postSessionsSidIngestHooksAdapter",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "adapter",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "The agent's hook payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentResponse"
+                }
+              }
+            },
+            "description": "The session's response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Body too large"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported media type"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "ingestToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Hook payload into a live session"
+      }
+    },
+    "/v1/sessions/{sid}/otlp/v1/traces": {
+      "post": {
+        "operationId": "postSessionsSidOtlpV1Traces",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "OTLP/HTTP JSON ExportTraceServiceRequest",
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OtlpExportResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Body too large"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported media type"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "ingestToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "OTLP/HTTP JSON trace export into a live session"
+      }
+    },
+    "/v1/sessions/{sid}/stop": {
+      "post": {
+        "operationId": "postSessionsSidStop",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stopped"
+                }
+              }
+            },
+            "description": "Stopped"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Stop the running agent"
+      }
+    },
+    "/v1/sessions/{sid}/stream": {
+      "get": {
+        "operationId": "getSessionsSidStream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Resume after this seq (Last-Event-ID wins)",
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "description": "Server-Sent Events",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "SSE: event `ledger` (id = seq, data = Event JSON); final event `end` (data = last seq)"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Live ledger events as Server-Sent Events, resumable with Last-Event-ID"
+      }
+    },
+    "/v1/sessions/{sid}/tool-calls/{tcid}": {
+      "get": {
+        "operationId": "getSessionsSidToolCallsTcid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tcid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolCallDetail"
+                }
+              }
+            },
+            "description": "Call"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "One tool call and its effects"
+      }
+    },
+    "/v1/sessions/{sid}/verify": {
+      "get": {
+        "operationId": "getSessionsSidVerify",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyReport"
+                }
+              }
+            },
+            "description": "Verification"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Verify the hash chain and seal"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:7717"
+    }
+  ]
+}

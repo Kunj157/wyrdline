@@ -10,10 +10,15 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+ureq.workspace = true
 wyrd-adapters = { path = "../wyrd-adapters" }
 wyrd-schema = { path = "../wyrd-schema" }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

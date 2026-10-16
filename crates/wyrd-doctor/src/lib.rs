@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 /// Outcome of one check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Ok,
@@ -21,7 +21,9 @@ pub enum Status {
 }
 
 /// Stable identifiers of the checks, used by `WYRD_DOCTOR_MASK`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, schemars::JsonSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckId {
     Kernel,
@@ -87,7 +89,7 @@ impl CheckId {
 }
 
 /// One line of the report.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Check {
     pub id: CheckId,
     pub title: &'static str,
@@ -100,7 +102,7 @@ pub struct Check {
 }
 
 /// Full report.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Report {
     pub kernel_release: String,
     pub checks: Vec<Check>,

@@ -176,22 +176,7 @@ fn last_turn(ledger: &Ledger) -> anyhow::Result<u32> {
         .unwrap_or(0))
 }
 
-/// Where the intent socket of a session lives: under `$XDG_RUNTIME_DIR`
-/// when possible (short path, never writable by the Cell), else in the
-/// session directory.
-pub fn socket_path(session_dir: &Path, session_id: &str) -> PathBuf {
-    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
-        let dir = PathBuf::from(rt).join("wyrdline");
-        let ok = std::fs::create_dir_all(&dir).is_ok() && {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).is_ok()
-        };
-        if ok {
-            return dir.join(format!("intent-{session_id}.sock"));
-        }
-    }
-    session_dir.join("intent.sock")
-}
+pub use wyrd_adapters::server::socket_path;
 
 /// Intent capture for one run.
 #[derive(Debug)]
@@ -202,15 +187,15 @@ pub struct Capture {
     pub env: Vec<(String, String)>,
     /// Command with injected hook settings, when the adapter needs it.
     pub command: Option<Vec<String>>,
-    /// Wrapped MCP config (may hold server environment values); removed
-    /// when the run ends.
-    pub mcp_config: Option<PathBuf>,
+    /// Wrapped MCP config and remote-server files (may hold server
+    /// environment values and credentials); removed when the run ends.
+    pub private_files: Vec<PathBuf>,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.socket);
-        if let Some(f) = &self.mcp_config {
+        for f in &self.private_files {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -281,7 +266,9 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         (wyrd_adapters::MODE_ENV.into(), mode.into()),
         (wyrd_adapters::BIN_ENV.into(), wyrd.display().to_string()),
     ];
-    let mut mcp_config = None;
+    let mut env = env;
+    env.extend(otlp_env(&rec.id));
+    let mut private_files = Vec::new();
     let command = if rec.agent == claude_code::NAME {
         let file = session.dir().root().join("claude-code-settings.json");
         std::fs::write(
@@ -297,12 +284,15 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         );
         if !servers.is_empty() {
             let file = session.dir().root().join("claude-code-mcp.json");
-            write_private(
-                &file,
-                &serde_json::to_vec_pretty(&claude_code::wrap_mcp_servers(&servers, wyrd))?,
-            )?;
+            let (config, remotes) =
+                claude_code::wrap_mcp_servers(&servers, wyrd, session.dir().root());
+            for (path, remote) in remotes {
+                write_private(&path, &serde_json::to_vec_pretty(&remote)?)?;
+                private_files.push(path);
+            }
+            write_private(&file, &serde_json::to_vec_pretty(&config)?)?;
             command = claude_code::inject_mcp_config(&command, &file);
-            mcp_config = Some(file);
+            private_files.push(file);
         }
         Some(command)
     } else {
@@ -323,8 +313,24 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         checkpoints,
         env,
         command,
-        mcp_config,
+        private_files,
     })
+}
+
+/// Point the agent's OpenTelemetry trace exporter at the daemon, with a
+/// token that opens only this session's ingest routes. Nothing when no
+/// daemon token exists yet or the user set their own endpoint.
+fn otlp_env(session_id: &str) -> Vec<(String, String)> {
+    let listen = std::env::var("WYRD_DAEMON_LISTEN")
+        .unwrap_or_else(|_| wyrd_adapters::daemon::DEFAULT_LISTEN.to_string());
+    match std::fs::read_to_string(wyrd_adapters::daemon::default_token_path()) {
+        Ok(token) if !token.trim().is_empty() => {
+            wyrd_adapters::daemon::otlp_env(&listen, session_id, token.trim(), |k| {
+                std::env::var_os(k).is_some()
+            })
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Adapter implied by the agent program, when `--agent` is not given.

@@ -13,6 +13,8 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 wyrd-schema = { path = "../wyrd-schema" }
+schemars.workspace = true
+ts-rs.workspace = true
 
 [features]
 # Synthetic sessions with ground truth (eval and Wasm parity).

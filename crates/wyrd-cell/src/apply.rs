@@ -12,7 +12,7 @@ use wyrd_cas::{Cas, EntryKind, Manifest};
 use crate::baseline::{Baseline, Stat};
 use crate::{CellError, Result, io_err};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(rename_all = "snake_case", tag = "op", content = "path")]
 pub enum Op {
     Write(String),
@@ -22,7 +22,7 @@ pub enum Op {
     ReplaceDir(String),
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct ApplyReport {
     pub ops: Vec<Op>,
     pub conflicts: Vec<String>,
