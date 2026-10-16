@@ -44,7 +44,7 @@ answers on is an error. SIGINT/SIGTERM remove the socket.
 | `GET /v1/health` | Liveness and version |
 | `GET /v1/ready` | 200 when the data directory is writable, else 503 |
 | `GET /v1/capabilities` | `wyrd doctor` report (Landlock probed through `wyrd __probe-landlock`) |
-| `GET /v1/metrics` | Prometheus text: requests by status class |
+| `GET /v1/metrics` | Prometheus text: requests by status class, ingest requests by kind and outcome, open SSE streams, sessions by status, ledger bytes on disk (checkpoint latency, sensor drops per session, and judge usage are not exported yet) |
 | `GET /v1/sessions?status=&agent=&repo=&since=` | Sessions, newest first; `repo` is a workspace path prefix, `since` ms since the epoch |
 | `GET /v1/sessions/{sid}` | Session record plus `head_seq`, `head_hash`, `sealed` |
 | `GET /v1/sessions/{sid}/events?plane=&kind=&after_seq=&limit=` | A page of events (default 500, max 5 000); `kind` is exact or a dotted prefix; `next_after_seq` is null on the last page |

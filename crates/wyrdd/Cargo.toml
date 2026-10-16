@@ -39,6 +39,10 @@ wyrd-correlator = { path = "../wyrd-correlator", features = ["synth"] }
 tempfile.workspace = true
 tower.workspace = true
 
+[features]
+# Tests that need passwordless sudo (a second user on the socket).
+privileged-tests = []
+
 [lints]
 workspace = true
 

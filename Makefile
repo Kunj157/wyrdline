@@ -62,8 +62,8 @@ test-perf: ## Throughput and overhead measurements (release build, needs sudo; c
 	$(CARGO) clean --release
 
 test-integration: ## Privileged Cell, scenario, and sensor tests (through passwordless sudo)
-	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord \
-		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests \
+	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord -p wyrdd \
+		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests,wyrdd/privileged-tests \
 		-E 'test(/^privileged_/)'
 
 test-scenarios: ## Fakeagent-driven full-pipeline scenarios (unprivileged; Cell ones run in test-integration)

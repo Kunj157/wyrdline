@@ -53,10 +53,53 @@ impl AppState {
     }
 }
 
-/// Request counters exported on `/v1/metrics`.
+/// Counters exported on `/v1/metrics`.
 #[derive(Debug, Default)]
 pub struct Metrics {
     by_class: [AtomicU64; 5],
+    /// Open SSE streams.
+    pub streams: AtomicU64,
+    /// Ingest requests by kind (OTLP, hook) and outcome.
+    pub ingest: [[AtomicU64; 2]; 2],
+}
+
+/// Ingest kinds, indexes into [`Metrics::ingest`].
+pub const INGEST_OTLP: usize = 0;
+pub const INGEST_HOOK: usize = 1;
+
+/// Point-in-time numbers read from the data directory for a scrape.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    /// Sessions by status name.
+    pub sessions: std::collections::BTreeMap<String, u64>,
+    /// Bytes of all session ledgers (including write-ahead logs).
+    pub ledger_bytes: u64,
+}
+
+impl Snapshot {
+    /// Read the data directory (blocking).
+    pub fn read(data: &DataDir) -> Snapshot {
+        let mut snap = Snapshot::default();
+        for r in wyrd_cell::Session::list(data).unwrap_or_default() {
+            let status = serde_json::to_value(r.status)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            *snap.sessions.entry(status).or_default() += 1;
+            let ledger = data.session(&r.id).ledger();
+            for suffix in ["", "-wal"] {
+                let mut p = ledger.clone().into_os_string();
+                p.push(suffix);
+                snap.ledger_bytes += std::fs::metadata(p).map_or(0, |m| m.len());
+            }
+        }
+        snap
+    }
+}
+
+/// The `# HELP` and `# TYPE` lines of a metric family.
+fn family(out: &mut String, name: &str, kind: &str, help: &str) {
+    let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} {kind}");
 }
 
 impl Metrics {
@@ -65,11 +108,19 @@ impl Metrics {
         self.by_class[class].fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Count one ingest request of `kind` ([`INGEST_OTLP`], [`INGEST_HOOK`]).
+    pub fn ingested(&self, kind: usize, ok: bool) {
+        self.ingest[kind][usize::from(!ok)].fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Prometheus text exposition.
-    pub fn render(&self) -> String {
-        let mut out = String::from(
-            "# HELP wyrdd_http_requests_total HTTP requests by status class.\n\
-             # TYPE wyrdd_http_requests_total counter\n",
+    pub fn render(&self, snap: &Snapshot) -> String {
+        let mut out = String::new();
+        family(
+            &mut out,
+            "wyrdd_http_requests_total",
+            "counter",
+            "HTTP requests by status class.",
         );
         for (i, c) in self.by_class.iter().enumerate() {
             let _ = writeln!(
@@ -79,6 +130,48 @@ impl Metrics {
                 c.load(Ordering::Relaxed)
             );
         }
+        family(
+            &mut out,
+            "wyrdd_ingest_requests_total",
+            "counter",
+            "Ingest requests by kind and outcome.",
+        );
+        for (k, kind) in [(INGEST_OTLP, "otlp"), (INGEST_HOOK, "hook")] {
+            for (o, outcome) in [(0, "accepted"), (1, "rejected")] {
+                let _ = writeln!(
+                    out,
+                    "wyrdd_ingest_requests_total{{kind=\"{kind}\",outcome=\"{outcome}\"}} {}",
+                    self.ingest[k][o].load(Ordering::Relaxed)
+                );
+            }
+        }
+        family(
+            &mut out,
+            "wyrdd_sse_streams",
+            "gauge",
+            "Open session event streams.",
+        );
+        let _ = writeln!(
+            out,
+            "wyrdd_sse_streams {}",
+            self.streams.load(Ordering::Relaxed)
+        );
+        family(
+            &mut out,
+            "wyrdd_sessions",
+            "gauge",
+            "Sessions in the data directory by status.",
+        );
+        for (status, n) in &snap.sessions {
+            let _ = writeln!(out, "wyrdd_sessions{{status=\"{status}\"}} {n}");
+        }
+        family(
+            &mut out,
+            "wyrdd_ledger_bytes",
+            "gauge",
+            "Bytes of all session ledgers on disk.",
+        );
+        let _ = writeln!(out, "wyrdd_ledger_bytes {}", snap.ledger_bytes);
         out
     }
 }
@@ -198,7 +291,17 @@ mod tests {
         m.record(200);
         m.record(204);
         m.record(401);
-        let text = m.render();
+        m.ingested(INGEST_OTLP, true);
+        m.ingested(INGEST_HOOK, false);
+        let mut snap = Snapshot::default();
+        snap.sessions.insert("closed".into(), 2);
+        snap.ledger_bytes = 4096;
+        let text = m.render(&snap);
+        assert!(text.contains("wyrdd_ingest_requests_total{kind=\"otlp\",outcome=\"accepted\"} 1"));
+        assert!(text.contains("wyrdd_ingest_requests_total{kind=\"hook\",outcome=\"rejected\"} 1"));
+        assert!(text.contains("wyrdd_sessions{status=\"closed\"} 2"));
+        assert!(text.contains("wyrdd_ledger_bytes 4096"));
+        assert!(text.contains("wyrdd_sse_streams 0"));
         assert!(text.contains("class=\"2xx\"} 2"));
         assert!(text.contains("class=\"4xx\"} 1"));
         assert!(text.contains("class=\"5xx\"} 0"));

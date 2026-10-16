@@ -80,8 +80,12 @@ pub async fn capabilities(
 }
 
 pub async fn metrics(State(s): State<Arc<AppState>>) -> impl IntoResponse {
+    let data = s.data.clone();
+    let snap = tokio::task::spawn_blocking(move || crate::Snapshot::read(&data))
+        .await
+        .unwrap_or_default();
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        s.metrics.render(),
+        s.metrics.render(&snap),
     )
 }
