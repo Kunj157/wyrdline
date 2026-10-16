@@ -38,7 +38,9 @@ pub const AMBIGUOUS: u16 = 5_000;
 /// Process identity: pid plus start time (PID-reuse safe).
 pub type ProcKey = (u32, u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Attribution {
     Direct,
@@ -105,7 +107,9 @@ pub struct Effect {
 }
 
 /// The causal graph of a session.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS,
+)]
 pub struct Graph {
     pub calls: Vec<Call>,
     pub processes: Vec<Process>,
