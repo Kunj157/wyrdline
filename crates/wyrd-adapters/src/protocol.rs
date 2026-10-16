@@ -47,6 +47,8 @@ pub enum Direction {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[schemars(rename = "IntentResponse")]
+#[ts(rename = "IntentResponse")]
 pub enum Response {
     /// Decision for a pre-execution check.
     Decision {

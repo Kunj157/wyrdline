@@ -110,6 +110,7 @@ pub struct PartialSuccess {}
 pub struct RewindBody {
     /// Start the agent again on the new branch (handled by a detached `wyrd`).
     #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
     pub relaunch: bool,
 }
 
@@ -119,6 +120,7 @@ pub struct ForkBody {
     /// Name of the new branch.
     pub name: String,
     #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
     pub relaunch: bool,
 }
 
@@ -127,8 +129,10 @@ pub struct ForkBody {
 pub struct ApplyBody {
     /// List the operations without changing anything.
     #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
     pub dry_run: bool,
     /// Apply even if the real workspace changed since the session started.
     #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
     pub force: bool,
 }

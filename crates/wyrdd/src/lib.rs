@@ -6,6 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod idempotency;
 pub mod listen;
+pub mod openapi;
 pub mod problem;
 mod routes;
 
