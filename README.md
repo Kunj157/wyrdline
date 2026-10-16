@@ -39,16 +39,20 @@ From that it can:
 ## Status
 
 Pre-alpha. Work proceeds phase by phase; see the [roadmap](#roadmap).
-Phases 0–5 are done: `wyrd doctor`, the hash-chained ledger and
+Phases 0–6 are done: `wyrd doctor`, the hash-chained ledger and
 content-addressed store, the Cell (checkpoint, rewind, fork, diff, apply),
 the intent plane — agent hooks, an MCP gateway, redaction, and a
-checkpoint after every tool call — and the effect plane: an eBPF sensor
+checkpoint after every tool call — the effect plane: an eBPF sensor
 (`wyrd-sensord`) that records every exec, file write, rename, delete, and
-connect of the agent's process tree, with drops counted in the ledger:
+connect of the agent's process tree, with drops counted in the ledger —
+and the correlator, which attributes each kernel effect to the tool call
+that caused it, with a confidence, natively and in WebAssembly:
 
 ```
 wyrd run -- claude -p "fix the failing cart test"   # hooks injected, workspace sandboxed
 wyrd events <session> --plane effect                # what actually happened in the kernel
+wyrd graph <session>                                # which tool call caused which effect
+wyrd explain <session> <seq>                        # one effect: process chain and cause
 wyrd checkpoints <session>                          # one checkpoint per tool call
 wyrd rewind <session> c3 && wyrd diff <session> c3 head
 wyrd apply <session> head                            # bring the result into the real tree
@@ -111,7 +115,7 @@ reports exactly what is available and what degrades without it.
 - [Architecture overview](docs/architecture/overview.md)
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
-  [the eBPF sensor](docs/architecture/sensor.md)
+  [the eBPF sensor](docs/architecture/sensor.md), [the correlator](docs/architecture/correlator.md)
 - [Ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Threat model](docs/threat-model/scope.md)
