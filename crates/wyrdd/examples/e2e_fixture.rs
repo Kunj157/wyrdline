@@ -7,6 +7,7 @@
 //! Usage: `e2e_fixture <data-dir> <workspace-dir>`
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::PathBuf;
 
 use wyrd_cell::session::CreateOptions;
@@ -106,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]);
     let mut ledger = wyrd_ledger::Ledger::open(s.dir().ledger())?;
     ledger.append(events)?;
-    println!("{}", s.record().id);
+    // The test harness reads the session id from stdout.
+    writeln!(std::io::stdout(), "{}", s.record().id)?;
     Ok(())
 }
