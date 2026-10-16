@@ -120,8 +120,8 @@ stdio entry running `wyrd mcp-proxy --server <name> --remote <file>`: the
 agent speaks stdio to the gateway, the gateway speaks Streamable HTTP to
 the server, and recording, decisions, and pinning work exactly as for
 local servers. Its URL and headers (often credentials) go to
-`mcp-remote-<name>.json` in the session directory (0600) rather than into
-argv. Each message is POSTed with `Accept: application/json,
+`mcp-remote-<name>.json` in the session directory (0600, removed after the
+run like the MCP config) rather than into argv. Each message is POSTed with `Accept: application/json,
 text/event-stream`; JSON and SSE answers are relayed, `Mcp-Session-Id` is
 kept, `MCP-Protocol-Version` is sent after `initialize`, and the session is
 DELETEd when the agent closes. HTTP failures answer each request with a

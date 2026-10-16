@@ -187,15 +187,15 @@ pub struct Capture {
     pub env: Vec<(String, String)>,
     /// Command with injected hook settings, when the adapter needs it.
     pub command: Option<Vec<String>>,
-    /// Wrapped MCP config (may hold server environment values); removed
-    /// when the run ends.
-    pub mcp_config: Option<PathBuf>,
+    /// Wrapped MCP config and remote-server files (may hold server
+    /// environment values and credentials); removed when the run ends.
+    pub private_files: Vec<PathBuf>,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.socket);
-        if let Some(f) = &self.mcp_config {
+        for f in &self.private_files {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -268,7 +268,7 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
     ];
     let mut env = env;
     env.extend(otlp_env(&rec.id));
-    let mut mcp_config = None;
+    let mut private_files = Vec::new();
     let command = if rec.agent == claude_code::NAME {
         let file = session.dir().root().join("claude-code-settings.json");
         std::fs::write(
@@ -288,10 +288,11 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
                 claude_code::wrap_mcp_servers(&servers, wyrd, session.dir().root());
             for (path, remote) in remotes {
                 write_private(&path, &serde_json::to_vec_pretty(&remote)?)?;
+                private_files.push(path);
             }
             write_private(&file, &serde_json::to_vec_pretty(&config)?)?;
             command = claude_code::inject_mcp_config(&command, &file);
-            mcp_config = Some(file);
+            private_files.push(file);
         }
         Some(command)
     } else {
@@ -312,7 +313,7 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         checkpoints,
         env,
         command,
-        mcp_config,
+        private_files,
     })
 }
 
