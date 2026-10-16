@@ -72,3 +72,36 @@ at most 500 events per poll, so a slow client holds the stream back rather
 than growing a buffer. A keep-alive comment goes out every 15 s. When the
 session is closed or failed and everything is sent, an `end` event carries
 the final seq and the stream finishes.
+
+## Session operations
+
+`target` is a checkpoint id (`c3`), a branch name, or `head`; names are
+limited to letters, digits, `-` and `_`.
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /v1/sessions/{sid}/stop` | — | `{ stopped }` (false if no agent was running) |
+| `POST /v1/sessions/{sid}/checkpoints` | — | 201, the checkpoint |
+| `POST /v1/sessions/{sid}/checkpoints/{target}/rewind` | `{ relaunch? }` | 200 `{ branch }`, or 202 `{ pid }` with relaunch |
+| `POST /v1/sessions/{sid}/checkpoints/{target}/fork` | `{ name, relaunch? }` | 201 `{ branch }`, or 202 `{ pid }`; existing name → 400 |
+| `GET /v1/sessions/{sid}/diff/{a}/{b}` | — | `{ changes }` |
+| `POST /v1/sessions/{sid}/checkpoints/{target}/apply` | `{ dry_run?, force? }` | the apply report; real workspace changed since the session started → 409 `workspace-changed` listing the paths, unless `force` |
+
+Each operation writes the same ledger event as the CLI. A live agent is
+owned by `wyrd run`, so with `relaunch: true` the daemon starts a detached
+`wyrd rewind|fork … --relaunch` (output in `relaunch.log` in the session
+directory) instead of rewinding itself. Applying only a subset of paths
+(`paths` in plan §14.1) is not supported yet.
+
+An empty body reads as `{}`; malformed bodies and unknown fields answer
+422 `invalid-body`.
+
+## Idempotency
+
+POST and PATCH accept `Idempotency-Key` (1–128 visible ASCII). The first
+response for a key is kept for 24 h (at most 1 000 keys, oldest evicted)
+and replayed with `Idempotent-Replayed: true`. The same key with a
+different method, path, or body → 422 `idempotency-key-reused`; while the
+first request still runs → 409 `idempotency-in-flight`. 5xx answers are
+not kept, so a retry can succeed. Keys live in memory: a daemon restart
+forgets them.
