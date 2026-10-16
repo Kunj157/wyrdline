@@ -3,11 +3,12 @@ import { Badge, Card, Kbd, Shimmer, Tabs } from "@wyrdline/ui";
 import { ShieldCheck, ShieldX, ZoomIn, ZoomOut } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { CheckpointPanel } from "../components/CheckpointPanel";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
 import { Transcript } from "../components/Transcript";
-import { useEvents, useGraph, useSession, useVerify } from "../lib/api";
+import { useCheckpoints, useEvents, useGraph, useSession, useVerify } from "../lib/api";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
 import { statusMeaning } from "./sessions";
@@ -18,6 +19,7 @@ export function SessionPage() {
   const events = useEvents(sid);
   const graph = useGraph(sid);
   const verify = useVerify(sid);
+  const checkpoints = useCheckpoints(sid);
   const recording = session.data?.status === "recording" || session.data?.status === "degraded";
   const live = useLiveEvents(sid, Boolean(recording && events.data));
   const [selected, setSelected] = useState<number | null>(null);
@@ -125,6 +127,11 @@ export function SessionPage() {
           />
         </Card>
       </div>
+
+      <Card>
+        <h2 className="mb-2 text-sm font-semibold">Checkpoints &amp; branches</h2>
+        <CheckpointPanel sid={sid} checkpoints={checkpoints.data} events={list} />
+      </Card>
     </div>
   );
 }
