@@ -44,6 +44,10 @@ pub fn api() -> Router<Arc<AppState>> {
             "/v1/sessions/{sid}/checkpoints/{target}/fork",
             post(actions::fork),
         )
+        .route(
+            "/v1/sessions/{sid}/checkpoints/{target}/apply",
+            post(actions::apply),
+        )
         .route("/v1/sessions/{sid}/diff/{a}/{b}", get(actions::diff))
         .fallback(fallback)
 }
