@@ -2,10 +2,9 @@
 //! check for the unix socket.
 
 use std::fs;
-use std::io::Write as _;
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-use std::path::Path;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use axum::extract::{Request, State};
 use axum::http::header;
@@ -14,39 +13,56 @@ use axum::response::{IntoResponse as _, Response};
 
 use crate::problem::Problem;
 
-pub use wyrd_adapters::daemon::{default_token_path, ingest_token};
+pub use wyrd_adapters::daemon::{
+    default_token_path, ingest_token, load_or_create_token, write_new_token,
+};
 
-/// Read the token at `path`, creating it (0600, directory 0700) if absent.
-pub fn load_or_create_token(path: &Path) -> std::io::Result<String> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-    }
-    match fs::read_to_string(path) {
-        Ok(t) if !t.trim().is_empty() => return Ok(t.trim().to_string()),
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
-    }
-    write_new_token(path)
+/// The daemon token, re-read from its file when the file changes, so
+/// `wyrd token rotate` takes effect without restarting the daemon.
+#[derive(Debug)]
+pub struct TokenSource {
+    path: Option<PathBuf>,
+    cached: Mutex<(Option<SystemTime>, Arc<str>)>,
 }
 
-/// Replace the token at `path` with a fresh one and return it.
-pub fn write_new_token(path: &Path) -> std::io::Result<String> {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
-    let token = hex::encode(bytes);
-    let tmp = path.with_extension("tmp");
-    let _ = fs::remove_file(&tmp);
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&tmp)?;
-    f.write_all(token.as_bytes())?;
-    f.sync_all()?;
-    fs::rename(&tmp, path)?;
-    Ok(token)
+impl TokenSource {
+    /// A token that never changes (tests, embedding).
+    pub fn fixed(token: &str) -> Self {
+        TokenSource {
+            path: None,
+            cached: Mutex::new((None, Arc::from(token))),
+        }
+    }
+
+    /// The token in `path` (created if absent).
+    pub fn file(path: PathBuf) -> std::io::Result<Self> {
+        let token = load_or_create_token(&path)?;
+        let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        Ok(TokenSource {
+            path: Some(path),
+            cached: Mutex::new((mtime, Arc::from(token.as_str()))),
+        })
+    }
+
+    /// The current token. A file that vanished or became empty keeps the
+    /// last good token rather than opening the API.
+    pub fn current(&self) -> Arc<str> {
+        let mut c = self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(path) = &self.path {
+            let mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
+            if mtime.is_some()
+                && mtime != c.0
+                && let Ok(t) = fs::read_to_string(path)
+                && !t.trim().is_empty()
+            {
+                *c = (mtime, Arc::from(t.trim()));
+            }
+        }
+        c.1.clone()
+    }
 }
 
 /// Equality whose running time does not depend on where the inputs differ.
@@ -63,12 +79,13 @@ fn bearer(req: &Request) -> Option<&str> {
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")
+        .filter(|t| !t.is_empty())
 }
 
 /// Middleware for ingest routes on TCP: the bearer must be the ingest
 /// token of the session in the path (`/v1/sessions/{sid}/…`).
 pub async fn require_ingest_token(
-    State(token): State<Arc<str>>,
+    State(tokens): State<Arc<TokenSource>>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -78,6 +95,7 @@ pub async fn require_ingest_token(
         .strip_prefix("/v1/sessions/")
         .and_then(|r| r.split('/').next())
         .unwrap_or("");
+    let token = tokens.current();
     let ok = !sid.is_empty()
         && bearer(&req)
             .is_some_and(|t| constant_time_eq(t.as_bytes(), ingest_token(&token, sid).as_bytes()));
@@ -89,7 +107,12 @@ pub async fn require_ingest_token(
 }
 
 /// Middleware for the TCP listener: require `Authorization: Bearer <token>`.
-pub async fn require_token(State(token): State<Arc<str>>, req: Request, next: Next) -> Response {
+pub async fn require_token(
+    State(tokens): State<Arc<TokenSource>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let token = tokens.current();
     let ok = bearer(&req).is_some_and(|t| constant_time_eq(t.as_bytes(), token.as_bytes()));
     if ok {
         next.run(req).await
@@ -111,17 +134,23 @@ mod tests {
     }
 
     #[test]
-    fn token_file_is_private_and_stable() {
+    fn rotated_tokens_are_picked_up_and_empty_files_ignored() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state/wyrdline/token");
-        let t1 = load_or_create_token(&path).unwrap();
+        let path = dir.path().join("wyrdline/token");
+        let src = TokenSource::file(path.clone()).unwrap();
+        let t1 = src.current();
         assert_eq!(t1.len(), 64);
-        assert_eq!(load_or_create_token(&path).unwrap(), t1);
-        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&path), 0o600);
-        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        // Ensure a different mtime even on coarse-timestamp filesystems.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         let t2 = write_new_token(&path).unwrap();
-        assert_ne!(t1, t2);
-        assert_eq!(mode(&path), 0o600);
+        assert_eq!(&*src.current(), t2.as_str());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&path, "").unwrap();
+        assert_eq!(
+            &*src.current(),
+            t2.as_str(),
+            "an emptied file keeps the last token"
+        );
+        assert_eq!(&*TokenSource::fixed("x").current(), "x");
     }
 }

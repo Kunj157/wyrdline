@@ -22,7 +22,11 @@ fn state(dir: &std::path::Path) -> Arc<AppState> {
 }
 
 fn tcp(dir: &std::path::Path) -> axum::Router {
-    wyrdd::tcp_app(state(dir), TOKEN, wyrdd::cors(wyrdd::DEFAULT_LISTEN, None))
+    wyrdd::tcp_app(
+        state(dir),
+        Arc::new(wyrdd::auth::TokenSource::fixed(TOKEN)),
+        wyrdd::cors(wyrdd::DEFAULT_LISTEN, None),
+    )
 }
 
 async fn send(
@@ -47,7 +51,7 @@ fn get(path: &str, token: Option<&str>) -> Request<Body> {
 #[tokio::test]
 async fn tcp_requires_the_bearer_token() {
     let dir = tempfile::tempdir().unwrap();
-    for token in [None, Some("wrong"), Some("0123456789abcdeF")] {
+    for token in [None, Some(""), Some("wrong"), Some("0123456789abcdeF")] {
         let (status, headers, body) = send(tcp(dir.path()), get("/v1/health", token)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{token:?}");
         assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
