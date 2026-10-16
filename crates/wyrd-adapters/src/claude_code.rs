@@ -7,7 +7,7 @@
 //! `last_assistant_message`. Decisions go back as
 //! `hookSpecificOutput.permissionDecision`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use wyrd_schema::{CallStatus, Decision};
@@ -298,46 +298,79 @@ pub fn mcp_servers(
     out
 }
 
-/// Route every stdio server through `wyrd mcp-proxy`. Remote (HTTP/SSE)
-/// servers are kept as they are: the gateway proxies stdio only so far.
-pub fn wrap_mcp_servers(servers: &serde_json::Map<String, Value>, wyrd: &Path) -> Value {
+/// Route every stdio and Streamable HTTP server through `wyrd mcp-proxy`.
+/// Returns the agent's MCP config and, per HTTP server, a file to write
+/// (0600) under `remote_dir` holding its URL and headers, which the proxy
+/// reads with `--remote` so credentials stay out of argv. Legacy HTTP+SSE
+/// servers (`"type": "sse"`) are kept as they are.
+pub fn wrap_mcp_servers(
+    servers: &serde_json::Map<String, Value>,
+    wyrd: &Path,
+    remote_dir: &Path,
+) -> (Value, Vec<(PathBuf, Value)>) {
+    let mut remotes = Vec::new();
     let wrapped: serde_json::Map<String, Value> = servers
         .iter()
         .map(|(name, server)| {
-            let stdio = server
+            let kind = server
                 .get("type")
                 .and_then(Value::as_str)
-                .unwrap_or("stdio")
-                == "stdio";
-            let Some(command) = server
-                .get("command")
-                .and_then(Value::as_str)
-                .filter(|_| stdio)
-            else {
-                return (name.clone(), server.clone());
+                .unwrap_or("stdio");
+            let proxy = |rest: Vec<Value>| {
+                let mut args = vec![json!("mcp-proxy"), json!("--server"), json!(name)];
+                args.extend(rest);
+                args
             };
-            let mut args = vec![
-                json!("mcp-proxy"),
-                json!("--server"),
-                json!(name),
-                json!("--"),
-                json!(command),
-            ];
-            args.extend(
-                server
-                    .get("args")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
-            );
+            let args = match (kind, server.get("command").and_then(Value::as_str)) {
+                ("stdio", Some(command)) => {
+                    let mut rest = vec![json!("--"), json!(command)];
+                    rest.extend(
+                        server
+                            .get("args")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                    proxy(rest)
+                }
+                ("http", _) if server.get("url").and_then(Value::as_str).is_some() => {
+                    let file = remote_dir.join(format!("mcp-remote-{}.json", safe_name(name)));
+                    remotes.push((
+                        file.clone(),
+                        json!({
+                            "url": server["url"],
+                            "headers": server.get("headers").cloned().unwrap_or_else(|| json!({})),
+                        }),
+                    ));
+                    proxy(vec![json!("--remote"), json!(file.display().to_string())])
+                }
+                _ => return (name.clone(), server.clone()),
+            };
             let mut w = server.clone();
+            if let Some(o) = w.as_object_mut() {
+                o.remove("url");
+                o.remove("headers");
+            }
             w["type"] = json!("stdio");
             w["command"] = json!(wyrd.display().to_string());
             w["args"] = Value::Array(args);
             (name.clone(), w)
         })
         .collect();
-    json!({ "mcpServers": wrapped })
+    (json!({ "mcpServers": wrapped }), remotes)
+}
+
+/// A server name usable in a file name.
+fn safe_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Add `--mcp-config <file> --strict-mcp-config` after the program name so

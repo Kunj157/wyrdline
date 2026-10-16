@@ -284,10 +284,12 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         );
         if !servers.is_empty() {
             let file = session.dir().root().join("claude-code-mcp.json");
-            write_private(
-                &file,
-                &serde_json::to_vec_pretty(&claude_code::wrap_mcp_servers(&servers, wyrd))?,
-            )?;
+            let (config, remotes) =
+                claude_code::wrap_mcp_servers(&servers, wyrd, session.dir().root());
+            for (path, remote) in remotes {
+                write_private(&path, &serde_json::to_vec_pretty(&remote)?)?;
+            }
+            write_private(&file, &serde_json::to_vec_pretty(&config)?)?;
             command = claude_code::inject_mcp_config(&command, &file);
             mcp_config = Some(file);
         }

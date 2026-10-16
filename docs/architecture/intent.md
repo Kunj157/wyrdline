@@ -113,7 +113,18 @@ MCP servers the agent would start (user config < project `.mcp.json` <
 local project entry), rewrites every stdio server to go through
 `wyrd mcp-proxy`, writes the result to the session directory (mode 0600,
 since server environments can hold credentials; removed after the run),
-and passes it with `--mcp-config <file> --strict-mcp-config`. Remote
-(HTTP/SSE) servers are passed through unproxied for now: the Streamable
-HTTP transport of the gateway needs an HTTP client stack and is deferred
-to Phase 7, where the daemon's HTTP stack lands.
+and passes it with `--mcp-config <file> --strict-mcp-config`.
+
+**Remote servers.** A Streamable HTTP server (`"type": "http"`) becomes a
+stdio entry running `wyrd mcp-proxy --server <name> --remote <file>`: the
+agent speaks stdio to the gateway, the gateway speaks Streamable HTTP to
+the server, and recording, decisions, and pinning work exactly as for
+local servers. Its URL and headers (often credentials) go to
+`mcp-remote-<name>.json` in the session directory (0600) rather than into
+argv. Each message is POSTed with `Accept: application/json,
+text/event-stream`; JSON and SSE answers are relayed, `Mcp-Session-Id` is
+kept, `MCP-Protocol-Version` is sent after `initialize`, and the session is
+DELETEd when the agent closes. HTTP failures answer each request with a
+JSON-RPC error. Not covered: server-initiated messages on a standalone GET
+stream, and the legacy HTTP+SSE transport (`"type": "sse"`), which is
+passed through unproxied. The client is `ureq` (rustls).
