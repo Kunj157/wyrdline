@@ -227,3 +227,44 @@ async fn bad_unknown_and_ambiguous_ids_are_problems() {
         assert_eq!(v["type"], kind, "{path}");
     }
 }
+
+#[tokio::test]
+async fn metrics_reflect_sessions_ledgers_and_open_streams() {
+    let e = env();
+    let id = recorded(&e);
+    let app = app(&e);
+    let metrics = |app: axum::Router| async move {
+        let res = app
+            .oneshot(Request::get("/v1/metrics").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(body.to_vec()).unwrap()
+    };
+    let text = metrics(app.clone()).await;
+    assert!(
+        text.contains("wyrdd_sessions{status=\"preparing\"} 1"),
+        "{text}"
+    );
+    let bytes: u64 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("wyrdd_ledger_bytes "))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(bytes > 4096, "{bytes}");
+    assert!(text.contains("wyrdd_sse_streams 0"));
+
+    let stream = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/v1/sessions/{id}/stream"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(metrics(app.clone()).await.contains("wyrdd_sse_streams 1"));
+    drop(stream);
+    assert!(metrics(app).await.contains("wyrdd_sse_streams 0"));
+}
