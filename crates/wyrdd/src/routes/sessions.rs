@@ -6,12 +6,15 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use wyrd_cell::{CellError, DataDir, Session};
 use wyrd_correlator::Graph;
 use wyrd_schema::Event;
 
 use crate::AppState;
+use crate::api::{
+    Checkpoints, EventPage, SessionDetail, SessionList, ToolCallDetail, VerifyReport,
+};
 use crate::problem::Problem;
 
 /// Default and maximum page size for `/events`.
@@ -107,13 +110,13 @@ pub struct ListQuery {
 pub async fn list(
     State(st): State<Arc<AppState>>,
     Query(q): Query<ListQuery>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<SessionList>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let mut out = Vec::new();
         for r in Session::list(&data)? {
-            let v = to_json(&r)?;
-            if q.status.as_deref().is_some_and(|s| v["status"] != s)
+            let status = to_json(&r.status)?;
+            if q.status.as_deref().is_some_and(|s| status != s)
                 || q.agent.as_deref().is_some_and(|a| r.agent != a)
                 || q.repo
                     .as_deref()
@@ -122,9 +125,9 @@ pub async fn list(
             {
                 continue;
             }
-            out.push(v);
+            out.push(r);
         }
-        Ok(Json(json!({ "sessions": out })))
+        Ok(Json(SessionList { sessions: out }))
     })
     .await
 }
@@ -132,17 +135,18 @@ pub async fn list(
 pub async fn get(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<SessionDetail>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
         let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
         let (head_seq, head_hash) = ledger.head();
-        let mut v = to_json(s.record())?;
-        v["head_seq"] = json!(head_seq);
-        v["head_hash"] = json!(format!("b3:{}", hex::encode(head_hash)));
-        v["sealed"] = json!(ledger.is_sealed());
-        Ok(Json(v))
+        Ok(Json(SessionDetail {
+            record: s.record().clone(),
+            head_seq,
+            head_hash: format!("b3:{}", hex::encode(head_hash)),
+            sealed: ledger.is_sealed(),
+        }))
     })
     .await
 }
@@ -167,7 +171,7 @@ pub async fn events(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
     Query(q): Query<EventsQuery>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<EventPage>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
@@ -187,7 +191,7 @@ pub async fn events(
                 let keep = q.plane.as_deref().is_none_or(|p| ev.plane().as_str() == p)
                     && q.kind.as_deref().is_none_or(|k| kind_matches(ev.kind(), k));
                 if keep {
-                    out.push(to_json(&ev)?);
+                    out.push(ev);
                     if out.len() == limit {
                         break 'scan;
                     }
@@ -196,7 +200,10 @@ pub async fn events(
         }
         let (head, _) = ledger.head();
         let next = (after < head).then_some(after);
-        Ok(Json(json!({ "events": out, "next_after_seq": next })))
+        Ok(Json(EventPage {
+            events: out,
+            next_after_seq: next,
+        }))
     })
     .await
 }
@@ -213,7 +220,7 @@ pub async fn graph(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
     Query(q): Query<RangeQuery>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<Graph>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
@@ -222,7 +229,7 @@ pub async fn graph(
         g.effects.retain(|e| (lo..=hi).contains(&e.seq));
         g.calls
             .retain(|c| c.started_seq <= hi && c.finished_seq.unwrap_or(u64::MAX) >= lo);
-        Ok(Json(to_json(&g)?))
+        Ok(Json(g))
     })
     .await
 }
@@ -230,22 +237,21 @@ pub async fn graph(
 pub async fn tool_call(
     State(st): State<Arc<AppState>>,
     Path((sid, tcid)): Path<(String, String)>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<ToolCallDetail>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
         let g: Graph = wyrd_correlator::correlate(&all_events(&s)?);
         let call = g
             .call(&tcid)
+            .cloned()
             .ok_or_else(|| Problem::not_found(format!("tool call {tcid}")))?;
-        let effects: Vec<_> = g
+        let effects = g
             .effects
-            .iter()
+            .into_iter()
             .filter(|e| e.call_id.as_deref() == Some(tcid.as_str()) || e.candidates.contains(&tcid))
             .collect();
-        Ok(Json(
-            json!({ "call": to_json(call)?, "effects": to_json(&effects)? }),
-        ))
+        Ok(Json(ToolCallDetail { call, effects }))
     })
     .await
 }
@@ -253,14 +259,15 @@ pub async fn tool_call(
 pub async fn verify(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<VerifyReport>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
         let v = wyrd_ledger::verify(&s.dir().ledger())?;
-        let mut out = to_json(&v)?;
-        out["ok"] = json!(v.ok());
-        Ok(Json(out))
+        Ok(Json(VerifyReport {
+            ok: v.ok(),
+            verification: v,
+        }))
     })
     .await
 }
@@ -268,16 +275,16 @@ pub async fn verify(
 pub async fn checkpoints(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<Checkpoints>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
         let r = s.record();
-        Ok(Json(json!({
-            "current_branch": r.current_branch,
-            "branches": to_json(&r.branches)?,
-            "checkpoints": to_json(&r.checkpoints)?,
-        })))
+        Ok(Json(Checkpoints {
+            current_branch: r.current_branch.clone(),
+            branches: r.branches.clone(),
+            checkpoints: r.checkpoints.clone(),
+        }))
     })
     .await
 }

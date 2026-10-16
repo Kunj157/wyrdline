@@ -9,11 +9,12 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use serde_json::{Value, json};
+use serde_json::Value;
 use wyrd_adapters::{Adapter, Request, Response};
 
 use super::sessions::{blocking, open};
 use crate::AppState;
+use crate::api::{OtlpExportResponse, PartialSuccess};
 use crate::problem::Problem;
 
 /// Largest accepted ingest body.
@@ -65,7 +66,7 @@ fn json_body(headers: &HeaderMap, body: &Bytes) -> Result<Value, Problem> {
     })
 }
 
-fn session_error(r: Response) -> Result<Value, Problem> {
+fn session_error(r: Response) -> Result<Response, Problem> {
     match r {
         Response::Error { message } => Err(Problem::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -73,7 +74,7 @@ fn session_error(r: Response) -> Result<Value, Problem> {
             "The session rejected the input",
         )
         .detail(message)),
-        other => serde_json::to_value(other).map_err(|e| Problem::internal(e.to_string())),
+        other => Ok(other),
     }
 }
 
@@ -84,10 +85,12 @@ pub async fn traces(
     Path(sid): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<OtlpExportResponse>, Problem> {
     let request = json_body(&headers, &body)?;
     session_error(forward(&st, sid, Request::Otlp { request }).await?)?;
-    Ok(Json(json!({ "partialSuccess": {} })))
+    Ok(Json(OtlpExportResponse {
+        partial_success: PartialSuccess {},
+    }))
 }
 
 /// `POST /v1/sessions/{sid}/ingest/hooks/{adapter}`. Answers with the
@@ -97,7 +100,7 @@ pub async fn hook(
     Path((sid, adapter)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<Response>, Problem> {
     let Some(adapter) = Adapter::from_name(&adapter) else {
         return Err(Problem::not_found(format!("adapter {adapter}")));
     };

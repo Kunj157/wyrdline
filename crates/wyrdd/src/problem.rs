@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
 /// An error answered as `application/problem+json`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Problem {
     /// A stable, relative identifier of the problem kind, e.g. `unauthorized`.
     #[serde(rename = "type")]

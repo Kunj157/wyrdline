@@ -8,17 +8,20 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use serde_json::{Value, json};
 
 use crate::AppState;
+use crate::api::{Health, Ready};
 use crate::problem::Problem;
 
-pub async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok", "version": env!("CARGO_PKG_VERSION") }))
+pub async fn health() -> Json<Health> {
+    Json(Health {
+        status: "ok".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    })
 }
 
 /// Ready when the data directory exists (or can be created) and is writable.
-pub async fn ready(State(s): State<Arc<AppState>>) -> Result<Json<Value>, Problem> {
+pub async fn ready(State(s): State<Arc<AppState>>) -> Result<Json<Ready>, Problem> {
     let root = s.data.root().to_path_buf();
     let ok = tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&root).is_ok() && tempfile_probe(&root)
@@ -26,7 +29,9 @@ pub async fn ready(State(s): State<Arc<AppState>>) -> Result<Json<Value>, Proble
     .await
     .unwrap_or(false);
     if ok {
-        Ok(Json(json!({ "status": "ready" })))
+        Ok(Json(Ready {
+            status: "ready".into(),
+        }))
     } else {
         Err(Problem::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -64,14 +69,14 @@ pub fn doctor_report(wyrd_bin: &Path) -> wyrd_doctor::Report {
     wyrd_doctor::run(&env)
 }
 
-pub async fn capabilities(State(s): State<Arc<AppState>>) -> Result<Json<Value>, Problem> {
+pub async fn capabilities(
+    State(s): State<Arc<AppState>>,
+) -> Result<Json<wyrd_doctor::Report>, Problem> {
     let bin = s.wyrd_bin.clone();
     let report = tokio::task::spawn_blocking(move || doctor_report(&bin))
         .await
         .map_err(|e| Problem::internal(e.to_string()))?;
-    serde_json::to_value(report)
-        .map(Json)
-        .map_err(|e| Problem::internal(e.to_string()))
+    Ok(Json(report))
 }
 
 pub async fn metrics(State(s): State<Arc<AppState>>) -> impl IntoResponse {

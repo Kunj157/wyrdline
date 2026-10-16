@@ -1939,11 +1939,13 @@ dependencies = [
  "blake3",
  "hex",
  "rustix",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tracing",
+ "ts-rs",
  "wyrd-bundle",
  "wyrd-otlp",
  "wyrd-schema",
@@ -1986,12 +1988,14 @@ dependencies = [
  "nix",
  "proptest",
  "rustix",
+ "schemars",
  "serde",
  "serde_bytes",
  "serde_json",
  "tempfile",
  "thiserror",
  "tracing",
+ "ts-rs",
  "ulid",
  "wyrd-cas",
  "wyrd-ledger",
@@ -2032,8 +2036,10 @@ dependencies = [
 name = "wyrd-correlator"
 version = "0.0.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
+ "ts-rs",
  "wyrd-correlator",
  "wyrd-schema",
 ]
@@ -2042,9 +2048,11 @@ dependencies = [
 name = "wyrd-doctor"
 version = "0.0.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
+ "ts-rs",
 ]
 
 [[package]]
@@ -2090,12 +2098,14 @@ dependencies = [
  "hex",
  "proptest",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
  "tracing",
+ "ts-rs",
  "wyrd-schema",
 ]
 
@@ -2175,6 +2185,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "rustix",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -2183,6 +2194,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "ts-rs",
  "ulid",
  "wyrd-adapters",
  "wyrd-cell",

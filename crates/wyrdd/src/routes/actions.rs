@@ -8,12 +8,16 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Path, Request, State};
 use axum::http::StatusCode;
-use serde::Deserialize;
+use axum::response::{IntoResponse as _, Response};
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+
+use wyrd_cell::state::CheckpointRecord;
 
 use super::sessions::{blocking, open};
 use crate::AppState;
+use crate::api::{
+    ApplyBody, ApplyResult, BranchCreated, Changes, ForkBody, Relaunching, RewindBody, Stopped,
+};
 use crate::problem::Problem;
 
 /// A JSON request body; an empty body reads as `{}`. Malformed bodies and
@@ -45,10 +49,6 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for JsonBody<T> {
     }
 }
 
-fn to_json(v: &impl serde::Serialize) -> Result<Value, Problem> {
-    serde_json::to_value(v).map_err(|e| Problem::internal(e.to_string()))
-}
-
 /// Checkpoint ids, branch names, and `head`: short, no path characters.
 fn check_target(t: &str) -> Result<(), Problem> {
     let ok = !t.is_empty()
@@ -69,11 +69,11 @@ fn check_target(t: &str) -> Result<(), Problem> {
 pub async fn stop(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<Stopped>, Problem> {
     let data = st.data.clone();
     blocking(move || {
         let mut s = open(&data, &sid)?;
-        Ok(Json(json!({ "stopped": s.stop()? })))
+        Ok(Json(Stopped { stopped: s.stop()? }))
     })
     .await
 }
@@ -81,29 +81,13 @@ pub async fn stop(
 pub async fn checkpoint(
     State(st): State<Arc<AppState>>,
     Path(sid): Path<String>,
-) -> Result<(StatusCode, Json<Value>), Problem> {
+) -> Result<(StatusCode, Json<CheckpointRecord>), Problem> {
     let data = st.data.clone();
     blocking(move || {
         let mut s = open(&data, &sid)?;
-        let c = s.checkpoint(None)?;
-        Ok((StatusCode::CREATED, Json(to_json(&c)?)))
+        Ok((StatusCode::CREATED, Json(s.checkpoint(None)?)))
     })
     .await
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RewindBody {
-    #[serde(default)]
-    relaunch: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ForkBody {
-    name: String,
-    #[serde(default)]
-    relaunch: bool,
 }
 
 /// Hand a rewind or fork with relaunch to a detached `wyrd`, which owns
@@ -141,7 +125,7 @@ pub async fn rewind(
     State(st): State<Arc<AppState>>,
     Path((sid, target)): Path<(String, String)>,
     JsonBody(body): JsonBody<RewindBody>,
-) -> Result<(StatusCode, Json<Value>), Problem> {
+) -> Result<Response, Problem> {
     check_target(&target)?;
     let relaunch = body.relaunch;
     blocking(move || {
@@ -152,12 +136,16 @@ pub async fn rewind(
             let pid = spawn_relaunch(&st, &id, &["rewind", &id, &target, "--relaunch"])?;
             return Ok((
                 StatusCode::ACCEPTED,
-                Json(json!({ "relaunching": true, "pid": pid })),
-            ));
+                Json(Relaunching {
+                    relaunching: true,
+                    pid,
+                }),
+            )
+                .into_response());
         }
         let mut s = open(&st.data, &sid)?;
         let b = s.rewind(&target, None)?;
-        Ok((StatusCode::OK, Json(json!({ "branch": to_json(&b)? }))))
+        Ok((StatusCode::OK, Json(BranchCreated { branch: b })).into_response())
     })
     .await
 }
@@ -166,7 +154,7 @@ pub async fn fork(
     State(st): State<Arc<AppState>>,
     Path((sid, target)): Path<(String, String)>,
     JsonBody(body): JsonBody<ForkBody>,
-) -> Result<(StatusCode, Json<Value>), Problem> {
+) -> Result<Response, Problem> {
     check_target(&target)?;
     check_target(&body.name)?;
     blocking(move || {
@@ -187,11 +175,15 @@ pub async fn fork(
             )?;
             return Ok((
                 StatusCode::ACCEPTED,
-                Json(json!({ "relaunching": true, "pid": pid })),
-            ));
+                Json(Relaunching {
+                    relaunching: true,
+                    pid,
+                }),
+            )
+                .into_response());
         }
         let b = s.rewind(&target, Some(&body.name))?;
-        Ok((StatusCode::CREATED, Json(json!({ "branch": to_json(&b)? }))))
+        Ok((StatusCode::CREATED, Json(BranchCreated { branch: b })).into_response())
     })
     .await
 }
@@ -199,31 +191,24 @@ pub async fn fork(
 pub async fn diff(
     State(st): State<Arc<AppState>>,
     Path((sid, a, b)): Path<(String, String, String)>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<Changes>, Problem> {
     check_target(&a)?;
     check_target(&b)?;
     let data = st.data.clone();
     blocking(move || {
         let s = open(&data, &sid)?;
-        Ok(Json(json!({ "changes": to_json(&s.diff(&a, &b)?)? })))
+        Ok(Json(Changes {
+            changes: s.diff(&a, &b)?,
+        }))
     })
     .await
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ApplyBody {
-    #[serde(default)]
-    dry_run: bool,
-    #[serde(default)]
-    force: bool,
 }
 
 pub async fn apply(
     State(st): State<Arc<AppState>>,
     Path((sid, target)): Path<(String, String)>,
     JsonBody(body): JsonBody<ApplyBody>,
-) -> Result<Json<Value>, Problem> {
+) -> Result<Json<ApplyResult>, Problem> {
     check_target(&target)?;
     let data = st.data.clone();
     blocking(move || {
@@ -237,7 +222,7 @@ pub async fn apply(
             )
             .detail(report.conflicts.join(", ")));
         }
-        Ok(Json(to_json(&report)?))
+        Ok(Json(report))
     })
     .await
 }
