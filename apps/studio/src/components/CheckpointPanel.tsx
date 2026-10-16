@@ -47,7 +47,7 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
                   <li key={c.id} className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-mono">{c.id}</span>
                     <span className="text-xs text-text-muted">
-                      seq {c.seq} · {c.files} files
+                      seq {c.seq} · {c.files} {c.files === 1 ? "file" : "files"}
                     </span>
                     <span className={readOnly ? "hidden" : "ml-auto flex gap-1"}>
                       <Button

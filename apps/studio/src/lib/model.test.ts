@@ -77,7 +77,7 @@ suite("model", () => {
   it("describes events for people", () => {
     expect(describe(at(1))).toBe("Bash pnpm test");
     expect(describe(at(4))).toBe("connect evil.example:443 (denied)");
-    expect(describe(at(5))).toBe("checkpoint c1 (1 files)");
+    expect(describe(at(5))).toBe("checkpoint c1 (1 file)");
   });
 
   it("flags what a rewind cannot undo", () => {

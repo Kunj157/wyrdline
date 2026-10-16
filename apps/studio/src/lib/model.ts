@@ -48,7 +48,7 @@ export function describe(e: Event): string {
     case "effect.net.dns_query":
       return `dns ${b.payload.name}`;
     case "state.checkpoint.created":
-      return `checkpoint ${b.payload.checkpoint_id} (${b.payload.files_changed} files)`;
+      return `checkpoint ${b.payload.checkpoint_id} (${b.payload.files_changed} ${b.payload.files_changed === 1 ? "file" : "files"})`;
     case "state.checkpoint.rewound":
       return `rewound to ${b.payload.checkpoint_id} → branch ${b.payload.branch_id}`;
     case "state.checkpoint.forked":
