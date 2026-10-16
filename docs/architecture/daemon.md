@@ -93,6 +93,7 @@ limited to letters, digits, `-` and `_`.
 | `POST /v1/sessions/{sid}/checkpoints/{target}/rewind` | `{ relaunch? }` | 200 `{ branch }`, or 202 `{ pid }` with relaunch |
 | `POST /v1/sessions/{sid}/checkpoints/{target}/fork` | `{ name, relaunch? }` | 201 `{ branch }`, or 202 `{ pid }`; existing name → 400 |
 | `GET /v1/sessions/{sid}/diff/{a}/{b}` | — | `{ changes }` |
+| `GET /v1/sessions/{sid}/diff/{a}/{b}/file?path=` | — | `{ path, before, after }`: each side's source (`checkpoint`, `workspace` below the Cell, or `absent`), text up to 1 MiB, `binary`, `truncated` |
 | `POST /v1/sessions/{sid}/checkpoints/{target}/apply` | `{ dry_run?, force? }` | the apply report; real workspace changed since the session started → 409 `workspace-changed` listing the paths, unless `force` |
 
 Each operation writes the same ledger event as the CLI. A live agent is

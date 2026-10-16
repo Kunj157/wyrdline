@@ -83,6 +83,7 @@ describe("daemon client", () => {
       c.fork("s", "c1", { name: "n" }),
       c.apply("s", "c1", {}),
       c.diff("s", "a", "b"),
+      c.diffFile("s", "a", "b", "src/x.ts"),
     ]);
     const templates = Object.keys(doc.paths).map((p) => ({
       p,
