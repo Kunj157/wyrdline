@@ -1,6 +1,7 @@
 //! Route table.
 
 mod sessions;
+mod stream;
 mod system;
 
 use std::sync::Arc;
@@ -27,6 +28,7 @@ pub fn api() -> Router<Arc<AppState>> {
             "/v1/sessions/{sid}/tool-calls/{tcid}",
             get(sessions::tool_call),
         )
+        .route("/v1/sessions/{sid}/stream", get(stream::stream))
         .route("/v1/sessions/{sid}/verify", get(sessions::verify))
         .route("/v1/sessions/{sid}/checkpoints", get(sessions::checkpoints))
         .fallback(fallback)

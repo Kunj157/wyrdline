@@ -2169,6 +2169,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "futures-util",
  "getrandom",
  "hex",
  "http-body-util",

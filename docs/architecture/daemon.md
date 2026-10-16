@@ -61,3 +61,14 @@ than the global `/v1/checkpoints/{cid}` sketched in plan §14.1.
 ledger writer, and the intent socket. The daemon reads the ledger
 read-only (SQLite WAL readers never block the writer) and reaches a live
 session only through that intent socket.
+
+## Live stream
+
+`GET /v1/sessions/{sid}/stream` sends each ledger event as a Server-Sent
+Event (`id: <seq>`, `event: ledger`, `data: <event JSON>`). Clients resume
+with `Last-Event-ID: <seq>` (or `?after_seq=`) and receive seq + 1 onward,
+exactly once. The daemon polls the ledger read-only every 250 ms and sends
+at most 500 events per poll, so a slow client holds the stream back rather
+than growing a buffer. A keep-alive comment goes out every 15 s. When the
+session is closed or failed and everything is sent, an `end` event carries
+the final seq and the stream finishes.
