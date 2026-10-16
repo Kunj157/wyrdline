@@ -54,7 +54,7 @@ export const vivid = {
 
 export const translucent = {
   "surface-glass": "rgba(255, 250, 241, 0.72)",
-  border: "rgba(28, 24, 48, 0.10)",
+  border: "rgba(28, 24, 48, 0.1)",
   "border-strong": "rgba(28, 24, 48, 0.18)",
   "accent-subtle": "rgba(18, 201, 168, 0.16)",
 } as const;
@@ -64,8 +64,8 @@ export const onAccent = "#ffffff";
 export const radius = { sm: "6px", card: "12px", lg: "18px" } as const;
 
 export const shadows = {
-  "shadow-1": "0 1px 2px rgba(28, 24, 48, 0.10)",
-  "shadow-2": "0 6px 20px rgba(123, 92, 255, 0.10), 0 1px 2px rgba(28, 24, 48, 0.12)",
+  "shadow-1": "0 1px 2px rgba(28, 24, 48, 0.1)",
+  "shadow-2": "0 6px 20px rgba(123, 92, 255, 0.1), 0 1px 2px rgba(28, 24, 48, 0.12)",
 } as const;
 
 export const motion = {
