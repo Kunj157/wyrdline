@@ -12,6 +12,8 @@ use crate::{FORMAT_ID, Hash, Ledger, Result, seal_message};
 /// The first problem found, if any.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(tag = "problem", rename_all = "snake_case")]
+#[schemars(rename = "ChainProblem")]
+#[ts(rename = "ChainProblem")]
 pub enum Problem {
     /// `seq` values are not dense starting at 1.
     SequenceGap { expected: u64, found: u64 },
