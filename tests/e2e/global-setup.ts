@@ -42,9 +42,13 @@ export default async function globalSetup() {
   // A short directory: unix socket paths are limited to 107 bytes.
   const dir = mkdtempSync(join(tmpdir(), "wyrd-e2e-"));
   const data = join(dir, "data");
-  const sid = execFileSync(join(bin, "examples/e2e_fixture"), [data, join(dir, "ws")], {
-    encoding: "utf8",
-  }).trim();
+  const [sid = "", liveSid = ""] = execFileSync(
+    join(bin, "examples/e2e_fixture"),
+    [data, join(dir, "ws")],
+    { encoding: "utf8" },
+  )
+    .trim()
+    .split("\n");
   const port = await freePort();
   const env = {
     ...process.env,
@@ -79,6 +83,9 @@ export default async function globalSetup() {
   process.env.WYRD_E2E_BASE = base;
   process.env.WYRD_E2E_TOKEN = token;
   process.env.WYRD_E2E_SID = sid;
+  process.env.WYRD_E2E_LIVE_SID = liveSid;
+  process.env.WYRD_E2E_DATA = data;
+  process.env.WYRD_E2E_FIXTURE = join(bin, "examples/e2e_fixture");
   return () => {
     daemon.kill("SIGTERM");
     rmSync(dir, { recursive: true, force: true });
