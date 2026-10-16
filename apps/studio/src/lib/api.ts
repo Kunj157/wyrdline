@@ -43,6 +43,14 @@ export function useSessions() {
   return useQuery({ queryKey: keys.sessions, queryFn: () => apiClient().sessions() });
 }
 
+export function useCapabilities() {
+  return useQuery({
+    queryKey: ["capabilities"],
+    queryFn: () => apiClient().capabilities(),
+    staleTime: 60_000,
+  });
+}
+
 export function useSession(sid: string) {
   return useQuery({ queryKey: keys.session(sid), queryFn: () => apiClient().session(sid) });
 }
