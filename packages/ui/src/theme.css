@@ -1,34 +1,46 @@
 /*
- * "Ink & Verdigris" theme. Values mirror src/tokens.ts (kept in sync by
- * tokens.test.ts). Tailwind v4 picks up the @theme block; components use
- * the generated utilities (bg-surface-1, text-text-muted, …) or var(--…).
+ * "Verdigris Daylight" theme (bright). Values mirror src/tokens.ts (kept in
+ * sync by tokens.test.ts). Tailwind v4 picks up the @theme block; components
+ * use the generated utilities (bg-surface-1, text-text-muted, …) or var(--…).
  */
 @theme {
-  --color-background: #0e0d0c;
-  --color-surface-1: #151413;
-  --color-surface-2: #1c1a18;
-  --color-surface-3: #252220;
-  --color-surface-glass: rgba(28, 26, 24, 0.74);
+  --color-background: #fbf1e1;
+  --color-surface-1: #fffaf1;
+  --color-surface-2: #f7e9d3;
+  --color-surface-3: #f1e1c8;
+  --color-surface-glass: rgba(255, 250, 241, 0.72);
 
-  --color-text-primary: #efeae3;
-  --color-text-secondary: #b3aca2;
-  --color-text-muted: #8f897f;
+  --color-text-primary: #1c1830;
+  --color-text-secondary: #3f3756;
+  --color-text-muted: #585070;
 
-  --color-border: rgba(255, 245, 230, 0.08);
-  --color-border-strong: rgba(255, 245, 230, 0.15);
+  --color-border: rgba(28, 24, 48, 0.1);
+  --color-border-strong: rgba(28, 24, 48, 0.18);
 
-  --color-accent: #4fd1b5;
-  --color-accent-hover: #6fe0c8;
-  --color-accent-subtle: rgba(79, 209, 181, 0.12);
-  --color-on-accent: #0e0d0c;
+  --color-accent: #006c62;
+  --color-accent-hover: #00574f;
+  --color-accent-subtle: rgba(18, 201, 168, 0.16);
+  --color-on-accent: #ffffff;
 
-  --color-effect: #d9cfbf;
+  --color-effect: #75532a;
 
-  --color-verdict-divergence: #ff7a4d;
-  --color-verdict-denied: #f05a5a;
-  --color-verdict-irreversible: #e3a83b;
-  --color-verdict-ok: #63c78c;
-  --color-verdict-unknown: #8f897f;
+  --color-verdict-divergence: #a8380b;
+  --color-verdict-denied: #b3202a;
+  --color-verdict-irreversible: #7d5300;
+  --color-verdict-ok: #166c37;
+  --color-verdict-unknown: #585070;
+
+  --color-vivid-verdigris: #12c9a8;
+  --color-vivid-bone: #f3d9a4;
+  --color-vivid-vermilion: #ff5f2e;
+  --color-vivid-ochre: #ffb21f;
+  --color-vivid-red: #ff3b4f;
+  --color-vivid-green: #2fd36f;
+  --color-vivid-violet: #7b5cff;
+  --color-vivid-sky: #2fa8ff;
+
+  --shadow-1: 0 1px 2px rgba(28, 24, 48, 0.1);
+  --shadow-2: 0 6px 20px rgba(123, 92, 255, 0.1), 0 1px 2px rgba(28, 24, 48, 0.12);
 
   --radius-sm: 6px;
   --radius-card: 12px;

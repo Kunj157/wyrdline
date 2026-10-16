@@ -20,10 +20,7 @@ export function OverviewPage() {
       </p>
       <section aria-label="Schema planes" className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-3">
         {counts.map(({ plane, kinds }) => (
-          <div
-            key={plane}
-            className="rounded-card border border-border bg-surface-1 p-4 shadow-[0_4px_14px_rgba(0,0,0,.32)]"
-          >
+          <div key={plane} className="rounded-card border border-border bg-surface-1 p-4 shadow-2">
             <p className="text-sm capitalize text-text-secondary">{plane} plane</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{kinds}</p>
             <p className="text-xs text-text-muted">event kinds</p>
