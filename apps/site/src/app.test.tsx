@@ -36,7 +36,8 @@ describe("landing page", () => {
     }
   });
 
-  it("shows the static weave and no canvas", () => {
+  it("shows the static weave and loads no 3D under reduced motion", () => {
+    flags.WYRD_REDUCED = true;
     render(<App />);
     expect(screen.getByRole("img", { name: /threads from tool calls/i })).toBeInTheDocument();
     expect(document.querySelector("canvas")).toBeNull();
