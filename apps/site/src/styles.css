@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "@wyrdline/ui/theme.css";
+@source "../../../packages/ui/src";
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 4rem;
+  }
+  body {
+    @apply bg-background text-text-primary font-sans antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* A slowly drifting mesh of the vivid hues behind the hero and panels. */
+.wyrd-mesh {
+  background:
+    radial-gradient(
+      40rem 26rem at 12% 8%,
+      color-mix(in oklab, var(--color-vivid-verdigris) 34%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      36rem 24rem at 88% 4%,
+      color-mix(in oklab, var(--color-vivid-violet) 26%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      34rem 24rem at 70% 92%,
+      color-mix(in oklab, var(--color-vivid-ochre) 30%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      30rem 22rem at 20% 96%,
+      color-mix(in oklab, var(--color-vivid-vermilion) 18%, transparent),
+      transparent 70%
+    ),
+    var(--color-background);
+  background-size: 140% 140%;
+  animation: wyrd-drift 24s ease-in-out infinite alternate;
+}
+.wyrd-mesh-soft {
+  opacity: 0.55;
+}
+@keyframes wyrd-drift {
+  from {
+    background-position: 0% 0%;
+  }
+  to {
+    background-position: 100% 100%;
+  }
+}
+
+/* The word "thread" in the headline, drawn in the river's colours. */
+.wyrd-ink {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-accent),
+    var(--color-vivid-violet) 45%,
+    var(--color-verdict-divergence) 90%
+  );
+}
+
+.wyrd-glow {
+  box-shadow:
+    0 0 0 1px var(--color-border),
+    0 18px 50px -12px color-mix(in oklab, var(--color-vivid-violet) 28%, transparent);
+}
+
+/* The technology strip scrolls; under reduced motion it simply wraps. */
+.wyrd-marquee {
+  animation: wyrd-marquee 40s linear infinite;
+}
+.wyrd-marquee-mask {
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+@keyframes wyrd-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wyrd-mesh,
+  .wyrd-marquee {
+    animation: none;
+  }
+  .wyrd-marquee {
+    width: auto;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding-inline: 1rem;
+  }
+  .wyrd-marquee [aria-hidden="true"] {
+    display: none;
+  }
+  .wyrd-marquee-mask {
+    mask-image: none;
+  }
+}

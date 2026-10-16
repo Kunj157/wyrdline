@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wyrdline</title>
+    <script>
+      // GitHub Pages has no single-page fallback: a reload inside the Studio
+      // demo lands here, so send it back to the demo; anything else goes home.
+      var base = "/wyrdline/";
+      var demo = base + "studio/?offline=" + base + "studio/demo-session.jsonl";
+      location.replace(location.pathname.indexOf(base + "studio/") === 0 ? demo : base);
+    </script>
+  </head>
+  <body style="background: #fbf1e1; color: #1c1830; font-family: system-ui, sans-serif">
+    <p>Page not found. <a href="/wyrdline/">Go to the Wyrdline home page</a>.</p>
+  </body>
+</html>

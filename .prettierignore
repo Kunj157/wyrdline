@@ -8,3 +8,4 @@ docs/schemas/
 *.md
 packages/schemas/src/generated-api/
 docs/api/
+apps/studio/dist-site/

@@ -1,0 +1,71 @@
+name: Landing page
+
+# Publishes the landing page (apps/site, with the real Studio replaying the
+# recorded demo under studio/) to GitHub Pages from the released branch.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/site/**
+      - apps/studio/**
+      - packages/ui/**
+      - packages/schemas/**
+      - crates/wyrd-correlator/**
+      - crates/wyrd-schema/**
+      - crates/wyrd-wasm/**
+      - demo/recordings/**
+      - scripts/build-site.sh
+      - scripts/build-studio-wasm.sh
+      - pnpm-lock.yaml
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-binstall
+      - name: Install wasm-bindgen (offline-mode correlator)
+        run: cargo binstall --no-confirm --locked wasm-bindgen-cli@0.2.129 > /dev/null 2>&1 || cargo install --locked wasm-bindgen-cli@0.2.129
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the site with Studio and the demo session
+        run: scripts/build-site.sh
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
