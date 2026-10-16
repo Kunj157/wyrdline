@@ -9,7 +9,14 @@ import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
 import { type Renderer, RiverCanvas } from "../river/RiverCanvas";
 import { Transcript } from "../components/Transcript";
-import { useCheckpoints, useEvents, useGraph, useSession, useVerify } from "../lib/api";
+import {
+  offlineSource,
+  useCheckpoints,
+  useEvents,
+  useGraph,
+  useSession,
+  useVerify,
+} from "../lib/api";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
 import { statusMeaning } from "./sessions";
@@ -57,6 +64,9 @@ export function SessionPage() {
           >
             {s.workspace}
           </span>
+        )}
+        {offlineSource() !== null && (
+          <span className="text-sm text-text-muted">replay · chain not verifiable offline</span>
         )}
         {verify.data &&
           (verify.data.ok ? (

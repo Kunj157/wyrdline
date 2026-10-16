@@ -27,6 +27,19 @@ export function setApiClient(c: Client): void {
   client = c;
 }
 
+let offlineName: string | null = null;
+
+/** Switch Studio to a read-only replay of an exported session. */
+export function setOffline(name: string, c: Client): void {
+  offlineName = name;
+  client = c;
+}
+
+/** The replayed file's name in offline mode, else `null`. */
+export function offlineSource(): string | null {
+  return offlineName;
+}
+
 export const keys = {
   sessions: ["sessions"] as const,
   session: (sid: string) => ["session", sid] as const,

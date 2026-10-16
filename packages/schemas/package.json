@@ -6,7 +6,8 @@
   "description": "TypeScript types generated from the Rust crates, and a typed daemon API client. Do not edit generated files.",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./generated-api": "./src/generated-api/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -28,7 +28,9 @@ const sessionRoute = createRoute({
 export const routeTree = rootRoute.addChildren([overviewRoute, sessionsRoute, sessionRoute]);
 
 export function makeRouter(history?: Parameters<typeof createRouter>[0]["history"]) {
-  return createRouter({ routeTree, ...(history ? { history } : {}) });
+  // Served at the site root by wyrdd, or below a path (GitHub Pages demo).
+  const basepath = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
+  return createRouter({ routeTree, basepath, ...(history ? { history } : {}) });
 }
 
 declare module "@tanstack/react-router" {

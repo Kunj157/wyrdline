@@ -1,4 +1,6 @@
 import { Link, Outlet } from "@tanstack/react-router";
+
+import { offlineSource } from "../lib/api";
 import { Activity, LayoutGrid } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -16,7 +18,7 @@ export function RootLayout() {
     <div className="flex h-full">
       <aside className="hidden w-60 shrink-0 flex-col gap-1 border-r border-border bg-surface-1 p-3 md:flex">
         <div className="mb-4 flex items-center gap-2 px-2 py-1">
-          <img src="/wyrdline.svg" alt="" className="size-7" />
+          <img src={`${import.meta.env.BASE_URL}wyrdline.svg`} alt="" className="size-7" />
           <span className="font-semibold tracking-tight">Wyrdline</span>
         </div>
         <nav aria-label="Primary" className="flex flex-col gap-0.5">
@@ -40,7 +42,7 @@ export function RootLayout() {
           aria-label="Primary (compact)"
           className="flex items-center gap-1 border-b border-border bg-surface-1 px-3 py-2 md:hidden"
         >
-          <img src="/wyrdline.svg" alt="" className="mr-1 size-6" />
+          <img src={`${import.meta.env.BASE_URL}wyrdline.svg`} alt="" className="mr-1 size-6" />
           {nav.map(({ label, icon: Icon, to }) => (
             <Link
               key={label}
@@ -54,6 +56,16 @@ export function RootLayout() {
             </Link>
           ))}
         </nav>
+        {offlineSource() !== null && (
+          <div
+            role="status"
+            className="border-b border-border bg-accent-subtle px-4 py-2 text-sm text-text-primary"
+          >
+            Offline replay of <span className="font-mono">{offlineSource()}</span> — read-only. The
+            causal graph is computed in your browser by Wyrdline's correlator, compiled to
+            WebAssembly.
+          </div>
+        )}
         <Outlet />
       </main>
     </div>
