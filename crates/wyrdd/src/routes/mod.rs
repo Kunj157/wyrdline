@@ -1,5 +1,6 @@
 //! Route table.
 
+mod sessions;
 mod system;
 
 use std::sync::Arc;
@@ -18,6 +19,11 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/v1/ready", get(system::ready))
         .route("/v1/capabilities", get(system::capabilities))
         .route("/v1/metrics", get(system::metrics))
+        .route("/v1/sessions", get(sessions::list))
+        .route("/v1/sessions/{sid}", get(sessions::get))
+        .route("/v1/sessions/{sid}/events", get(sessions::events))
+        .route("/v1/sessions/{sid}/verify", get(sessions::verify))
+        .route("/v1/sessions/{sid}/checkpoints", get(sessions::checkpoints))
         .fallback(fallback)
 }
 

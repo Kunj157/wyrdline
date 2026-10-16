@@ -2183,7 +2183,9 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "wyrd-cell",
+ "wyrd-correlator",
  "wyrd-doctor",
+ "wyrd-ledger",
 ]
 
 [[package]]

@@ -25,9 +25,11 @@ tracing-subscriber.workspace = true
 ulid.workspace = true
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-doctor = { path = "../wyrd-doctor" }
+wyrd-ledger = { path = "../wyrd-ledger" }
 
 [dev-dependencies]
 http-body-util.workspace = true
+wyrd-correlator = { path = "../wyrd-correlator", features = ["synth"] }
 tempfile.workspace = true
 tower.workspace = true
 
