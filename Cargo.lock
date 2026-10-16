@@ -1771,6 +1771,7 @@ dependencies = [
  "tracing",
  "wyrd-adapters",
  "wyrd-cell",
+ "wyrd-correlator",
  "wyrd-doctor",
  "wyrd-gateway",
  "wyrd-ledger",
@@ -1783,6 +1784,16 @@ name = "wyrd-common"
 version = "0.0.0"
 dependencies = [
  "aya",
+]
+
+[[package]]
+name = "wyrd-correlator"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wyrd-correlator",
+ "wyrd-schema",
 ]
 
 [[package]]
@@ -1898,6 +1909,16 @@ dependencies = [
  "tracing-subscriber",
  "wyrd-schema",
  "wyrd-sensor",
+]
+
+[[package]]
+name = "wyrd-wasm"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "wasm-bindgen",
+ "wyrd-correlator",
+ "wyrd-schema",
 ]
 
 [[package]]

@@ -32,7 +32,7 @@ jobs:
         run: rustup toolchain install nightly --profile minimal --component rust-src
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
-          tool: cargo-nextest,bpf-linker
+          tool: cargo-nextest,bpf-linker,cargo-binstall
       - name: Format
         run: make fmt-check-rust
       - name: Clippy
@@ -41,6 +41,10 @@ jobs:
         run: make test-rust
       - name: Generated schemas are current
         run: make schemas-check
+      - name: Native and WebAssembly correlator agree
+        run: |
+          cargo binstall --no-confirm --locked wasm-bindgen-cli@0.2.129 > /dev/null 2>&1 || cargo install --locked wasm-bindgen-cli@0.2.129
+          make wasm-parity
       - name: Release build
         run: make build-rust
 

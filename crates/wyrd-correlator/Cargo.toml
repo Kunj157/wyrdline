@@ -1,0 +1,29 @@
+[package]
+name = "wyrd-correlator"
+description = "Causal correlation of agent intent and kernel effects (native and Wasm)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+wyrd-schema = { path = "../wyrd-schema" }
+
+[features]
+# Synthetic sessions with ground truth (eval and Wasm parity).
+synth = []
+
+[dev-dependencies]
+wyrd-correlator = { path = ".", features = ["synth"] }
+
+[[example]]
+name = "parity_fixtures"
+required-features = ["synth"]
+
+[lints]
+workspace = true

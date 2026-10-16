@@ -24,6 +24,7 @@ serde.workspace = true
 tracing.workspace = true
 wyrd-adapters = { path = "../wyrd-adapters" }
 wyrd-cell = { path = "../wyrd-cell" }
+wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-doctor = { path = "../wyrd-doctor" }
 wyrd-gateway = { path = "../wyrd-gateway" }
 wyrd-ledger = { path = "../wyrd-ledger" }
