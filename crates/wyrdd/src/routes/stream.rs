@@ -3,6 +3,7 @@
 
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
@@ -75,7 +76,24 @@ fn poll(data: &DataDir, sid: &str, after: u64) -> Result<(Vec<SseEvent>, u64, bo
     Ok((out, last, ended && batch.is_empty()))
 }
 
+/// Counts the stream as open until the response is dropped.
+struct Open(Arc<AppState>);
+
+impl Open {
+    fn new(st: Arc<AppState>) -> Self {
+        st.metrics.streams.fetch_add(1, Ordering::Relaxed);
+        Open(st)
+    }
+}
+
+impl Drop for Open {
+    fn drop(&mut self) {
+        self.0.metrics.streams.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 struct Cursor {
+    _open: Open,
     data: DataDir,
     sid: String,
     after: u64,
@@ -134,6 +152,7 @@ pub async fn stream(
     let sid = blocking(move || Ok(open(&data, &sid)?.record().id.clone())).await?;
     tracing::info!(session = %sid, after, "stream opened");
     let cursor = Cursor {
+        _open: Open::new(st.clone()),
         data: st.data.clone(),
         sid,
         after,

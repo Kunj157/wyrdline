@@ -21,7 +21,9 @@ pub enum Status {
 }
 
 /// Stable identifiers of the checks, used by `WYRD_DOCTOR_MASK`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, schemars::JsonSchema, ts_rs::TS)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, schemars::JsonSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckId {
     Kernel,

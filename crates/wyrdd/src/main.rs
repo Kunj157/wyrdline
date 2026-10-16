@@ -28,7 +28,6 @@ struct Args {
     token_file: Option<PathBuf>,
 }
 
-
 /// `wyrd` next to this binary, else whatever `PATH` finds.
 fn wyrd_bin() -> PathBuf {
     std::env::current_exe()
@@ -57,7 +56,9 @@ async fn shutdown_signal() {
 
 async fn serve(args: Args) -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(DataDir::from_env(), wyrd_bin()));
-    let socket = args.socket.unwrap_or_else(wyrd_adapters::daemon::default_socket);
+    let socket = args
+        .socket
+        .unwrap_or_else(wyrd_adapters::daemon::default_socket);
     let unix =
         SameUidListener::bind(&socket).with_context(|| format!("binding {}", socket.display()))?;
     tracing::info!(socket = %socket.display(), "listening on unix socket");

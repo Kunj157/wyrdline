@@ -86,8 +86,13 @@ pub async fn traces(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<OtlpExportResponse>, Problem> {
-    let request = json_body(&headers, &body)?;
-    session_error(forward(&st, sid, Request::Otlp { request }).await?)?;
+    let result = async {
+        let request = json_body(&headers, &body)?;
+        session_error(forward(&st, sid, Request::Otlp { request }).await?)
+    }
+    .await;
+    st.metrics.ingested(crate::INGEST_OTLP, result.is_ok());
+    result?;
     Ok(Json(OtlpExportResponse {
         partial_success: PartialSuccess {},
     }))
@@ -101,18 +106,23 @@ pub async fn hook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Response>, Problem> {
-    let Some(adapter) = Adapter::from_name(&adapter) else {
-        return Err(Problem::not_found(format!("adapter {adapter}")));
-    };
-    let payload = json_body(&headers, &body)?;
-    let r = forward(
-        &st,
-        sid,
-        Request::Hook {
-            adapter: adapter.name().to_string(),
-            payload,
-        },
-    )
-    .await?;
-    Ok(Json(session_error(r)?))
+    let result = async {
+        let Some(adapter) = Adapter::from_name(&adapter) else {
+            return Err(Problem::not_found(format!("adapter {adapter}")));
+        };
+        let payload = json_body(&headers, &body)?;
+        let r = forward(
+            &st,
+            sid,
+            Request::Hook {
+                adapter: adapter.name().to_string(),
+                payload,
+            },
+        )
+        .await?;
+        session_error(r)
+    }
+    .await;
+    st.metrics.ingested(crate::INGEST_HOOK, result.is_ok());
+    Ok(Json(result?))
 }
