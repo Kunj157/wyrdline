@@ -61,6 +61,8 @@ enum Command {
     Stop(cmd::session::SessionArg),
     /// Close a session and seal its ledger.
     Close(cmd::session::SessionArg),
+    /// Open Studio in a browser (served by the running daemon).
+    Studio(cmd::studio::Args),
     /// Manage the daemon token.
     #[command(subcommand)]
     Token(cmd::daemon::TokenCmd),
@@ -96,6 +98,7 @@ fn main() -> ExitCode {
         Command::Events(a) => cmd::session::events(&a),
         Command::Show(a) => cmd::inspect::show(&a),
         Command::Tail(a) => cmd::inspect::tail(&a),
+        Command::Studio(a) => cmd::studio::run(&a),
         Command::Token(c) => cmd::daemon::token(&c),
         Command::Daemon(c) => cmd::daemon::daemon(&c),
         Command::Graph(a) => cmd::graph::graph(&a),

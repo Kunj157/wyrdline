@@ -40,6 +40,8 @@ pub struct AppState {
     pub wyrd_bin: PathBuf,
     pub metrics: Metrics,
     pub idempotency: idempotency::Store,
+    /// Built Studio (`index.html` and assets), served on loopback TCP.
+    pub studio: Option<PathBuf>,
 }
 
 impl AppState {
@@ -49,8 +51,44 @@ impl AppState {
             wyrd_bin,
             metrics: Metrics::default(),
             idempotency: idempotency::Store::default(),
+            studio: None,
         }
     }
+
+    /// Serve the Studio build in `dir` (when it holds an `index.html`).
+    #[must_use]
+    pub fn with_studio(mut self, dir: Option<PathBuf>) -> Self {
+        self.studio = dir.filter(|d| d.join("index.html").is_file());
+        self
+    }
+}
+
+/// Content-Security-Policy of every response: the Studio loads only its
+/// own scripts (plus WebAssembly for the correlator) and talks only to
+/// this origin.
+pub const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; \
+connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; \
+frame-ancestors 'none'; form-action 'none'";
+
+/// Security headers for every response.
+async fn secure_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    );
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    res
 }
 
 /// Counters exported on `/v1/metrics`.
@@ -268,6 +306,7 @@ pub fn tcp_app(state: Arc<AppState>, tokens: Arc<auth::TokenSource>, cors: CorsL
             auth::require_ingest_token,
         )))
         .layer(cors)
+        .layer(middleware::from_fn(secure_headers))
         .layer(middleware::from_fn_with_state(state.clone(), observe))
         .with_state(state)
 }
