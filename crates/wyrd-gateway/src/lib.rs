@@ -1,4 +1,5 @@
-//! MCP gateway (stdio transport).
+//! MCP gateway (stdio transport; remote Streamable HTTP servers in
+//! [`remote`]).
 //!
 //! `wyrd mcp-proxy --server <name> -- <command…>` starts the real MCP
 //! server as a child and relays newline-delimited JSON-RPC between the
@@ -18,6 +19,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+
+pub mod remote;
 use wyrd_adapters::protocol::call;
 use wyrd_adapters::{Direction, Request, Response};
 use wyrd_schema::{CaptureMode, Decision};
@@ -172,7 +175,7 @@ impl<R: Reporter> Gateway<R> {
     }
 }
 
-fn write_line(out: &Mutex<Box<dyn Write + Send>>, line: &str) -> std::io::Result<()> {
+pub(crate) fn write_line(out: &Mutex<Box<dyn Write + Send>>, line: &str) -> std::io::Result<()> {
     let mut w = out.lock().unwrap_or_else(PoisonError::into_inner);
     w.write_all(line.as_bytes())?;
     w.write_all(b"\n")?;
