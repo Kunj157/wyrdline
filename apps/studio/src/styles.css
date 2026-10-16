@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@wyrdline/ui/theme.css";
+/* Tailwind only scans this app by default; the shared components live in packages/ui. */
+@source "../../../packages/ui/src";
 
 @layer base {
   html,
@@ -21,5 +23,33 @@
       animation-duration: 0.01ms !important;
       transition-duration: 0.01ms !important;
     }
+  }
+}
+
+/* Border trail for live sessions: a verdigris arc travels around the card. */
+@property --wyrd-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.wyrd-trail {
+  background: conic-gradient(
+    from var(--wyrd-angle),
+    var(--color-border) 0deg 280deg,
+    var(--color-vivid-verdigris) 320deg,
+    var(--color-vivid-violet) 350deg,
+    var(--color-border) 360deg
+  );
+  animation: wyrd-trail 3s linear infinite;
+}
+@keyframes wyrd-trail {
+  to {
+    --wyrd-angle: 360deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wyrd-trail {
+    animation: none;
+    background: var(--color-accent);
   }
 }

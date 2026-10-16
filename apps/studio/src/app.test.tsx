@@ -5,7 +5,7 @@ import { render, screen } from "@testing-library/react";
 import { makeRouter } from "./router";
 
 describe("Studio shell", () => {
-  it("renders the overview with schema planes", async () => {
+  it("renders the overview cards and navigation", async () => {
     const router = makeRouter(createMemoryHistory({ initialEntries: ["/"] }));
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -16,7 +16,13 @@ describe("Studio shell", () => {
       "Every agent leaves a thread.",
     );
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-    expect(screen.getByText("effect plane")).toBeInTheDocument();
-    expect(screen.getByText("schema wyrdline.event.v1")).toBeInTheDocument();
+    for (const card of [
+      "Live sessions",
+      "Sessions recorded",
+      "Capture health",
+      "Recent forks and rewinds",
+    ]) {
+      expect(screen.getByRole("region", { name: card })).toBeInTheDocument();
+    }
   });
 });

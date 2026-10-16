@@ -187,3 +187,68 @@ async fn unauthenticated_requests_never_claim_an_idempotency_key() {
     );
     assert!(!headers.contains_key("idempotent-replayed"));
 }
+
+#[tokio::test]
+async fn studio_is_served_with_spa_fallback_and_security_headers() {
+    let dir = tempfile::tempdir().unwrap();
+    let studio = dir.path().join("studio");
+    std::fs::create_dir_all(studio.join("assets")).unwrap();
+    std::fs::write(
+        studio.join("index.html"),
+        "<!doctype html><title>Studio</title>",
+    )
+    .unwrap();
+    std::fs::write(studio.join("assets/app.js"), "console.log(1)").unwrap();
+    let st = Arc::new(
+        AppState::new(
+            DataDir::new(dir.path().join("data")),
+            "/nonexistent/wyrd".into(),
+        )
+        .with_studio(Some(studio)),
+    );
+    let app = wyrdd::tcp_app(
+        st,
+        Arc::new(wyrdd::auth::TokenSource::fixed(TOKEN)),
+        wyrdd::cors(wyrdd::DEFAULT_LISTEN, None),
+    );
+    for path in ["/", "/sessions/01abc"] {
+        let (status, headers, body) = send(app.clone(), get(path, None)).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(body.contains("<title>Studio</title>"), "{path}");
+        assert!(
+            headers[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .contains("default-src 'self'")
+        );
+        assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
+        assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+    }
+    let (status, headers, body) = send(app.clone(), get("/assets/app.js", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .contains("javascript")
+    );
+    assert_eq!(body, "console.log(1)");
+    // The API keeps its own answers: unknown routes are problems, and the
+    // token is still required.
+    let (status, headers, _) = send(app.clone(), get("/v1/nope", Some(TOKEN))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+    let (status, _, _) = send(app.clone(), get("/v1/health", None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Path traversal stays inside the Studio directory.
+    let (_, _, body) = send(app, get("/../data/secret", None)).await;
+    assert!(!body.contains("secret-data"));
+}
+
+#[tokio::test]
+async fn without_a_studio_build_the_root_is_a_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let (status, headers, _) = send(tcp(dir.path()), get("/", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+}

@@ -294,3 +294,36 @@ async fn relaunch_is_handed_to_a_detached_wyrd() {
     .await;
     assert_eq!(cps["current_branch"], "a");
 }
+
+#[tokio::test]
+async fn file_diffs_show_both_sides() {
+    let e = env();
+    let s = Session::open(&e.data, &e.id).unwrap();
+    std::fs::write(s.dir().upper("a").join("b.txt"), "newer\n").unwrap();
+    std::fs::write(s.dir().upper("a").join("img.bin"), [0u8, 159, 146, 150]).unwrap();
+    drop(s);
+    let mut s = Session::open(&e.data, &e.id).unwrap();
+    s.checkpoint(None).unwrap();
+    let app = app(&e, Path::new("/nonexistent"));
+    let get = |q: &str| format!("/v1/sessions/{}/diff/c1/c2/file?path={q}", e.id);
+
+    let (st, _, v) = call(&app, "GET", &get("b.txt"), None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["before"]["text"], "new\n");
+    assert_eq!(v["after"]["text"], "newer\n");
+    assert_eq!(v["after"]["source"], "checkpoint");
+
+    let (_, _, v) = call(&app, "GET", &get("a.txt"), None, None).await;
+    assert_eq!(v["before"]["text"], "edited\n");
+
+    let (_, _, v) = call(&app, "GET", &get("img.bin"), None, None).await;
+    assert_eq!(v["before"]["source"], "absent");
+    assert_eq!(v["after"]["binary"], true);
+    assert!(v["after"]["text"].is_null());
+
+    let (st, _, v) = call(&app, "GET", &get("..%2Fsecret"), None, None).await;
+    assert_eq!(
+        (st, v["type"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid"))
+    );
+}

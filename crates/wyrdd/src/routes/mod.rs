@@ -10,7 +10,12 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::extract::{Request, State};
+use axum::http::Method;
+use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
+use tower::ServiceExt as _;
+use tower_http::services::{ServeDir, ServeFile};
 
 pub use system::doctor_report;
 
@@ -51,12 +56,30 @@ pub fn api() -> Router<Arc<AppState>> {
             post(actions::apply),
         )
         .route("/v1/sessions/{sid}/diff/{a}/{b}", get(actions::diff))
+        .route(
+            "/v1/sessions/{sid}/diff/{a}/{b}/file",
+            get(actions::diff_file),
+        )
         .fallback(fallback)
 }
 
-/// Unknown routes answer with a problem, too.
-async fn fallback() -> Problem {
-    Problem::not_found("no such endpoint")
+/// Unknown API routes answer with a problem; anything else is the Studio
+/// (its single-page routes fall back to `index.html`) when one is served.
+async fn fallback(State(st): State<Arc<AppState>>, req: Request) -> Response {
+    match &st.studio {
+        Some(dir) if !req.uri().path().starts_with("/v1/") && req.method() == Method::GET => {
+            let index = dir.join("index.html");
+            match ServeDir::new(dir)
+                .fallback(ServeFile::new(index))
+                .oneshot(req)
+                .await
+            {
+                Ok(res) => res.into_response(),
+                Err(e) => Problem::internal(e.to_string()).into_response(),
+            }
+        }
+        _ => Problem::not_found("no such endpoint").into_response(),
+    }
 }
 
 /// Ingest routes: authorised separately (per-session ingest token on TCP).

@@ -7,4 +7,5 @@ pub mod inspect;
 pub mod intent;
 pub mod mcp_proxy;
 pub mod session;
+pub mod studio;
 pub mod verify;

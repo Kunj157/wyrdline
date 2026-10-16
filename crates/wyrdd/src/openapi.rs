@@ -246,6 +246,12 @@ fn operations(s: &mut Schemas) -> Vec<Operation> {
         },
         op(
             "get",
+            "/v1/sessions/{sid}/diff/{a}/{b}/file",
+            "Both sides of one file between two checkpoints (text up to 1 MiB each)",
+            (200, "File diff", s.out::<api::FileDiff>()),
+        ),
+        op(
+            "get",
             "/v1/sessions/{sid}/diff/{a}/{b}",
             "Changes between two checkpoints or branches",
             (200, "Changes", s.out::<api::Changes>()),
@@ -327,6 +333,10 @@ fn query_params(method: &str, path: &str) -> Vec<Value> {
             q("from_seq", "integer", "First seq kept"),
             q("to_seq", "integer", "Last seq kept"),
         ],
+        ("get", "/v1/sessions/{sid}/diff/{a}/{b}/file") => vec![json!({
+            "name": "path", "in": "query", "required": true,
+            "schema": { "type": "string" }, "description": "Relative, /-separated path"
+        })],
         ("get", "/v1/sessions/{sid}/stream") => vec![q(
             "after_seq",
             "integer",

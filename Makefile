@@ -8,7 +8,8 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check test-perf test-integration test-scenarios apparmor-install
+	schemas schemas-check test-perf test-integration test-scenarios apparmor-install \
+	test-e2e test-e2e-webgpu e2e-build
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -61,6 +62,18 @@ test-perf: ## Throughput and overhead measurements (release build, needs sudo; c
 		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1
 	$(CARGO) clean --release
 
+e2e-build:
+	$(CARGO) build --locked -p wyrdd --bin wyrdd --example e2e_fixture
+	$(CARGO) build --locked -p wyrd-cli
+	scripts/build-studio-wasm.sh
+	$(PNPM) --filter @wyrdline/studio build
+
+test-e2e: e2e-build ## Studio end to end: Playwright (headless Chromium) against a real wyrdd
+	$(PNPM) exec playwright test -c tests/e2e --project=chromium
+
+test-e2e-webgpu: e2e-build ## The WebGPU river, headed Chromium with SwiftShader on a virtual display
+	WYRD_E2E_WEBGPU=1 xvfb-run -a $(PNPM) exec playwright test -c tests/e2e --project=webgpu
+
 test-integration: ## Privileged Cell, scenario, and sensor tests (through passwordless sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord -p wyrdd \
 		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests,wyrdd/privileged-tests \
@@ -81,6 +94,9 @@ sensord-install: ## Build and install wyrd-sensord as a systemd service (needs s
 	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
+
+studio-wasm: ## Build the WebAssembly correlator into the Studio (offline mode)
+	scripts/build-studio-wasm.sh
 
 wasm-parity: ## Native vs WebAssembly correlator output must be identical
 	$(CARGO) run --quiet --locked -p wyrd-correlator --features synth --example parity_fixtures -- target/wasm-parity
