@@ -127,3 +127,18 @@ without reaching the mutating API (plan §17.8). `wyrd run` gives it to the
 agent through `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `…_PROTOCOL=http/json`
 and `…_HEADERS`, unless the user already set an OTLP endpoint
 (`WYRD_DAEMON_LISTEN` overrides the address).
+
+## Contract
+
+`docs/api/openapi.json` (OpenAPI 3.1) and the TypeScript types in
+`packages/schemas/src/generated-api/` are generated from the handler types
+in `wyrdd::api` by `make schemas` (`wyrdd-gen-api`), using the same
+schemars/ts-rs derives as the event schema — the plan named utoipa, but it
+cannot reuse schemars schemas, so one derive system describes each type.
+`packages/schemas/src/client.ts` is a typed client over those types.
+
+Checks: `make schemas-check` (CI) fails on stale generated files; a Rust
+test compares the routes registered in `routes/mod.rs` with the document
+and validates real responses (successes and problems) against their
+schemas; a Vitest test checks that every client call hits a documented
+route and method.
