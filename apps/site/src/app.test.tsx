@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { App } from "./App";
-import { demoUrl, planes } from "./content";
+import { demoUrl, features, roadmap } from "./content";
 
 const flags = globalThis as { WYRD_REDUCED?: boolean };
 
@@ -10,10 +10,14 @@ afterEach(() => {
 });
 
 describe("landing page", () => {
-  it("has one title and shows the three planes", () => {
+  it("has one title and a section per shipped feature and roadmap phase", () => {
     render(<App />);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    for (const p of planes) expect(screen.getByText(`${p.name} plane`)).toBeInTheDocument();
+    for (const f of features) {
+      expect(screen.getByRole("heading", { level: 3, name: f.title })).toBeInTheDocument();
+    }
+    const next = screen.getByRole("region", { name: "Where the thread goes next." });
+    expect(within(next).getAllByRole("listitem")).toHaveLength(roadmap.length);
   });
 
   it("links the demo to the offline Studio replaying the recorded session", () => {

@@ -1,7 +1,10 @@
 import { MotionConfig } from "motion/react";
 
 import { Footer, Nav } from "./components/Chrome";
+import { Demo } from "./components/Demo";
+import { Features } from "./components/Features";
 import { Hero } from "./components/Hero";
+import { GetStarted, Roadmap } from "./components/Roadmap";
 import { SaidVsDid } from "./components/SaidVsDid";
 
 export function App() {
@@ -17,6 +20,10 @@ export function App() {
       <main id="main">
         <Hero />
         <SaidVsDid />
+        <Features />
+        <Demo />
+        <Roadmap />
+        <GetStarted />
       </main>
       <Footer />
     </MotionConfig>
