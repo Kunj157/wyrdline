@@ -7,11 +7,15 @@ import { CheckpointPanel } from "../components/CheckpointPanel";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
+import { type Renderer, RiverCanvas } from "../river/RiverCanvas";
 import { Transcript } from "../components/Transcript";
 import { useCheckpoints, useEvents, useGraph, useSession, useVerify } from "../lib/api";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
 import { statusMeaning } from "./sessions";
+
+/** Above this many knots the SVG fallback is too slow; the table remains. */
+const SVG_LIMIT = 5000;
 
 export function SessionPage() {
   const { sid } = useParams({ from: "/sessions/$sid" });
@@ -24,6 +28,8 @@ export function SessionPage() {
   const live = useLiveEvents(sid, Boolean(recording && events.data));
   const [selected, setSelected] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [mode, setMode] = useState<"auto" | "canvas2d" | "svg">("auto");
+  const [renderer, setRenderer] = useState<Renderer | null>(null);
   const [tab, setTab] = useState("events");
   const list = useMemo(() => events.data ?? [], [events.data]);
   const layout = useMemo(() => layoutRiver(list, graph.data), [list, graph.data]);
@@ -77,29 +83,64 @@ export function SessionPage() {
         <Shimmer>Loading the river…</Shimmer>
       ) : (
         <section aria-label="Causal river" className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-xs text-text-muted">
-            <button
-              type="button"
-              aria-label="Zoom out"
-              onClick={() => setZoom((z) => Math.max(0.25, z / 1.5))}
-              className="rounded-sm p-1 hover:bg-surface-2"
-            >
-              <ZoomOut className="size-4" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label="Zoom in"
-              onClick={() => setZoom((z) => Math.min(6, z * 1.5))}
-              className="rounded-sm p-1 hover:bg-surface-2"
-            >
-              <ZoomIn className="size-4" aria-hidden="true" />
-            </button>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+            <label className="flex items-center gap-1">
+              Renderer
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value as typeof mode)}
+                className="rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5"
+              >
+                <option value="auto">Auto (WebGPU)</option>
+                <option value="canvas2d">Canvas2D</option>
+                <option value="svg">SVG</option>
+              </select>
+            </label>
+            {mode !== "svg" && renderer && renderer !== "unavailable" && (
+              <span data-testid="renderer">{renderer === "webgpu" ? "WebGPU" : "Canvas2D"}</span>
+            )}
+            {mode === "svg" && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Zoom out"
+                  onClick={() => setZoom((z) => Math.max(0.25, z / 1.5))}
+                  className="rounded-sm p-1 hover:bg-surface-2"
+                >
+                  <ZoomOut className="size-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Zoom in"
+                  onClick={() => setZoom((z) => Math.min(6, z * 1.5))}
+                  className="rounded-sm p-1 hover:bg-surface-2"
+                >
+                  <ZoomIn className="size-4" aria-hidden="true" />
+                </button>
+              </>
+            )}
             <span>
-              <Kbd>←</Kbd> <Kbd>→</Kbd> move · <Kbd>n</Kbd> <Kbd>p</Kbd> next/previous notable ·{" "}
-              {layout.knots.length} knots
+              <Kbd>←</Kbd> <Kbd>→</Kbd> move · <Kbd>n</Kbd> <Kbd>p</Kbd> notable · <Kbd>[</Kbd>{" "}
+              <Kbd>]</Kbd> zoom · {layout.knots.length} knots
             </span>
           </div>
-          <River2D layout={layout} selected={selected} onSelect={setSelected} zoom={zoom} />
+          {mode !== "svg" && renderer !== "unavailable" ? (
+            <RiverCanvas
+              key={mode}
+              layout={layout}
+              selected={selected}
+              onSelect={setSelected}
+              prefer={mode === "auto" ? "webgpu" : "canvas2d"}
+              onRenderer={setRenderer}
+            />
+          ) : layout.knots.length <= SVG_LIMIT ? (
+            <River2D layout={layout} selected={selected} onSelect={setSelected} zoom={zoom} />
+          ) : (
+            <p role="status" className="rounded-card border border-border bg-surface-1 p-4 text-sm">
+              No graphics renderer is available for {layout.knots.length} events; the events table
+              below has them all.
+            </p>
+          )}
         </section>
       )}
 
