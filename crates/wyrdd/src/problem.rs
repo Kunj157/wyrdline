@@ -66,8 +66,3 @@ impl IntoResponse for Problem {
         res
     }
 }
-
-/// Unknown routes answer with a problem, too.
-pub async fn fallback() -> Problem {
-    Problem::not_found("no such endpoint")
-}
