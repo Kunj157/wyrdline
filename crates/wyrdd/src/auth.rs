@@ -68,14 +68,50 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// The ingest token of session `sid`: derived one-way from the daemon
+/// token, so an agent can be given it without learning the daemon token.
+pub fn ingest_token(daemon_token: &str, sid: &str) -> String {
+    let key = blake3::hash(daemon_token.as_bytes());
+    let mut h = blake3::Hasher::new_keyed(key.as_bytes());
+    h.update(b"wyrdline ingest v1\0");
+    h.update(sid.as_bytes());
+    h.finalize().to_hex().to_string()
+}
+
+fn bearer(req: &Request) -> Option<&str> {
+    req.headers()
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+}
+
+/// Middleware for ingest routes on TCP: the bearer must be the ingest
+/// token of the session in the path (`/v1/sessions/{sid}/…`).
+pub async fn require_ingest_token(
+    State(token): State<Arc<str>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let sid = req
+        .uri()
+        .path()
+        .strip_prefix("/v1/sessions/")
+        .and_then(|r| r.split('/').next())
+        .unwrap_or("");
+    let ok = !sid.is_empty()
+        && bearer(&req)
+            .is_some_and(|t| constant_time_eq(t.as_bytes(), ingest_token(&token, sid).as_bytes()));
+    if ok {
+        next.run(req).await
+    } else {
+        Problem::unauthorized().into_response()
+    }
+}
+
 /// Middleware for the TCP listener: require `Authorization: Bearer <token>`.
 pub async fn require_token(State(token): State<Arc<str>>, req: Request, next: Next) -> Response {
-    let ok = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| constant_time_eq(t.as_bytes(), token.as_bytes()));
+    let ok = bearer(&req).is_some_and(|t| constant_time_eq(t.as_bytes(), token.as_bytes()));
     if ok {
         next.run(req).await
     } else {
@@ -93,6 +129,16 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn ingest_tokens_are_per_session_and_per_daemon() {
+        let a = ingest_token("daemon-1", "01aaa");
+        assert_eq!(a.len(), 64);
+        assert_eq!(a, ingest_token("daemon-1", "01aaa"));
+        assert_ne!(a, ingest_token("daemon-1", "01aab"));
+        assert_ne!(a, ingest_token("daemon-2", "01aaa"));
+        assert!(!a.contains("daemon-1"));
     }
 
     #[test]

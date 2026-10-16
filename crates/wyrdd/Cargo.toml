@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+blake3.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
@@ -24,6 +25,7 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
+wyrd-adapters = { path = "../wyrd-adapters" }
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-doctor = { path = "../wyrd-doctor" }
@@ -32,6 +34,7 @@ wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
 http-body-util.workspace = true
+wyrd-schema = { path = "../wyrd-schema" }
 wyrd-correlator = { path = "../wyrd-correlator", features = ["synth"] }
 tempfile.workspace = true
 tower.workspace = true

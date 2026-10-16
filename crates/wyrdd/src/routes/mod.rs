@@ -1,6 +1,7 @@
 //! Route table.
 
 mod actions;
+mod ingest;
 mod sessions;
 mod stream;
 mod system;
@@ -8,6 +9,7 @@ mod system;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 
 pub use system::doctor_report;
@@ -55,4 +57,15 @@ pub fn api() -> Router<Arc<AppState>> {
 /// Unknown routes answer with a problem, too.
 async fn fallback() -> Problem {
     Problem::not_found("no such endpoint")
+}
+
+/// Ingest routes: authorised separately (per-session ingest token on TCP).
+pub fn ingest() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/sessions/{sid}/otlp/v1/traces", post(ingest::traces))
+        .route(
+            "/v1/sessions/{sid}/ingest/hooks/{adapter}",
+            post(ingest::hook),
+        )
+        .layer(DefaultBodyLimit::max(ingest::MAX_BODY))
 }

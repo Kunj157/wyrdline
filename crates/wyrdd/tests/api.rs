@@ -161,3 +161,25 @@ async fn unix_socket_serves_the_same_user_without_a_token() {
     assert!(out.starts_with("HTTP/1.1 200"), "{out}");
     assert!(out.to_ascii_lowercase().contains("x-request-id:"));
 }
+
+#[tokio::test]
+async fn unauthenticated_requests_never_claim_an_idempotency_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = tcp(dir.path());
+    let post = |token: Option<&str>| {
+        let mut b = Request::post("/v1/sessions/zzzz/stop").header("idempotency-key", "k");
+        if let Some(t) = token {
+            b = b.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).unwrap()
+    };
+    let (status, _, _) = send(app.clone(), post(None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers, _) = send(app, post(Some(TOKEN))).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "ran, not a replayed 401: {headers:?}"
+    );
+    assert!(!headers.contains_key("idempotent-replayed"));
+}
