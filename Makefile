@@ -9,7 +9,7 @@ PNPM ?= pnpm
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install \
-	test-e2e test-e2e-webgpu e2e-build
+	test-e2e test-e2e-webgpu e2e-build site test-site
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -73,6 +73,12 @@ test-e2e: e2e-build ## Studio end to end: Playwright (headless Chromium) against
 
 test-e2e-webgpu: e2e-build ## The WebGPU river, headed Chromium with SwiftShader on a virtual display
 	WYRD_E2E_WEBGPU=1 xvfb-run -a $(PNPM) exec playwright test -c tests/e2e --project=webgpu
+
+site: ## Landing page with Studio and the demo session, as published (apps/site/dist)
+	scripts/build-site.sh
+
+test-site: site ## Landing page end to end: Playwright against the published build
+	$(PNPM) exec playwright test -c tests/site
 
 test-integration: ## Privileged Cell, scenario, and sensor tests (through passwordless sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord -p wyrdd \

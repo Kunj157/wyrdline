@@ -127,12 +127,16 @@ jobs:
         run: make test-e2e
       - name: WebGPU river (SwiftShader, virtual display)
         run: make test-e2e-webgpu
+      - name: Landing page as published (site, Studio, demo session)
+        run: make test-site
       - name: Keep screenshots and performance numbers
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-results
-          path: target/e2e-results
+          path: |
+            target/e2e-results
+            target/site-results
           retention-days: 7
 
   supply-chain:
