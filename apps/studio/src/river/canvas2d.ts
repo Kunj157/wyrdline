@@ -1,5 +1,13 @@
 /** Canvas2D river: the fallback when WebGPU is unavailable or lost. */
-import { aggregate, type Camera, type Columns, LOD_THRESHOLD, visibleRange } from "./data";
+import {
+  aggregate,
+  type Camera,
+  type Columns,
+  LOD_THRESHOLD,
+  threadsOfCall,
+  visibleRange,
+  visibleThreads,
+} from "./data";
 import { css, LANE_Y, palette } from "./theme";
 
 export interface Frame {
@@ -29,12 +37,15 @@ export function drawCanvas2d(ctx: CanvasRenderingContext2D, f: Frame): { lod: bo
   ctx.lineTo(f.width, LANE_Y[1]);
   ctx.stroke();
 
-  // Threads: all of them when sparse, only the active call's when dense.
-  for (let t = 0; t < c.threadFrom.length; t++) {
+  // Threads ending in view when sparse; only the active call's when dense.
+  const [t0, t1] = visibleThreads(c, from, to);
+  const list = lod
+    ? threadsOfCall(c, f.activeCall)
+    : Array.from({ length: Math.max(0, t1 - t0) }, (_, i) => t0 + i);
+  for (const t of list) {
     const a = c.threadFrom[t] ?? 0;
     const b = c.threadTo[t] ?? 0;
     const lit = f.activeCall >= 0 && c.callIndex[a] === f.activeCall;
-    if (lod && !lit) continue;
     const [x1, x2] = [sx(a), sx(b)];
     if (Math.max(x1, x2) < 0 || Math.min(x1, x2) > f.width) continue;
     ctx.strokeStyle = css(lit ? palette.threadLit : palette.thread);

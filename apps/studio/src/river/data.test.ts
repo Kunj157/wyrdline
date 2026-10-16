@@ -58,3 +58,29 @@ describe("river columns", () => {
     expect(hitTest(c, { offset: 0, scale: 1 }, 21, 30, laneY)).toBe(-1);
   });
 });
+
+describe("thread culling", () => {
+  it("finds the threads ending in view and a call's threads", async () => {
+    const { toColumns: cols, visibleThreads, threadsOfCall } = await import("./data");
+    const layout = {
+      knots: [0, 1, 2, 3, 4].map((i) => ({
+        seq: i + 1,
+        lane: (i === 0 || i === 3 ? "intent" : "effect") as "intent" | "effect",
+        x: (i + 1) * 10,
+        meaning: "effect" as const,
+        label: "",
+        callId: i < 3 ? "a" : "b",
+      })),
+      threads: [
+        { from: 4, to: 5, callId: "b", ambiguous: false },
+        { from: 1, to: 2, callId: "a", ambiguous: false },
+        { from: 1, to: 3, callId: "a", ambiguous: false },
+      ],
+      width: 60,
+    };
+    const c = cols(layout);
+    expect(Array.from(c.threadTo)).toEqual([1, 2, 4]);
+    expect(visibleThreads(c, 2, 5)).toEqual([1, 3]);
+    expect(threadsOfCall(c, c.callIndex[0] ?? -1)).toEqual([0, 1]);
+  });
+});

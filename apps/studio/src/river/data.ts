@@ -55,7 +55,11 @@ export function toColumns(layout: RiverLayout): Columns {
       callIndex[i] = calls.get(k.callId) ?? -1;
     }
   });
-  const threads = layout.threads.filter((t) => index.has(t.from) && index.has(t.to));
+  // Sorted by the effect end, so the threads ending in a visible range are
+  // one contiguous slice (see visibleThreads).
+  const threads = layout.threads
+    .filter((t) => index.has(t.from) && index.has(t.to))
+    .sort((a, b) => (index.get(a.to) ?? 0) - (index.get(b.to) ?? 0));
   const threadFrom = new Uint32Array(threads.length);
   const threadTo = new Uint32Array(threads.length);
   const threadAmbiguous = new Uint8Array(threads.length);
@@ -129,6 +133,31 @@ function lowerBound(a: Float32Array, v: number): number {
     else hi = mid;
   }
   return lo;
+}
+
+/** Threads whose end knot index lies in [from, to): a slice of the arrays. */
+export function visibleThreads(c: Columns, from: number, to: number): [number, number] {
+  const lb = (v: number) => {
+    let lo = 0;
+    let hi = c.threadTo.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((c.threadTo[mid] ?? 0) < v) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  return [lb(from), lb(to)];
+}
+
+/** Indices of the threads of call `call` (for dense rivers). */
+export function threadsOfCall(c: Columns, call: number): number[] {
+  const out: number[] = [];
+  if (call < 0) return out;
+  for (let t = 0; t < c.threadFrom.length; t++) {
+    if (c.callIndex[c.threadFrom[t] ?? 0] === call) out.push(t);
+  }
+  return out;
 }
 
 /** Level of detail: past this many visible knots in one lane, draw buckets. */

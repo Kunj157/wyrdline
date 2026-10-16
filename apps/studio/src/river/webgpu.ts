@@ -4,7 +4,7 @@
  * (no animation loop); the CPU only uploads typed arrays.
  */
 import type { Frame } from "./canvas2d";
-import { aggregate, LOD_THRESHOLD, visibleRange } from "./data";
+import { aggregate, LOD_THRESHOLD, threadsOfCall, visibleRange, visibleThreads } from "./data";
 import { LANE_Y, palette, type Rgba } from "./theme";
 
 /** Colour slots in the uniform: 0–6 meanings, then these. */
@@ -234,6 +234,10 @@ export async function createGpuRiver(
   let threadBuf = storage(16);
   let rectBuf = storage(32);
   let rectCap = 32;
+  // Dense rivers draw only the selected call's threads, copied here.
+  let litBuf = storage(16);
+  let litCap = 16;
+  let litBind: GPUBindGroup | null = null;
   let uploaded: Frame["cols"] | null = null;
   let bind: GPUBindGroup | null = null;
 
@@ -263,6 +267,7 @@ export async function createGpuRiver(
     device.queue.writeBuffer(threadBuf, 0, t);
     uploaded = c;
     bind = null;
+    litBind = null;
   };
 
   const writeRects = (rects: RectSpec[]) => {
@@ -272,6 +277,7 @@ export async function createGpuRiver(
       rectCap = Math.max(need, rectCap * 2);
       rectBuf = storage(rectCap);
       bind = null;
+      litBind = null;
     }
     const a = new Float32Array(rects.length * 8);
     rects.forEach(([x, y, w, h, col], i) => a.set([x, y, w, h, ...col], i * 8));
@@ -302,6 +308,23 @@ export async function createGpuRiver(
       }
       writeRects(rects);
 
+      let lit: number[] = [];
+      if (lod && f.activeCall >= 0) {
+        lit = threadsOfCall(c, f.activeCall);
+        const need = Math.max(1, lit.length) * 16;
+        if (need > litCap) {
+          litBuf.destroy();
+          litCap = Math.max(need, litCap * 2);
+          litBuf = storage(litCap);
+          litBind = null;
+        }
+        const t = new Uint32Array(lit.length * 4);
+        lit.forEach((i, j) =>
+          t.set([c.threadFrom[i] ?? 0, c.threadTo[i] ?? 0, c.threadAmbiguous[i] ?? 0, 0], j * 4),
+        );
+        device.queue.writeBuffer(litBuf, 0, t);
+      }
+
       const u = new ArrayBuffer(UNIFORM_BYTES);
       const uf = new Float32Array(u);
       const ui = new Int32Array(u);
@@ -319,6 +342,15 @@ export async function createGpuRiver(
       slots.forEach((col, i) => uf.set(col, 12 + i * 4));
       device.queue.writeBuffer(uniform, 0, u);
 
+      litBind ??= device.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: { buffer: uniform } },
+          { binding: 1, resource: { buffer: knotBuf } },
+          { binding: 2, resource: { buffer: litBuf } },
+          { binding: 3, resource: { buffer: rectBuf } },
+        ],
+      });
       bind ??= device.createBindGroup({
         layout,
         entries: [
@@ -342,9 +374,10 @@ export async function createGpuRiver(
       pass.setBindGroup(0, bind);
       pass.setPipeline(rectPipe);
       pass.draw(6, rects.length);
-      if (c.threadFrom.length > 0) {
+      const [t0, t1] = visibleThreads(c, from, to);
+      if (!lod && t1 > t0) {
         pass.setPipeline(threadPipe);
-        pass.draw(2 * 17, c.threadFrom.length);
+        pass.draw(2 * 17, t1 - t0, 0, t0);
       }
       if (!lod && to > from) {
         pass.setPipeline(knotPipe);
@@ -352,6 +385,12 @@ export async function createGpuRiver(
       } else if (lod && f.selected >= 0) {
         pass.setPipeline(knotPipe);
         pass.draw(6, 1, 0, f.selected);
+      }
+      if (lit.length > 0) {
+        pass.setBindGroup(0, litBind);
+        pass.setPipeline(threadPipe);
+        pass.draw(2 * 17, lit.length);
+        pass.setBindGroup(0, bind);
       }
       pass.end();
       device.queue.submit([enc.finish()]);
@@ -362,6 +401,7 @@ export async function createGpuRiver(
       knotBuf.destroy();
       threadBuf.destroy();
       rectBuf.destroy();
+      litBuf.destroy();
       uniform.destroy();
       device.destroy();
     },
