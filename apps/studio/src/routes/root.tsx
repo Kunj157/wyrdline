@@ -2,6 +2,8 @@ import { Link, Outlet } from "@tanstack/react-router";
 import { Activity, LayoutGrid } from "lucide-react";
 import type { ComponentType } from "react";
 
+import { CommandPalette } from "../components/CommandPalette";
+
 type NavItem = { to: string; label: string; icon: ComponentType<{ className?: string }> };
 
 const nav: NavItem[] = [
@@ -32,6 +34,7 @@ export function RootLayout() {
           ))}
         </nav>
       </aside>
+      <CommandPalette />
       <main className="min-w-0 flex-1 overflow-auto">
         <nav
           aria-label="Primary (compact)"
