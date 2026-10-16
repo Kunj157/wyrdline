@@ -41,3 +41,11 @@ tower.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "wyrdd"
+path = "src/main.rs"
+
+[[bin]]
+name = "wyrdd-gen-api"
+path = "src/bin/gen_api.rs"
