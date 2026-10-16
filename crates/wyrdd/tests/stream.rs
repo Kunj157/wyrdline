@@ -12,7 +12,7 @@ use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 use wyrd_cell::session::CreateOptions;
 use wyrd_cell::{DataDir, Session};
-use wyrdd::{AppState, Metrics};
+use wyrdd::AppState;
 
 struct Env {
     _tmp: tempfile::TempDir,
@@ -62,11 +62,10 @@ fn head(s: &Session) -> u64 {
 }
 
 fn app(e: &Env) -> axum::Router {
-    wyrdd::unix_app(Arc::new(AppState {
-        data: e.data.clone(),
-        wyrd_bin: "/nonexistent/wyrd".into(),
-        metrics: Metrics::default(),
-    }))
+    wyrdd::unix_app(Arc::new(AppState::new(
+        e.data.clone(),
+        "/nonexistent/wyrd".into(),
+    )))
 }
 
 /// Parsed SSE messages: (event name, id, data).

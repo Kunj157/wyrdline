@@ -3,6 +3,7 @@
 //! loopback TCP (bearer token).
 
 pub mod auth;
+pub mod idempotency;
 pub mod listen;
 pub mod problem;
 mod routes;
@@ -36,6 +37,18 @@ pub struct AppState {
     /// The `wyrd` binary, for probes that must run in a child process.
     pub wyrd_bin: PathBuf,
     pub metrics: Metrics,
+    pub idempotency: idempotency::Store,
+}
+
+impl AppState {
+    pub fn new(data: DataDir, wyrd_bin: PathBuf) -> Self {
+        AppState {
+            data,
+            wyrd_bin,
+            metrics: Metrics::default(),
+            idempotency: idempotency::Store::default(),
+        }
+    }
 }
 
 /// Request counters exported on `/v1/metrics`.
@@ -132,6 +145,10 @@ pub fn cors(listen: &str, extra: Option<&str>) -> CorsLayer {
 /// listener, so no token is needed).
 pub fn unix_app(state: Arc<AppState>) -> Router {
     routes::api()
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            idempotency::idempotent,
+        ))
         .layer(middleware::from_fn_with_state(state.clone(), observe))
         .with_state(state)
 }
@@ -140,6 +157,10 @@ pub fn unix_app(state: Arc<AppState>) -> Router {
 pub fn tcp_app(state: Arc<AppState>, token: &str, cors: CorsLayer) -> Router {
     let token: Arc<str> = Arc::from(token);
     routes::api()
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            idempotency::idempotent,
+        ))
         .layer(middleware::from_fn_with_state(token, auth::require_token))
         .layer(cors)
         .layer(middleware::from_fn_with_state(state.clone(), observe))
