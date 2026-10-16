@@ -13,7 +13,8 @@ use wyrdd::{AppState, auth, listen::SameUidListener};
 #[derive(Debug, Parser)]
 #[command(name = "wyrdd", version, about)]
 struct Args {
-    /// Unix socket (default `$XDG_RUNTIME_DIR/wyrdline/wyrdd.sock`).
+    /// Unix socket (default `$WYRD_DAEMON_SOCKET`, else
+    /// `$XDG_RUNTIME_DIR/wyrdline/wyrdd.sock`).
     #[arg(long)]
     socket: Option<PathBuf>,
     /// Loopback address for the TCP listener.
@@ -27,17 +28,6 @@ struct Args {
     token_file: Option<PathBuf>,
 }
 
-fn default_socket() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map_or_else(
-            || {
-                std::env::temp_dir()
-                    .join(format!("wyrdline-{}", rustix::process::getuid().as_raw()))
-            },
-            |d| PathBuf::from(d).join("wyrdline"),
-        )
-        .join("wyrdd.sock")
-}
 
 /// `wyrd` next to this binary, else whatever `PATH` finds.
 fn wyrd_bin() -> PathBuf {
@@ -67,7 +57,7 @@ async fn shutdown_signal() {
 
 async fn serve(args: Args) -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(DataDir::from_env(), wyrd_bin()));
-    let socket = args.socket.unwrap_or_else(default_socket);
+    let socket = args.socket.unwrap_or_else(wyrd_adapters::daemon::default_socket);
     let unix =
         SameUidListener::bind(&socket).with_context(|| format!("binding {}", socket.display()))?;
     tracing::info!(socket = %socket.display(), "listening on unix socket");
@@ -86,8 +76,10 @@ async fn serve(args: Args) -> anyhow::Result<()> {
         "--listen must be a loopback address"
     );
     let token_file = args.token_file.unwrap_or_else(auth::default_token_path);
-    let token = auth::load_or_create_token(&token_file)
-        .with_context(|| format!("token file {}", token_file.display()))?;
+    let tokens = std::sync::Arc::new(
+        auth::TokenSource::file(token_file.clone())
+            .with_context(|| format!("token file {}", token_file.display()))?,
+    );
     let tcp = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr} (is another wyrdd running?)"))?;
@@ -97,7 +89,7 @@ async fn serve(args: Args) -> anyhow::Result<()> {
         std::env::var("WYRD_STUDIO_ORIGIN").ok().as_deref(),
     );
     let tcp_task =
-        tokio::spawn(axum::serve(tcp, wyrdd::tcp_app(state, &token, cors)).into_future());
+        tokio::spawn(axum::serve(tcp, wyrdd::tcp_app(state, tokens, cors)).into_future());
     tokio::select! {
         r = unix_task => r??,
         r = tcp_task => r??,

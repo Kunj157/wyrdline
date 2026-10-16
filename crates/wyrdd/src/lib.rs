@@ -157,8 +157,8 @@ pub fn unix_app(state: Arc<AppState>) -> Router {
 }
 
 /// The API as served on loopback TCP: bearer token and CORS.
-pub fn tcp_app(state: Arc<AppState>, token: &str, cors: CorsLayer) -> Router {
-    let token: Arc<str> = Arc::from(token);
+pub fn tcp_app(state: Arc<AppState>, tokens: Arc<auth::TokenSource>, cors: CorsLayer) -> Router {
+    let token = tokens;
     // The last route layer runs first: authentication happens before an
     // idempotency key is ever claimed (a test pins this).
     routes::api()

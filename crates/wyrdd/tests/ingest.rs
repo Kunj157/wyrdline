@@ -83,7 +83,11 @@ fn live(e: &Env, deny: &[&str]) -> Arc<Ingest<Mem>> {
 
 fn tcp(e: &Env) -> axum::Router {
     let st = Arc::new(AppState::new(e.data.clone(), "/nonexistent".into()));
-    wyrdd::tcp_app(st, TOKEN, wyrdd::cors(wyrdd::DEFAULT_LISTEN, None))
+    wyrdd::tcp_app(
+        st,
+        Arc::new(wyrdd::auth::TokenSource::fixed(TOKEN)),
+        wyrdd::cors(wyrdd::DEFAULT_LISTEN, None),
+    )
 }
 
 async fn post(

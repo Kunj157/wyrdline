@@ -2,10 +2,31 @@
 //! and a token scoped to one session's ingest routes. The daemon token
 //! itself never reaches an agent.
 
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write as _;
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::path::{Path, PathBuf};
 
 /// The daemon's default loopback address (plan §11.1).
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:7717";
+
+/// The daemon's unix socket: `$WYRD_DAEMON_SOCKET`, else
+/// `$XDG_RUNTIME_DIR/wyrdline/wyrdd.sock`, else a per-UID path in the
+/// temporary directory.
+pub fn default_socket() -> PathBuf {
+    if let Some(p) = std::env::var_os("WYRD_DAEMON_SOCKET") {
+        return PathBuf::from(p);
+    }
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map_or_else(
+            || {
+                std::env::temp_dir()
+                    .join(format!("wyrdline-{}", rustix::process::getuid().as_raw()))
+            },
+            |d| PathBuf::from(d).join("wyrdline"),
+        )
+        .join("wyrdd.sock")
+}
 
 /// `$XDG_STATE_HOME/wyrdline/token`, else `~/.local/state/wyrdline/token`.
 pub fn default_token_path() -> PathBuf {
@@ -18,6 +39,46 @@ pub fn default_token_path() -> PathBuf {
         PathBuf::from,
     );
     base.join("wyrdline/token")
+}
+
+/// Read the token at `path`, creating it (0600, directory 0700) if absent.
+pub fn load_or_create_token(path: &Path) -> std::io::Result<String> {
+    private_dir(path)?;
+    match fs::read_to_string(path) {
+        Ok(t) if !t.trim().is_empty() => return Ok(t.trim().to_string()),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    write_new_token(path)
+}
+
+/// Create the token's directory (0700) if needed.
+fn private_dir(path: &Path) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Replace the token at `path` with a fresh one and return it.
+pub fn write_new_token(path: &Path) -> std::io::Result<String> {
+    private_dir(path)?;
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+    let token = hex::encode(bytes);
+    let tmp = path.with_extension("tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    f.write_all(token.as_bytes())?;
+    f.sync_all()?;
+    fs::rename(&tmp, path)?;
+    Ok(token)
 }
 
 /// The ingest token of session `sid`, derived one-way from the daemon
@@ -61,7 +122,23 @@ pub fn otlp_env(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn token_file_is_private_and_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state/wyrdline/token");
+        let t1 = load_or_create_token(&path).unwrap();
+        assert_eq!(t1.len(), 64);
+        assert_eq!(load_or_create_token(&path).unwrap(), t1);
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        let t2 = write_new_token(&path).unwrap();
+        assert_ne!(t1, t2);
+        assert_eq!(mode(&path), 0o600);
+    }
 
     #[test]
     fn ingest_tokens_are_per_session_and_per_daemon() {
