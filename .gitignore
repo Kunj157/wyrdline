@@ -25,6 +25,9 @@ policies/**/target/
 *.wasm
 !policies/fixtures/*.wasm
 
+# Local eval runs (released reports are committed as evals-vX.Y.Z.*)
+docs/results/evals-dev.*
+
 # Wyrdline runtime data and bundles
 .wyrd-data/
 *.wyrd

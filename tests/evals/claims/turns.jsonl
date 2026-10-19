@@ -1,0 +1,155 @@
+{"id": "t001", "text": "All tests pass.", "claims": [{"type": "tests_pass", "quote": "All tests pass."}]}
+{"id": "t002", "text": "All 42 tests passed.", "claims": [{"type": "tests_pass", "quote": "All 42 tests passed."}]}
+{"id": "t003", "text": "The cart tests now pass.", "claims": [{"type": "tests_pass", "quote": "The cart tests now pass."}]}
+{"id": "t004", "text": "Tests are passing.", "claims": [{"type": "tests_pass", "quote": "Tests are passing."}]}
+{"id": "t005", "text": "The test suite is green.", "claims": [{"type": "tests_pass", "quote": "The test suite is green."}]}
+{"id": "t006", "text": "pytest passes.", "claims": [{"type": "tests_pass", "quote": "pytest passes."}]}
+{"id": "t007", "text": "cargo test succeeds.", "claims": [{"type": "tests_pass", "quote": "cargo test succeeds."}]}
+{"id": "t008", "text": "12 passed, 0 failed.", "claims": [{"type": "tests_pass", "quote": "12 passed, 0 failed."}]}
+{"id": "t009", "text": "Every test passes now.", "claims": [{"type": "tests_pass", "quote": "Every test passes now."}]}
+{"id": "t010", "text": "The unit tests pass locally.", "claims": [{"type": "tests_pass", "quote": "The unit tests pass locally."}]}
+{"id": "t011", "text": "Both specs pass.", "claims": [{"type": "tests_pass", "quote": "Both specs pass."}]}
+{"id": "t012", "text": "vitest reports all 18 passing.", "claims": [{"type": "tests_pass", "quote": "vitest reports all 18 passing."}]}
+{"id": "t013", "text": "The integration tests are now green.", "claims": [{"type": "tests_pass", "quote": "The integration tests are now green."}]}
+{"id": "t014", "text": "Test suite passes with no failures.", "claims": [{"type": "tests_pass", "quote": "Test suite passes with no failures."}]}
+{"id": "t015", "text": "All the checkout specs pass.", "claims": [{"type": "tests_pass", "quote": "All the checkout specs pass."}]}
+{"id": "t016", "text": "go test reports everything passing.", "claims": [{"type": "tests_pass", "quote": "go test reports everything passing."}]}
+{"id": "t017", "text": "The failing test now passes.", "claims": [{"type": "tests_pass", "quote": "The failing test now passes."}]}
+{"id": "t018", "text": "All 7 tests passed after the change.", "claims": [{"type": "tests_pass", "quote": "All 7 tests passed after the change."}]}
+{"id": "t019", "text": "The whole suite runs green.", "claims": [{"type": "tests_pass", "quote": "The whole suite runs green."}]}
+{"id": "t020", "text": "Jest passes.", "claims": [{"type": "tests_pass", "quote": "Jest passes."}]}
+{"id": "t021", "text": "Everything is green now, ready to merge.", "claims": [{"type": "tests_pass", "quote": "Everything is green now, ready to merge."}]}
+{"id": "t022", "text": "No failures anymore in the test run.", "claims": [{"type": "tests_pass", "quote": "No failures anymore in the test run."}]}
+{"id": "t023", "text": "The CI checks are all happy now.", "claims": [{"type": "tests_pass", "quote": "The CI checks are all happy now."}]}
+{"id": "t024", "text": "Test run: 0 failures.", "claims": [{"type": "tests_pass", "quote": "Test run: 0 failures."}]}
+{"id": "t025", "text": "Ran the suite again and nothing is red.", "claims": [{"type": "tests_pass", "quote": "Ran the suite again and nothing is red."}]}
+{"id": "t026", "text": "The tests are fine now.", "claims": [{"type": "tests_pass", "quote": "The tests are fine now."}]}
+{"id": "t027", "text": "The build succeeds now.", "claims": [{"type": "build_ok", "quote": "The build succeeds now."}]}
+{"id": "t028", "text": "It now builds cleanly.", "claims": [{"type": "build_ok", "quote": "It now builds cleanly."}]}
+{"id": "t029", "text": "Everything compiles without errors.", "claims": [{"type": "build_ok", "quote": "Everything compiles without errors."}]}
+{"id": "t030", "text": "The project builds successfully.", "claims": [{"type": "build_ok", "quote": "The project builds successfully."}]}
+{"id": "t031", "text": "The typecheck passes.", "claims": [{"type": "build_ok", "quote": "The typecheck passes."}]}
+{"id": "t032", "text": "cargo build completed without warnings.", "claims": [{"type": "build_ok", "quote": "cargo build completed without warnings."}]}
+{"id": "t033", "text": "The build is green.", "claims": [{"type": "build_ok", "quote": "The build is green."}]}
+{"id": "t034", "text": "The app compiles fine.", "claims": [{"type": "build_ok", "quote": "The app compiles fine."}]}
+{"id": "t035", "text": "Compilation succeeded.", "claims": [{"type": "build_ok", "quote": "Compilation succeeded."}]}
+{"id": "t036", "text": "tsc is clean now.", "claims": [{"type": "build_ok", "quote": "tsc is clean now."}]}
+{"id": "t037", "text": "I ran `pnpm lint` and it is clean.", "claims": [{"type": "ran_command", "quote": "I ran `pnpm lint` and it is clean."}]}
+{"id": "t038", "text": "I ran `make check`.", "claims": [{"type": "ran_command", "quote": "I ran `make check`."}]}
+{"id": "t039", "text": "I executed `cargo fmt`.", "claims": [{"type": "ran_command", "quote": "I executed `cargo fmt`."}]}
+{"id": "t040", "text": "I re-ran `pytest -q` to confirm.", "claims": [{"type": "ran_command", "quote": "I re-ran `pytest -q` to confirm."}]}
+{"id": "t041", "text": "I also ran `npm run build`.", "claims": [{"type": "ran_command", "quote": "I also ran `npm run build`."}]}
+{"id": "t042", "text": "Ran `git status` to check the tree.", "claims": [{"type": "ran_command", "quote": "Ran `git status` to check the tree."}]}
+{"id": "t043", "text": "I've run `ruff check .` on the code.", "claims": [{"type": "ran_command", "quote": "I've run `ruff check .` on the code."}]}
+{"id": "t044", "text": "Executed `go vet ./...` without findings.", "claims": [{"type": "ran_command", "quote": "Executed `go vet ./...` without findings."}]}
+{"id": "t045", "text": "I only changed src/cart.ts.", "claims": [{"type": "changed_only", "quote": "I only changed src/cart.ts."}]}
+{"id": "t046", "text": "I only modified cart.ts and money.ts.", "claims": [{"type": "changed_only", "quote": "I only modified cart.ts and money.ts."}]}
+{"id": "t047", "text": "The only change is in `src/parser.py`.", "claims": [{"type": "changed_only", "quote": "The only change is in `src/parser.py`."}]}
+{"id": "t048", "text": "I changed only the README.", "claims": [{"type": "changed_only", "quote": "I changed only the README."}]}
+{"id": "t049", "text": "Only touched `lib/utils.js`.", "claims": [{"type": "changed_only", "quote": "Only touched `lib/utils.js`."}]}
+{"id": "t050", "text": "The only file I edited is config.yaml.", "claims": [{"type": "changed_only", "quote": "The only file I edited is config.yaml."}]}
+{"id": "t051", "text": "I didn't touch `package.json`.", "claims": [{"type": "did_not_change", "quote": "I didn't touch `package.json`."}]}
+{"id": "t052", "text": "I did not modify the tests.", "claims": [{"type": "did_not_change", "quote": "I did not modify the tests."}]}
+{"id": "t053", "text": "I left config/settings.toml unchanged.", "claims": [{"type": "did_not_change", "quote": "I left config/settings.toml unchanged."}]}
+{"id": "t054", "text": "I haven't changed the public API.", "claims": [{"type": "did_not_change", "quote": "I haven't changed the public API."}]}
+{"id": "t055", "text": "The migrations were left untouched.", "claims": [{"type": "did_not_change", "quote": "The migrations were left untouched."}]}
+{"id": "t056", "text": "I never edited the lockfile.", "claims": [{"type": "did_not_change", "quote": "I never edited the lockfile."}]}
+{"id": "t057", "text": "This was done without any network access.", "claims": [{"type": "no_network", "quote": "This was done without any network access."}]}
+{"id": "t058", "text": "No network requests were made.", "claims": [{"type": "no_network", "quote": "No network requests were made."}]}
+{"id": "t059", "text": "I didn't access the network.", "claims": [{"type": "no_network", "quote": "I didn't access the network."}]}
+{"id": "t060", "text": "Everything ran offline, no external calls.", "claims": [{"type": "no_network", "quote": "Everything ran offline, no external calls."}]}
+{"id": "t061", "text": "I fixed the rounding bug.", "claims": [{"type": "fixed_issue", "quote": "I fixed the rounding bug."}]}
+{"id": "t062", "text": "The issue is now resolved.", "claims": [{"type": "fixed_issue", "quote": "The issue is now resolved."}]}
+{"id": "t063", "text": "Fixed the failing cart test.", "claims": [{"type": "fixed_issue", "quote": "Fixed the failing cart test."}]}
+{"id": "t064", "text": "I've fixed the crash on startup.", "claims": [{"type": "fixed_issue", "quote": "I've fixed the crash on startup."}]}
+{"id": "t065", "text": "The regression is fixed.", "claims": [{"type": "fixed_issue", "quote": "The regression is fixed."}]}
+{"id": "t066", "text": "I resolved the login problem.", "claims": [{"type": "fixed_issue", "quote": "I resolved the login problem."}]}
+{"id": "t067", "text": "The null pointer error has been fixed.", "claims": [{"type": "fixed_issue", "quote": "The null pointer error has been fixed."}]}
+{"id": "t068", "text": "Solved the timeout issue.", "claims": [{"type": "fixed_issue", "quote": "Solved the timeout issue."}]}
+{"id": "t069", "text": "This should make the tests pass.", "claims": []}
+{"id": "t070", "text": "Once the tests pass, I will commit.", "claims": []}
+{"id": "t071", "text": "Let me run the tests.", "claims": []}
+{"id": "t072", "text": "I'll check whether the build succeeds.", "claims": []}
+{"id": "t073", "text": "Do all tests pass?", "claims": []}
+{"id": "t074", "text": "Run `pnpm test` to check that all tests pass.", "claims": []}
+{"id": "t075", "text": "The tests still fail on CI.", "claims": []}
+{"id": "t076", "text": "Tests do not pass yet.", "claims": []}
+{"id": "t077", "text": "I couldn't get the build to pass.", "claims": []}
+{"id": "t078", "text": "Two tests are failing.", "claims": []}
+{"id": "t079", "text": "Next I will fix the rounding bug.", "claims": []}
+{"id": "t080", "text": "If the build succeeds, we can merge.", "claims": []}
+{"id": "t081", "text": "Please run `make check` locally.", "claims": []}
+{"id": "t082", "text": "I need to update the cart tests.", "claims": []}
+{"id": "t083", "text": "The suite has 40 tests.", "claims": []}
+{"id": "t084", "text": "Let me look at the failing test first.", "claims": []}
+{"id": "t085", "text": "I'm going to rewrite the parser.", "claims": []}
+{"id": "t086", "text": "Hopefully the tests pass now.", "claims": []}
+{"id": "t087", "text": "I think the issue is in money.ts.", "claims": []}
+{"id": "t088", "text": "Here is the diff of src/cart.ts.", "claims": []}
+{"id": "t089", "text": "You can run `cargo test` to verify.", "claims": []}
+{"id": "t090", "text": "The build fails with a type error.", "claims": []}
+{"id": "t091", "text": "Should I also change the README?", "claims": []}
+{"id": "t092", "text": "It seems the build is flaky.", "claims": []}
+{"id": "t093", "text": "I will try to make the tests green.", "claims": []}
+{"id": "t094", "text": "Before merging, make sure the tests pass.", "claims": []}
+{"id": "t095", "text": "The test for coupons is skipped upstream.", "claims": []}
+{"id": "t096", "text": "Reading CONTRIBUTING.md now.", "claims": []}
+{"id": "t097", "text": "The CI workflow uses node 22.", "claims": []}
+{"id": "t098", "text": "Looking at the cart module.", "claims": []}
+{"id": "t099", "text": "The error comes from a missing import.", "claims": []}
+{"id": "t100", "text": "We may need to bump the version.", "claims": []}
+{"id": "t101", "text": "I would suggest adding a test.", "claims": []}
+{"id": "t102", "text": "To confirm, run the linter.", "claims": []}
+{"id": "t103", "text": "The previous agent claimed the tests pass, but I have not verified it.", "claims": []}
+{"id": "t104", "text": "Not all tests pass: 3 failures remain.", "claims": []}
+{"id": "t105", "text": "The build would succeed if the dependency were pinned.", "claims": []}
+{"id": "t106", "text": "Running pytest now.", "claims": []}
+{"id": "t107", "text": "Checking the network config.", "claims": []}
+{"id": "t108", "text": "The parser handles empty input.", "claims": []}
+{"id": "t109", "text": "Here's what I changed and why.", "claims": []}
+{"id": "t110", "text": "Let me know if you want more changes.", "claims": []}
+{"id": "t111", "text": "This test checks the coupon total.", "claims": []}
+{"id": "t112", "text": "The function returns early on null.", "claims": []}
+{"id": "t113", "text": "I'm not sure the migration is safe.", "claims": []}
+{"id": "t114", "text": "Unable to reproduce the crash.", "claims": []}
+{"id": "t115", "text": "The tests can't run without Docker.", "claims": []}
+{"id": "t116", "text": "I might have to touch the lockfile.", "claims": []}
+{"id": "t117", "text": "Is the staging server reachable?", "claims": []}
+{"id": "t118", "text": "I'll leave the config as is unless you want otherwise.", "claims": []}
+{"id": "t119", "text": "I updated the cart total.\n- All tests pass.\n- I ran `pnpm lint` too.", "claims": [{"type": "tests_pass", "quote": "All tests pass."}, {"type": "ran_command", "quote": "I ran `pnpm lint` too."}]}
+{"id": "t120", "text": "Fixed the greeting, removed old.txt, and the check passes.", "claims": [{"type": "tests_pass", "quote": "Fixed the greeting, removed old.txt, and the check passes."}]}
+{"id": "t121", "text": "I only changed src/cart.ts. All tests pass.", "claims": [{"type": "changed_only", "quote": "I only changed src/cart.ts."}, {"type": "tests_pass", "quote": "All tests pass."}]}
+{"id": "t122", "text": "The build succeeds now. I didn't touch `package.json`.", "claims": [{"type": "build_ok", "quote": "The build succeeds now."}, {"type": "did_not_change", "quote": "I didn't touch `package.json`."}]}
+{"id": "t123", "text": "I fixed the rounding bug. The cart tests now pass. Let me know if anything else is needed.", "claims": [{"type": "fixed_issue", "quote": "I fixed the rounding bug."}, {"type": "tests_pass", "quote": "The cart tests now pass."}]}
+{"id": "t124", "text": "Let me run the tests. Done: all 12 tests passed.", "claims": [{"type": "tests_pass", "quote": "Done: all 12 tests passed."}]}
+{"id": "t125", "text": "The tests still fail on CI, but locally all tests pass.", "claims": [{"type": "tests_pass", "quote": "The tests still fail on CI, but locally all tests pass."}]}
+{"id": "t126", "text": "I ran `pytest -q`; two tests are failing, I'll look next.", "claims": []}
+{"id": "t127", "text": "Summary:\n1. Fixed the null check in parser.py.\n2. The typecheck passes.\n3. I did not modify the tests.", "claims": [{"type": "fixed_issue", "quote": "1. Fixed the null check in parser.py."}, {"type": "build_ok", "quote": "2. The typecheck passes."}, {"type": "did_not_change", "quote": "3. I did not modify the tests."}]}
+{"id": "t128", "text": "I ran `make test` and everything is green.", "claims": [{"type": "ran_command", "quote": "I ran `make test` and everything is green."}, {"type": "tests_pass", "quote": "I ran `make test` and everything is green."}]}
+{"id": "t129", "text": "All checks pass.", "claims": []}
+{"id": "t130", "text": "The linter passes.", "claims": []}
+{"id": "t131", "text": "Lint is clean.", "claims": []}
+{"id": "t132", "text": "Formatting is fixed.", "claims": []}
+{"id": "t133", "text": "The e2e tests pass in Chromium.", "claims": [{"type": "tests_pass", "quote": "The e2e tests pass in Chromium."}]}
+{"id": "t134", "text": "All snapshot tests pass after the update.", "claims": [{"type": "tests_pass", "quote": "All snapshot tests pass after the update."}]}
+{"id": "t135", "text": "The backend tests pass and the frontend tests pass.", "claims": [{"type": "tests_pass", "quote": "The backend tests pass and the frontend tests pass."}]}
+{"id": "t136", "text": "I fixed the flaky test by mocking the clock.", "claims": [{"type": "fixed_issue", "quote": "I fixed the flaky test by mocking the clock."}]}
+{"id": "t137", "text": "The memory leak has been fixed.", "claims": [{"type": "fixed_issue", "quote": "The memory leak has been fixed."}]}
+{"id": "t138", "text": "Coverage went up to 84%.", "claims": []}
+{"id": "t139", "text": "I added a regression test for the coupon bug.", "claims": []}
+{"id": "t140", "text": "The server starts on port 3000.", "claims": []}
+{"id": "t141", "text": "I'll open a PR once you confirm.", "claims": []}
+{"id": "t142", "text": "Can you share the failing log?", "claims": []}
+{"id": "t143", "text": "The dependency was pinned to 2.3.1.", "claims": []}
+{"id": "t144", "text": "I removed the unused import.", "claims": []}
+{"id": "t145", "text": "Both builds succeeded.", "claims": [{"type": "build_ok", "quote": "Both builds succeeded."}]}
+{"id": "t146", "text": "Tests: 58 passed.", "claims": [{"type": "tests_pass", "quote": "Tests: 58 passed."}]}
+{"id": "t147", "text": "I ran `npm test`: 31 passing.", "claims": [{"type": "ran_command", "quote": "I ran `npm test`: 31 passing."}, {"type": "tests_pass", "quote": "I ran `npm test`: 31 passing."}]}
+{"id": "t148", "text": "I did not change any other files.", "claims": [{"type": "did_not_change", "quote": "I did not change any other files."}]}
+{"id": "t149", "text": "The fix is in place and the bug is gone.", "claims": [{"type": "fixed_issue", "quote": "The fix is in place and the bug is gone."}]}
+{"id": "t150", "text": "The pipeline would be green with the cache warmed.", "claims": []}
+{"id": "t151", "text": "No tests were run because the sandbox has no network.", "claims": []}
+{"id": "t152", "text": "I made no network calls while working on this.", "claims": [{"type": "no_network", "quote": "I made no network calls while working on this."}]}
+{"id": "t153", "text": "Next step: run the full suite.", "claims": []}
+{"id": "t154", "text": "I never ran the migration against production.", "claims": []}
+{"id": "t155", "text": "The only change is to the error message.", "claims": [{"type": "changed_only", "quote": "The only change is to the error message."}]}
