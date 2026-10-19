@@ -266,3 +266,134 @@ fn a_tampered_ledger_is_not_exported() {
     assert_eq!(code, 3, "{stderr}");
     assert!(!path.exists());
 }
+
+#[test]
+fn verify_lists_every_check_for_a_good_bundle() {
+    let e = env();
+    let path = export(&e, "ok.wyrd", &["--redact", "standard"]);
+    let p = path.display().to_string();
+    let (code, stdout, stderr) = wyrd(&e, &["verify", &p]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    for line in [
+        "✓ archive structure and limits",
+        "✓ signature over the manifest",
+        "✓ manifest",
+        "✓ file hashes",
+        "✓ ledger hash chain",
+        "result    ✓ bundle verified",
+    ] {
+        assert!(stdout.contains(line), "{line}\n{stdout}");
+    }
+    let (code, stdout, _) = wyrd(&e, &["verify", &p, "--json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["checks"].as_array().unwrap().len(), 5);
+    assert_eq!(v["bundle"]["session"]["id"], e.id.as_str());
+}
+
+/// Rewrite the bundle at `path` with one byte of the ledger entry changed
+/// inside the DNS query's name (same size); returns that event's seq.
+fn tamper_dns_event(path: &Path) -> u64 {
+    let bytes = std::fs::read(path).unwrap();
+    let b = wyrd_bundle::read(&bytes[..], &wyrd_bundle::Options::default()).unwrap();
+    let (seq, name) = b
+        .events
+        .iter()
+        .find_map(|ev| match &ev.body {
+            EventBody::DnsQuery(q) => Some((ev.seq, q.name.clone())),
+            _ => None,
+        })
+        .unwrap();
+    let mut all = entries(path);
+    let ledger = &mut all
+        .iter_mut()
+        .find(|(n, _)| n == "ledger.cbor-seq")
+        .unwrap()
+        .1;
+    let at = ledger
+        .windows(name.len())
+        .position(|w| w == name.as_bytes())
+        .unwrap();
+    ledger[at] = if ledger[at] == b'x' { b'y' } else { b'x' };
+    let tar =
+        wyrd_bundle::archive::pack(all.iter().map(|(n, d)| (n.as_str(), d.as_slice()))).unwrap();
+    std::fs::write(path, wyrd_bundle::archive::compress(&tar)).unwrap();
+    seq
+}
+
+#[test]
+fn a_tampered_bundle_fails_verification_at_its_seq_and_is_not_imported() {
+    let e = env();
+    let path = export(&e, "bad.wyrd", &[]);
+    let seq = tamper_dns_event(&path);
+    let p = path.display().to_string();
+    let (code, stdout, _) = wyrd(&e, &["verify", &p]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains(&format!("event modified at seq {seq}")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("✓ signature over the manifest"), "{stdout}");
+    assert!(stdout.contains("✗ file hashes"), "{stdout}");
+    let (_, stdout, _) = wyrd(&e, &["verify", &p, "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["error"]["seq"], seq);
+    assert_eq!(v["error"]["stage"], "files");
+
+    let before = Session::list(&e.data).unwrap().len();
+    let (code, _, _) = wyrd(&e, &["import", &p]);
+    assert_eq!(code, 3);
+    assert_eq!(Session::list(&e.data).unwrap().len(), before);
+    let leftovers: Vec<_> = std::fs::read_dir(e.data.sessions())
+        .unwrap()
+        .flatten()
+        .filter(|d| d.file_name().to_string_lossy().starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty());
+}
+
+#[test]
+fn import_adds_a_read_only_session_with_the_same_chain() {
+    let e = env();
+    let path = export(&e, "in.wyrd", &["--redact", "standard"]);
+    let (code, stdout, stderr) = wyrd(&e, &["import", &path.display().to_string(), "--json"]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let id = v["session"].as_str().unwrap().to_string();
+    assert_ne!(id, e.id);
+    assert_eq!(v["original_id"], e.id.as_str());
+    assert_eq!(v["checkpoints"], 2);
+
+    // Same chain head as the bundle; the ledger verifies.
+    let (code, stdout, _) = wyrd(&e, &["verify", &id, "--json"]);
+    assert_eq!(code, 0, "{stdout}");
+    let check: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(check["head_hash"], v["head_hash"]);
+
+    let s = Session::open(&e.data, &id).unwrap();
+    let src = s.imported().unwrap();
+    assert_eq!(src.original_id, e.id);
+    assert_eq!(src.redaction, "standard");
+    assert_eq!(s.record().status, SessionState::Closed);
+
+    // Content is there: the checkpoints diff.
+    let (code, stdout, stderr) = wyrd(&e, &["diff", &id, "c1", "c2"]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    assert!(stdout.contains(".env"), "{stdout}");
+
+    // Nothing can change it.
+    for args in [
+        vec!["rewind", id.as_str(), "c1"],
+        vec!["checkpoint", id.as_str()],
+        vec!["close", id.as_str()],
+    ] {
+        let (code, stdout, stderr) = wyrd(&e, &args);
+        assert_ne!(code, 0, "{args:?}: {stdout}");
+        assert!(stderr.contains("read-only"), "{args:?}: {stderr}");
+    }
+    let mut s = Session::open(&e.data, &id).unwrap();
+    assert!(s.apply("c2", true, false).is_err());
+    assert!(s.record_verdicts(Vec::new()).is_err());
+}
