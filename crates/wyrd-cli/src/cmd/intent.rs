@@ -6,6 +6,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use wyrd_adapters::asks::Asks;
 use wyrd_adapters::{Ingest, Sink, StaticPolicy, claude_code, server};
 use wyrd_cell::{DataDir, Session};
 use wyrd_ledger::Ledger;
@@ -229,8 +230,64 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .with_context(|| format!("writing {}", path.display()))
 }
 
+/// Session file holding the control token that answers asks (0600).
+pub const CONTROL_TOKEN_FILE: &str = "control.token";
+
+/// What decides tool calls in a run besides `--deny-tool`.
+#[derive(Debug, Default)]
+pub struct GuardOptions {
+    pub policy: Option<Arc<wyrd_policy::Policy>>,
+    pub ask_timeout: Option<Duration>,
+}
+
+/// The session's ingest: ledger sink, static deny list, Wasm policy, and
+/// the ask registry with its control token (written 0600 to the session).
+fn ingest(
+    session: &Session,
+    ledger: Ledger,
+    checkpoints: Option<Arc<Checkpointer>>,
+    turn: u32,
+    guard: GuardOptions,
+) -> anyhow::Result<(Arc<Ingest<LedgerSink>>, PathBuf)> {
+    let rec = session.record();
+    let token = wyrd_adapters::asks::new_token()?;
+    let token_file = session.dir().root().join(CONTROL_TOKEN_FILE);
+    write_private(&token_file, token.as_bytes())?;
+    let asks = Arc::new(Asks::new(
+        token,
+        guard
+            .ask_timeout
+            .unwrap_or(wyrd_adapters::asks::DEFAULT_TIMEOUT),
+    ));
+    let mut ingest = Ingest::new(
+        LedgerSink {
+            ledger: Mutex::new(ledger),
+            checkpoints,
+        },
+        rec.mode,
+        StaticPolicy {
+            deny_tools: rec.deny_tools.clone(),
+        },
+        turn,
+    )
+    .with_asks(asks);
+    if let Some(p) = guard.policy {
+        ingest = ingest.with_policy(Arc::new(super::guard::WasmToolPolicy::new(
+            p,
+            &rec.workspace,
+        )));
+    }
+    let ingest = Arc::new(ingest);
+    Ok((ingest, token_file))
+}
+
 /// Bind the intent socket and start serving it for `session`.
-pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<Capture> {
+pub fn start(
+    data: &DataDir,
+    session: &Session,
+    wyrd: &Path,
+    guard: GuardOptions,
+) -> anyhow::Result<Capture> {
     let rec = session.record();
     let socket = socket_path(session.dir().root(), &rec.id);
     let listener = server::bind(&socket)
@@ -239,17 +296,7 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
     let turn = last_turn(&ledger)?;
     let checkpoints =
         (rec.mode == CaptureMode::Cell).then(|| Checkpointer::start(data.clone(), rec.id.clone()));
-    let ingest = Arc::new(Ingest::new(
-        LedgerSink {
-            ledger: Mutex::new(ledger),
-            checkpoints: checkpoints.clone(),
-        },
-        rec.mode,
-        StaticPolicy {
-            deny_tools: rec.deny_tools.clone(),
-        },
-        turn,
-    ));
+    let (ingest, token_file) = ingest(session, ledger, checkpoints.clone(), turn, guard)?;
     std::thread::Builder::new()
         .name("wyrd-intent".into())
         .spawn(move || server::serve(&listener, &ingest))
@@ -308,6 +355,7 @@ pub fn start(data: &DataDir, session: &Session, wyrd: &Path) -> anyhow::Result<C
         }
         None
     };
+    private_files.push(token_file);
     Ok(Capture {
         socket,
         checkpoints,
