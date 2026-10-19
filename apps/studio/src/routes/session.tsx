@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { AskDialog } from "../components/AskDialog";
 import { BacktestPanel } from "../components/BacktestPanel";
 import { CheckpointPanel } from "../components/CheckpointPanel";
+import { RewindRequests } from "../components/RewindRequests";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
@@ -218,6 +219,7 @@ export function SessionPage() {
 
       <Card>
         <h2 className="mb-2 text-sm font-semibold">Checkpoints &amp; branches</h2>
+        {offlineSource() === null && <RewindRequests sid={sid} live={Boolean(recording)} />}
         <CheckpointPanel sid={sid} checkpoints={checkpoints.data} events={list} />
       </Card>
       {offlineSource() === null && <AskDialog sid={sid} live={Boolean(recording)} />}

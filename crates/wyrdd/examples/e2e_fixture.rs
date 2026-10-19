@@ -5,10 +5,12 @@
 //! write outside the Cell).
 //!
 //! It also creates a second session left in the `recording` state for the
-//! live-mode spec, which adds events to it while the page is open.
+//! live-mode spec, which adds events to it while the page is open, and a
+//! third with two checkpoints for the rewind-request spec, which asks for
+//! rewinds through `wyrd mcp` and decides them in Studio.
 //!
-//! Usage: `e2e_fixture <data-dir> <workspace-dir>` prints both session ids
-//! (one per line); `e2e_fixture append <data-dir> <session> <text>` appends
+//! Usage: `e2e_fixture <data-dir> <workspace-dir>` prints the three session
+//! ids (one per line); `e2e_fixture append <data-dir> <session> <text>` appends
 //! an assistant message to a session's ledger.
 
 use std::collections::BTreeMap;
@@ -158,6 +160,34 @@ fn live_session(
     Ok(rec.id)
 }
 
+/// A Cell session with checkpoints c1 and c2, for rewind requests.
+fn rewind_session(
+    data: &DataDir,
+    ws: &std::path::Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let rewind_ws = ws.with_file_name("rewind-ws");
+    std::fs::create_dir_all(&rewind_ws)?;
+    std::fs::write(rewind_ws.join("notes.txt"), "first\n")?;
+    let mut s = Session::create(
+        data,
+        CreateOptions {
+            workspace: rewind_ws,
+            command: vec!["agent".into(), "tidy the notes".into()],
+            observe: false,
+            name: Some("e2e rewind requests".into()),
+            agent_kind: "fakeagent".into(),
+            deny_tools: Vec::new(),
+            policy: None,
+            kernel_release: "e2e".into(),
+            capabilities: BTreeMap::new(),
+        },
+    )?;
+    s.checkpoint(None)?;
+    std::fs::write(s.dir().upper("a").join("notes.txt"), "second\n")?;
+    s.checkpoint(None)?;
+    Ok(s.record().id.clone())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1).peekable();
     if args.peek().is_some_and(|a| a == "append") {
@@ -172,6 +202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ws = PathBuf::from(args.next().ok_or("workspace dir")?);
     std::fs::create_dir_all(&ws)?;
     let live = live_session(&data, &ws)?;
+    let rewind = rewind_session(&data, &ws)?;
     std::fs::write(ws.join("greet.txt"), "helo world\n")?;
     std::fs::write(ws.join("old.txt"), "stale\n")?;
 
@@ -259,6 +290,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ledger = wyrd_ledger::Ledger::open(s.dir().ledger())?;
     ledger.append(events)?;
     // The test harness reads the session ids from stdout.
-    writeln!(std::io::stdout(), "{}\n{live}", s.record().id)?;
+    writeln!(std::io::stdout(), "{}\n{live}\n{rewind}", s.record().id)?;
     Ok(())
 }

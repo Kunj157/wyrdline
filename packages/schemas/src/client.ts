@@ -126,6 +126,10 @@ export function createClient(options: ClientOptions = {}) {
       } satisfies api.BacktestBody),
     answerAsk: (sid: string, id: number, allow: boolean) =>
       request<api.Answered>("POST", `${s(sid)}/asks/${id}`, { allow } satisfies api.AnswerBody),
+    rewindRequests: (sid: string) =>
+      request<api.RewindRequests>("GET", `${s(sid)}/rewind-requests`),
+    decideRewind: (sid: string, id: number, body: api.RewindDecisionBody) =>
+      request<api.RewindDecided>("POST", `${s(sid)}/rewind-requests/${id}`, body),
     rewind: (sid: string, target: string, body: api.RewindBody, idempotencyKey?: string) =>
       request<api.BranchCreated | api.Relaunching>(
         "POST",
