@@ -3228,6 +3228,7 @@ dependencies = [
  "blake3",
  "hex",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",

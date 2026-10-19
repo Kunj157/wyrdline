@@ -7,6 +7,7 @@
 //! its decisions are a pure function of its inputs. Any failure (trap, fuel
 //! exhausted, memory cap, malformed component) becomes a deny.
 
+pub mod backtest;
 pub mod conformance;
 pub mod effects;
 pub mod kernel;
