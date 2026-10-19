@@ -328,6 +328,149 @@ fn scenario_basic_observe_records_divergences_and_triage() {
     );
 }
 
+/// A one-shot stand-in for the Messages API: answers every request with
+/// `reply` and keeps the request bodies.
+fn mock_llm(reply: serde_json::Value) -> (String, std::sync::mpsc::Receiver<String>) {
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut len = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; len];
+            reader.read_exact(&mut body).unwrap();
+            let _ = tx.send(String::from_utf8(body).unwrap());
+            let text = reply.to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                text.len()
+            );
+        }
+    });
+    (addr, rx)
+}
+
+#[test]
+fn scenario_basic_llm_claims_feed_the_rules() {
+    let quote = "Fixed the greeting, removed old.txt, and the check passes.";
+    let (url, requests) = mock_llm(serde_json::json!({
+        "content": [{"type": "text", "text": serde_json::json!({"claims": [
+            {"type": "tests_pass", "subject": "greeting check", "quote": quote, "turn": 1, "confidence": 0.8},
+            {"type": "build_ok", "subject": "build", "quote": "The build is green.", "turn": 1, "confidence": 0.9}
+        ]}).to_string()}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1200, "output_tokens": 80}
+    }));
+    let s = Scenario::new();
+    let script = repo().join("demo/scenarios/basic.wyrdscript.toml");
+    let out = Command::new(wyrd_bin())
+        .args([
+            "run",
+            "--agent",
+            "fakeagent",
+            "--observe",
+            "--deny-tool",
+            "WebFetch",
+            "--",
+        ])
+        .arg(fakeagent())
+        .arg("run")
+        .arg(&script)
+        .current_dir(&s.ws)
+        .env("WYRD_DATA_DIR", &s.data)
+        .env("WYRD_SCENARIO_SECRET", &s.secret)
+        .env("LLM_PROVIDER", "anthropic")
+        .env("ANTHROPIC_BASE_URL", &url)
+        .env("ANTHROPIC_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = requests
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(
+        !body.contains(&s.secret),
+        "the planted secret reached the model"
+    );
+    let events = s.events();
+    let llm_claims: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            EventBody::ClaimExtracted(c) if c.extractor == wyrd_schema::Extractor::Llm => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(llm_claims.len(), 1, "the invented quote is dropped");
+    let rules: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            EventBody::DivergenceRaised(d) => Some(d.rule_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    // The check that ran is grep, not a test runner: the claim lacks evidence.
+    assert_eq!(rules, ["D001", "D009"]);
+    let listed = String::from_utf8_lossy(&s.wyrd(&["divergences", &s.sid()]).stdout).to_string();
+    assert!(
+        listed.contains("claims: complete (claude-haiku-5-5 claims-v1"),
+        "{listed}"
+    );
+}
+
+#[test]
+fn scenario_basic_llm_down_is_partial_rules_only() {
+    let s = Scenario::new();
+    let script = repo().join("demo/scenarios/basic.wyrdscript.toml");
+    let out = Command::new(wyrd_bin())
+        .args([
+            "run",
+            "--agent",
+            "fakeagent",
+            "--observe",
+            "--deny-tool",
+            "WebFetch",
+            "--",
+        ])
+        .arg(fakeagent())
+        .arg("run")
+        .arg(&script)
+        .current_dir(&s.ws)
+        .env("WYRD_DATA_DIR", &s.data)
+        .env("WYRD_SCENARIO_SECRET", &s.secret)
+        .env("LLM_PROVIDER", "anthropic")
+        // Nothing listens on port 9 (discard) here.
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
+        .env("ANTHROPIC_API_KEY", "test")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("claims partial"));
+    let listed = String::from_utf8_lossy(&s.wyrd(&["divergences", &s.sid()]).stdout).to_string();
+    assert!(
+        listed.contains("D009") && listed.contains("claims: partial"),
+        "{listed}"
+    );
+}
+
 #[cfg(feature = "privileged-tests")]
 #[test]
 fn privileged_scenario_basic_cell_checkpoints_every_finished_call() {
