@@ -1,7 +1,14 @@
 import { test as base, expect, type Page } from "@playwright/test";
 
-/** Browser messages that are not ours: Chrome logs this when WebGPU feature detection finds no adapter. */
-const BROWSER_NOISE = [/^No available adapters\.$/];
+/**
+ * Browser messages that are not ours: Chrome logs the first when WebGPU
+ * feature detection finds no adapter, and the second is a GPU driver
+ * performance note on software-rendered CI runners.
+ */
+export const BROWSER_NOISE = [
+  /^No available adapters\.$/,
+  /^\[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance,/,
+];
 
 export const test = base.extend<{ consoleErrors: string[] }>({
   consoleErrors: async ({ page }, use) => {
