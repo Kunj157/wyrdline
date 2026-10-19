@@ -4,7 +4,9 @@
 //! secret-shaped literal exists in the repository.
 
 use proptest::prelude::*;
-use wyrd_bundle::redact::{Level, host_pseudonym, is_secret_path, redact_json, redact_str};
+use wyrd_bundle::redact::{
+    KnownHosts, Level, host_pseudonym, hosts_in, is_secret_path, redact_json, redact_str,
+};
 
 fn rep(c: char, n: usize) -> String {
     std::iter::repeat_n(c, n).collect()
@@ -134,7 +136,10 @@ fn json_is_redacted_recursively_and_by_key() {
     assert_eq!(out["count"], 3);
     // Redacting again changes nothing, secret-named keys included.
     assert_eq!(redact_json(&out, Level::Standard), out);
-    assert_eq!(redact_json(&out, Level::Strict), redact_json(&out, Level::Strict));
+    assert_eq!(
+        redact_json(&out, Level::Strict),
+        redact_json(&out, Level::Strict)
+    );
 }
 
 #[test]
@@ -192,6 +197,32 @@ fn strict_mode_keeps_what_is_not_a_host_name() {
     let p = host_pseudonym("example.com");
     assert_eq!(host_pseudonym(&p), p);
     assert_eq!(p.len(), "host-12345678.invalid".len());
+}
+
+#[test]
+fn known_hosts_are_replaced_in_prose() {
+    let found = hosts_in("curl https://Exfil.Example.com/x; ssh me@db.corp.internal");
+    assert_eq!(found, ["exfil.example.com", "db.corp.internal"]);
+    let known = KnownHosts::new(found.into_iter().chain(["example.com".to_string()]));
+    let out = known.replace("sent to exfil.example.com, then EXAMPLE.COM and db.corp.internal.");
+    assert_eq!(
+        out,
+        format!(
+            "sent to {}, then {} and {}.",
+            host_pseudonym("exfil.example.com"),
+            host_pseudonym("example.com"),
+            host_pseudonym("db.corp.internal")
+        )
+    );
+    // Not inside longer names or words.
+    assert_eq!(
+        known.replace("notexample.community"),
+        "notexample.community"
+    );
+    assert_eq!(
+        KnownHosts::new([]).replace("a.example.com"),
+        "a.example.com"
+    );
 }
 
 #[test]

@@ -141,6 +141,81 @@ fn replace_hosts(re: &Regex, s: &str) -> String {
     .into_owned()
 }
 
+/// Host names strict redaction recognises in `s` (URL authorities and
+/// after `user@`), lower-cased, pseudonyms excluded.
+pub fn hosts_in(s: &str) -> Vec<String> {
+    [&*URL_HOST, &*AT_HOST]
+        .iter()
+        .flat_map(|re| re.captures_iter(s))
+        .filter_map(|c| c.get(1))
+        .map(|m| m.as_str().to_ascii_lowercase())
+        .filter(|h| host_pseudonym(h) != *h)
+        .collect()
+}
+
+/// Host names known to belong to a session (resolved, connected to, or
+/// seen in a URL anywhere in it). Strict export replaces every occurrence
+/// of them, also in prose where nothing marks them as a host, e.g. "then
+/// connected to evil.example".
+#[derive(Debug, Clone, Default)]
+pub struct KnownHosts {
+    re: Option<Regex>,
+}
+
+impl KnownHosts {
+    pub fn new(hosts: impl IntoIterator<Item = String>) -> Self {
+        let mut hosts: Vec<String> = hosts
+            .into_iter()
+            .map(|h| h.to_ascii_lowercase())
+            .filter(|h| h.contains('.') && host_pseudonym(h) != *h)
+            .collect();
+        // Longest first, so a name wins over its own suffix.
+        hosts.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        hosts.dedup();
+        if hosts.is_empty() {
+            return KnownHosts { re: None };
+        }
+        let alts: Vec<String> = hosts.iter().map(|h| regex::escape(h)).collect();
+        KnownHosts {
+            re: Regex::new(&format!(r"(?i)\b(?:{})\b", alts.join("|"))).ok(),
+        }
+    }
+
+    /// Replace every known host in `s` with its pseudonym.
+    pub fn replace(&self, s: &str) -> String {
+        match &self.re {
+            Some(re) => re
+                .replace_all(s, |c: &Captures<'_>| {
+                    host_pseudonym(c.get(0).map_or("", |m| m.as_str()))
+                })
+                .into_owned(),
+            None => s.to_string(),
+        }
+    }
+}
+
+/// Call `f` with every string in a JSON value.
+pub fn visit_strings(v: &serde_json::Value, f: &mut dyn FnMut(&str)) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => f(s),
+        Value::Array(a) => a.iter().for_each(|x| visit_strings(x, f)),
+        Value::Object(o) => o.values().for_each(|x| visit_strings(x, f)),
+        _ => {}
+    }
+}
+
+/// Apply `f` to every string in a JSON value.
+pub fn map_strings(v: &mut serde_json::Value, f: &dyn Fn(&str) -> String) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => *s = f(s),
+        Value::Array(a) => a.iter_mut().for_each(|x| map_strings(x, f)),
+        Value::Object(o) => o.values_mut().for_each(|x| map_strings(x, f)),
+        _ => {}
+    }
+}
+
 /// JSON object keys whose values are always secrets.
 const SECRET_KEYS: &[&str] = &[
     "password",
