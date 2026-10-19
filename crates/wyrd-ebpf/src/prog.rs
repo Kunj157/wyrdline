@@ -69,6 +69,7 @@ static OFFSETS: Offsets = Offsets {
 
 const CLONE_THREAD: u64 = 0x0001_0000;
 const EPERM: i64 = 1;
+const EACCES: i64 = 13;
 const AF_INET: u16 = 2;
 const AF_INET6: u16 = 10;
 
@@ -293,12 +294,13 @@ pub fn sys_exit_generic(ctx: TracePointContext) -> u32 {
     let connect = unsafe { (*p).kind } == kind::CONNECT;
     if connect {
         // Every attempt is reported, with its result. In an enforced
-        // session the cgroup program is the only source of EPERM.
+        // session EPERM comes from the cgroup program and EACCES from
+        // Landlock's port rules (which run first).
         // SAFETY: as above.
         let ev = unsafe { &mut *p };
         ev.ret = ret;
         if unsafe { ENFORCE.get(&ev.cgroup_id) }.is_some() {
-            ev.a2 = if ret == -EPERM {
+            ev.a2 = if ret == -EPERM || ret == -EACCES {
                 verdict::DENIED
             } else {
                 verdict::ALLOWED
