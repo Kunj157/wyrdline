@@ -78,6 +78,7 @@ function FeatureGlyph({ id }: { id: string }) {
     sensor: "wyrd graph",
     ledger: "wyrd verify and a rejected delete",
     daemon: "wyrd explain",
+    guard: "wyrd policy backtest",
   };
   // Real output from the demo recording; paths shortened as in the export.
   const lines: Record<string, string[]> = {
@@ -106,6 +107,12 @@ function FeatureGlyph({ id }: { id: string }) {
       "cause    direct (100 % confidence)",
       "call     fa-1-4 Bash rm old.txt && mkdir -p out && …",
       "process  sh(392804) ← wyrd-fakeagent(392776) ← ?(392772)",
+    ],
+    guard: [
+      "$ wyrd policy backtest policies/strict.wasm demo-session.jsonl",
+      "strict b3:c3d994af1e7376b6 over 157 events: 1 finding(s)",
+      "  seq 111  hook  deny  fetches from example.invalid,",
+      "                       which is not on the allow-list",
     ],
   };
   return (
