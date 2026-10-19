@@ -1,0 +1,14 @@
+[package]
+name = "strict"
+description = "Wyrdline strict policy: deny instead of asking, egress only to the model API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+policy-common = { path = "../common" }
+wit-bindgen.workspace = true

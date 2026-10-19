@@ -189,3 +189,54 @@ fn rejects_what_is_not_a_policy_component() {
         Err(PolicyError::Read { .. })
     ));
 }
+
+#[test]
+fn conformance_cases_pass_and_fail() {
+    let cases = wyrd_policy::conformance::parse(
+        r#"
+[ctx]
+repo_root = "/work/shop"
+
+[kernel_rules]
+fs_read_deny = ["~/.ssh"]
+egress_allow_ports = [443]
+
+[[case]]
+name = "allowed"
+tool_call = { tool = "Read" }
+expect = "allow"
+
+[[case]]
+name = "denied with reason"
+tool_call = { tool = "deny" }
+expect = "deny"
+reason_contains = "/work/shop"
+
+[[case]]
+name = "wrong expectation"
+effect = { kind = "net.connect", host = "203.0.113.9", port = 443 }
+expect = "allow"
+"#,
+    )
+    .unwrap();
+    let r = wyrd_policy::conformance::run(&hostile(), &cases);
+    let passed: Vec<bool> = r.iter().map(|c| c.passed).collect();
+    assert_eq!(passed, vec![true, true, true, false]);
+    assert_eq!(r[3].got, "ask: 203.0.113.9:443");
+
+    let missing = wyrd_policy::conformance::parse(
+        "[ctx]\nrepo_root = \"/r\"\n[kernel_rules]\nexec_deny = [\"wget\"]\n",
+    )
+    .unwrap();
+    let r = wyrd_policy::conformance::run(&hostile(), &missing);
+    assert!(!r[0].passed);
+    assert_eq!(r[0].got, "exec_deny lacks wget");
+
+    for bad in [
+        "[ctx]\nrepo_root = \"/r\"\n[[case]]\nname = \"x\"\nexpect = \"allow\"\n",
+        "[ctx]\nrepo_root = \"/r\"\nbogus = 1\n",
+        "[ctx]\nrepo_root = \"/r\"\n[[case]]\nname = \"x\"\ntool_call = { tool = \"a\" }\nexpect = \"maybe\"\n",
+    ] {
+        assert!(wyrd_policy::conformance::parse(bad).is_err(), "{bad}");
+    }
+}

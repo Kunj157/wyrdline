@@ -8,7 +8,7 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures \
+	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies \
 	test-e2e test-e2e-webgpu e2e-build site test-site
 
 help: ## List targets
@@ -103,6 +103,16 @@ sensord-install: ## Build and install wyrd-sensord as a systemd service (needs s
 	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
+
+policies: ## Build the shipped policies (policies/default.wasm, policies/strict.wasm)
+	$(CARGO) build --quiet --locked -p wyrd-cli
+	target/debug/wyrd policy build policies/default
+	target/debug/wyrd policy build policies/strict
+
+test-policies: policies ## Policy unit tests (native) and conformance cases against the built components
+	$(CARGO) test --quiet --locked --manifest-path policies/Cargo.toml -p policy-common
+	target/debug/wyrd policy test policies/default.wasm policies/default/cases.toml
+	target/debug/wyrd policy test policies/strict.wasm policies/strict/cases.toml
 
 policy-fixtures: ## Rebuild the committed test policy components in policies/fixtures/
 	scripts/build-policy-fixtures.sh

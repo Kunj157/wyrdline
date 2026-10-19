@@ -3120,6 +3120,7 @@ dependencies = [
  "wyrd-doctor",
  "wyrd-gateway",
  "wyrd-ledger",
+ "wyrd-policy",
  "wyrd-schema",
  "wyrd-sensor",
 ]
@@ -3228,6 +3229,7 @@ dependencies = [
  "hex",
  "serde",
  "thiserror",
+ "toml",
  "wasmtime",
 ]
 
