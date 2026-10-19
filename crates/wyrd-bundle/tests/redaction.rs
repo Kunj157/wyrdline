@@ -132,6 +132,9 @@ fn json_is_redacted_recursively_and_by_key() {
     assert!(!text.contains("\"short\""));
     assert!(!text.contains("\"abc\""));
     assert_eq!(out["count"], 3);
+    // Redacting again changes nothing, secret-named keys included.
+    assert_eq!(redact_json(&out, Level::Standard), out);
+    assert_eq!(redact_json(&out, Level::Strict), redact_json(&out, Level::Strict));
 }
 
 #[test]

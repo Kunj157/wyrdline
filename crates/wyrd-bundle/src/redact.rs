@@ -249,7 +249,9 @@ pub fn redact_json(v: &serde_json::Value, level: Level) -> serde_json::Value {
                 .map(|(k, x)| {
                     let secret_key = SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str());
                     let value = match x {
-                        Value::String(s) if secret_key && !s.is_empty() => {
+                        Value::String(s)
+                            if secret_key && !s.is_empty() && !s.starts_with("[REDACTED:") =>
+                        {
                             Value::String(marker("field", s))
                         }
                         _ => redact_json(x, level),
