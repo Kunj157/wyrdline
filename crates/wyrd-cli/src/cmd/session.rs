@@ -223,6 +223,29 @@ fn kernel_plan(
     Ok((compiled, confine))
 }
 
+/// What the cgroup connect programs enforce for this session, if anything.
+fn egress_plan(
+    k: &wyrd_policy::kernel::Compiled,
+    policy: &wyrd_policy::Policy,
+) -> Option<super::effects::EgressPlan> {
+    if k.egress_cidrs.is_none() && k.tcp_connect_ports.is_none() {
+        return None;
+    }
+    Some(super::effects::EgressPlan {
+        cidrs: k
+            .egress_cidrs
+            .iter()
+            .flatten()
+            .map(ToString::to_string)
+            .collect(),
+        hosts: k.egress_hosts.clone(),
+        ports: k.tcp_connect_ports.clone().unwrap_or_default(),
+        restrict_hosts: k.egress_cidrs.is_some(),
+        policy_id: policy.id.clone(),
+        policy_version: policy.version.clone(),
+    })
+}
+
 /// Why the Cell cannot enforce everything the policy asked for.
 fn unenforced(s: &Session, confine: &wyrd_cell::confine::Confinement) -> Vec<String> {
     if s.record().mode == wyrd_schema::CaptureMode::Observe {
@@ -248,6 +271,11 @@ fn run_session(
         .as_ref()
         .map(|(_, c)| unenforced(s, c))
         .unwrap_or_default();
+    let observe = s.record().mode == wyrd_schema::CaptureMode::Observe;
+    let egress = match (&kernel, &policy) {
+        (Some((k, _)), Some(p)) if !observe => egress_plan(k, p),
+        _ => None,
+    };
     let confine = kernel.map(|(_, c)| c).unwrap_or_default();
     let capture = intent::start(
         &data(),
@@ -274,6 +302,7 @@ fn run_session(
                 ledger.clone(),
                 st.cgroup.as_deref(),
                 &st.workspace,
+                egress,
             ));
             if !degraded.is_empty() {
                 let reason = degraded.join("; ");

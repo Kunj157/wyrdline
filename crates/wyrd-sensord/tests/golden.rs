@@ -282,3 +282,126 @@ fn privileged_drops_are_counted_with_a_tiny_ring_buffer() {
         "a 4 KiB ring buffer must overflow under 3000 creates"
     );
 }
+
+/// Connect outcomes printed by the workload, one `name=result` per line.
+const CONNECTS: &str = r#"python3 -c "
+import socket
+def tryc(name, fam, addr):
+    s = socket.socket(fam)
+    s.settimeout(0.5)
+    try:
+        s.connect(addr)
+        r = 'open'
+    except PermissionError:
+        r = 'denied'
+    except socket.timeout:
+        r = 'timeout'
+    except OSError:
+        r = 'refused'
+    print(f'{name}={r}', flush=True)
+tryc('v4-allowed', socket.AF_INET, ('127.0.0.1', 1))
+tryc('v4-other', socket.AF_INET, ('10.255.255.1', 9))
+tryc('v6-loopback', socket.AF_INET6, ('::1', 1))
+tryc('mapped-allowed', socket.AF_INET6, ('::ffff:127.0.0.1', 1))
+tryc('mapped-other', socket.AF_INET6, ('::ffff:10.255.255.1', 9))
+tryc('v4-port-443', socket.AF_INET, ('127.0.0.1', 443))
+""#;
+
+#[test]
+fn privileged_egress_is_enforced_in_the_kernel_and_reported() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let out = tmp.path().join("connects.txt");
+    let d = daemon(tmp.path(), &[]);
+    let g = gated(
+        tmp.path(),
+        "egress",
+        &format!("{CONNECTS} > {}", out.display()),
+    );
+    // Loopback v4 only, and only ports 1 and 443.
+    let rules = wyrd_sensor::EgressRules {
+        cidrs: vec!["127.0.0.0/8".into()],
+        restrict_hosts: true,
+        ports: vec![1, 443],
+    };
+    let mut client = SensorClient::connect_with(&d.socket, &g.cgroup, &ws, Some(rules)).unwrap();
+    assert_eq!(client.egress_error, None);
+    // A later update replaces the rules: 10.255.255.1 and port 9 become
+    // allowed (the connect then times out: the address is unroutable).
+    let widened = wyrd_sensor::EgressRules {
+        cidrs: vec!["127.0.0.0/8".into(), "10.255.255.1/32".into()],
+        restrict_hosts: true,
+        ports: vec![1, 9, 443],
+    };
+    client.send_egress(&widened).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    g.release();
+    let events = collect(&mut client, g.child.id());
+    let got = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        got.lines().collect::<Vec<_>>(),
+        [
+            "v4-allowed=refused",
+            "v4-other=timeout",
+            "v6-loopback=denied",
+            "mapped-allowed=refused",
+            "mapped-other=timeout",
+            "v4-port-443=refused",
+        ]
+    );
+    let verdicts: Vec<(String, u16, wyrd_schema::NetVerdict)> = events
+        .iter()
+        .filter_map(|(_, b)| match b {
+            EventBody::NetConnect(c) => Some((c.addr.clone(), c.port, c.verdict)),
+            _ => None,
+        })
+        .collect();
+    use wyrd_schema::NetVerdict::{Allowed, Denied};
+    assert_eq!(
+        verdicts,
+        [
+            ("127.0.0.1".into(), 1, Allowed),
+            ("10.255.255.1".into(), 9, Allowed),
+            ("::1".into(), 1, Denied),
+            ("::ffff:127.0.0.1".into(), 1, Allowed),
+            ("::ffff:10.255.255.1".into(), 9, Allowed),
+            ("127.0.0.1".into(), 443, Allowed),
+        ],
+        "\nfull: {events:#?}"
+    );
+}
+
+#[test]
+fn privileged_egress_rules_do_not_touch_other_cgroups() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let d = daemon(tmp.path(), &[]);
+    let mut enforced = gated(tmp.path(), "enforced", "true");
+    let _client = SensorClient::connect_with(
+        &d.socket,
+        &enforced.cgroup,
+        &ws,
+        Some(wyrd_sensor::EgressRules {
+            cidrs: Vec::new(),
+            restrict_hosts: true,
+            ports: Vec::new(),
+        }),
+    )
+    .unwrap();
+    // A sibling scope, registered for capture only, connects freely.
+    let out = tmp.path().join("free.txt");
+    let free = gated(
+        tmp.path(),
+        "free",
+        &format!("{CONNECTS} > {}", out.display()),
+    );
+    let mut c2 = SensorClient::connect(&d.socket, &free.cgroup, &ws).unwrap();
+    free.release();
+    let _ = collect(&mut c2, free.child.id());
+    let got = std::fs::read_to_string(&out).unwrap();
+    assert!(!got.contains("=denied"), "{got}");
+    enforced.release();
+    let _ = enforced.child.wait();
+}

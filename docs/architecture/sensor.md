@@ -67,3 +67,27 @@ request):
 `deploy/systemd/wyrd-sensord.service` (bounded capabilities, no network,
 read-only system). Tests start their own daemon through `sudo -n` on a
 temporary socket with `--exit-on-stdin-eof`.
+
+## Egress enforcement
+
+With a policy that lists egress rules (`wyrd run --policy`), `wyrd run`
+sends them with the registration: the CIDRs, the addresses the allowed
+host names resolve to, and the allowed ports. `wyrd-sensord` attaches
+the `cgroup/connect4` and `cgroup/connect6` programs to that session's
+cgroup only (a `bpf_link`, coexisting with other programs) and fills
+per-session entries in an LPM trie (IPv4 and IPv6) and a port set. A
+connect to anything else fails with `EPERM` in the kernel. IPv4-mapped
+IPv6 destinations (`::ffff:a.b.c.d`) are checked against the IPv4 list.
+
+The connect programs only decide; the `connect` syscall tracepoints report
+every attempt at syscall exit with its verdict (in an enforced session,
+`EPERM` comes from the program), so the ledger has
+`effect.net.connect` with `verdict: denied` and `wyrd run` adds a
+kernel-stage `guard.decision` next to it.
+
+Host names are resolved by `wyrd run` with the system resolver, again
+every 60 s; addresses a name no longer resolves to are removed from the
+allow-list. Rules are IP-based: a CDN address shared with other names is
+allowed for all of them (documented limitation). Without `wyrd-sensord`
+the session is Degraded with "the network policy is not enforced in the
+kernel"; tool-call checks still apply.
