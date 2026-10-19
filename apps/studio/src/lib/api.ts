@@ -1,6 +1,7 @@
 /** Daemon data for Studio: one client and TanStack Query hooks around it. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Event } from "@wyrdline/schemas";
+import type * as api from "@wyrdline/schemas/generated-api";
 import { type Client, createClient } from "@wyrdline/schemas/client";
 
 import { takeTokenFromUrl } from "./auth";
@@ -174,6 +175,24 @@ export function useDivergences(sid: string) {
   return useQuery({
     queryKey: keys.divergences(sid),
     queryFn: () => apiClient().divergences(sid),
+  });
+}
+
+/**
+ * Acknowledge, mark a false positive, or reopen. Only a success refreshes
+ * the divergences (and the events, which gain the update); a refusal
+ * leaves everything as it was.
+ */
+export function useTriage(sid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { did: string; body: api.TriageBody }) =>
+      apiClient().triage(sid, v.did, v.body),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.divergences(sid) }),
+        qc.invalidateQueries({ queryKey: keys.events(sid) }),
+      ]),
   });
 }
 

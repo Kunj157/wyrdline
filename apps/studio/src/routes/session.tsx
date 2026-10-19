@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { AskDialog } from "../components/AskDialog";
 import { BacktestPanel } from "../components/BacktestPanel";
 import { CheckpointPanel } from "../components/CheckpointPanel";
+import { DivergencePanel } from "../components/DivergencePanel";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
@@ -197,6 +198,11 @@ export function SessionPage() {
                 id: "events",
                 label: "Events",
                 panel: <EventTable events={list} selected={selected} onSelect={setSelected} />,
+              },
+              {
+                id: "divergences",
+                label: `Divergences (${divergences.data?.divergences.length ?? 0})`,
+                panel: <DivergencePanel sid={sid} onSelect={setSelected} />,
               },
               {
                 id: "transcript",
