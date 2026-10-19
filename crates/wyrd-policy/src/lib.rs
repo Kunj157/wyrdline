@@ -8,6 +8,7 @@
 //! exhausted, memory cap, malformed component) becomes a deny.
 
 pub mod conformance;
+pub mod effects;
 pub mod kernel;
 
 use std::path::Path;

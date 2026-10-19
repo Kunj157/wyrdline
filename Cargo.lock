@@ -3228,9 +3228,11 @@ dependencies = [
  "blake3",
  "hex",
  "serde",
+ "tempfile",
  "thiserror",
  "toml",
  "wasmtime",
+ "wyrd-schema",
 ]
 
 [[package]]
