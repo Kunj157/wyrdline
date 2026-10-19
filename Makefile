@@ -5,7 +5,7 @@ SHELL := /bin/bash
 CARGO ?= cargo
 PNPM ?= pnpm
 
-.PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
+.PHONY: help demo install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
@@ -90,6 +90,9 @@ test-integration: ## Privileged Cell, scenario, and sensor tests (through passwo
 
 test-escape: ## The escape suite: an agent in a Cell tries to get around every enforcement layer (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test escape
+
+demo: ## The plan §2 demo with the scripted agent: victim shop, Cell, sensor, default policy (sudo)
+	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test demo --no-capture
 
 test-scenarios: ## Fakeagent-driven full-pipeline scenarios (unprivileged; Cell ones run in test-integration)
 	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent
