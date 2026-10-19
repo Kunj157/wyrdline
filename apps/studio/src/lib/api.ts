@@ -1,5 +1,5 @@
 /** Daemon data for Studio: one client and TanStack Query hooks around it. */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Event } from "@wyrdline/schemas";
 import type * as api from "@wyrdline/schemas/generated-api";
 import { type Client, createClient } from "@wyrdline/schemas/client";
@@ -175,6 +175,16 @@ export function useDivergences(sid: string) {
   return useQuery({
     queryKey: keys.divergences(sid),
     queryFn: () => apiClient().divergences(sid),
+  });
+}
+
+/** Every session's divergences, one request per session (the inbox). */
+export function useAllDivergences(sessions: api.SessionRecord[]) {
+  return useQueries({
+    queries: sessions.map((s) => ({
+      queryKey: keys.divergences(s.id),
+      queryFn: () => apiClient().divergences(s.id),
+    })),
   });
 }
 

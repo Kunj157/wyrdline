@@ -59,3 +59,30 @@ export function evidenceSeqs(divergences: api.DivergenceView[]): Set<number> {
     divergences.filter((d) => d.status !== "false_positive").flatMap((d) => d.evidence_seqs),
   );
 }
+
+const SEVERITY_RANK: Record<api.Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+export interface RuleGroup<T> {
+  rule_id: string;
+  rule_name: string;
+  entries: T[];
+}
+
+/** The inbox: divergences grouped by rule (in rule order), most severe first. */
+export function groupByRule<T extends { divergence: api.DivergenceView }>(
+  entries: T[],
+): RuleGroup<T>[] {
+  const groups = new Map<string, RuleGroup<T>>();
+  for (const e of entries) {
+    const { rule_id, rule_name } = e.divergence;
+    const g = groups.get(rule_id) ?? { rule_id, rule_name, entries: [] };
+    g.entries.push(e);
+    groups.set(rule_id, g);
+  }
+  for (const g of groups.values()) {
+    g.entries.sort(
+      (a, b) => SEVERITY_RANK[a.divergence.severity] - SEVERITY_RANK[b.divergence.severity],
+    );
+  }
+  return [...groups.values()].sort((a, b) => a.rule_id.localeCompare(b.rule_id));
+}
