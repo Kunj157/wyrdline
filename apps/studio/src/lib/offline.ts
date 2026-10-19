@@ -3,12 +3,15 @@
  * one event per line, or a JSON array) without a daemon. The causal graph is
  * computed in the browser by the same Rust correlator the daemon uses,
  * compiled to WebAssembly (`wyrd-wasm`). Everything is read-only: actions,
- * live streaming, chain verification, and file diffs need the daemon (and the
- * session's content store), so they are disabled and say so.
+ * live streaming, chain verification, file diffs, and divergence triage need
+ * the daemon (and the session's content store), so they are disabled and say
+ * so. Divergences are folded from the exported verdict events.
  */
 import type { Event } from "@wyrdline/schemas";
 import { ApiError, type Client } from "@wyrdline/schemas/client";
 import type * as api from "@wyrdline/schemas/generated-api";
+
+import { projectDivergences } from "./divergences";
 
 /** Parse an export: a JSON array of events or JSON lines. */
 export function parseExport(text: string): Event[] {
@@ -207,6 +210,11 @@ export function createOfflineClient(
     apply: async () => unavailable("Apply"),
     diff: async () => unavailable("Diffs (they need the session's content store)"),
     diffFile: async () => unavailable("File diffs"),
+    divergences: async (s: string) => {
+      check(s);
+      return { divergences: projectDivergences(events) } as api.DivergenceList;
+    },
+    triage: async () => unavailable("Triage"),
     streamUrl: () => "",
   };
   return client as unknown as Client;
