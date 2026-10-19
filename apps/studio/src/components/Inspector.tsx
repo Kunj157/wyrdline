@@ -9,12 +9,17 @@ export interface InspectorProps {
   event: Event | undefined;
   graph: api.Graph | undefined;
   events: Event[];
+  /** The session's divergences; those citing the event are listed. */
+  divergences?: api.DivergenceView[] | undefined;
 }
 
 const pct = (bp: number) => `${Math.round(bp / 100)} %`;
 
-/** The selected event: what it is, which call caused it, which guard ruled. */
-export function Inspector({ event, graph, events }: InspectorProps) {
+/**
+ * The selected event: what it is, which call caused it, which guard ruled,
+ * and which divergences cite it.
+ */
+export function Inspector({ event, graph, events, divergences = [] }: InspectorProps) {
   const [tab, setTab] = useState("event");
   if (!event) {
     return <p className="text-sm text-text-muted">Select an event in the river or the table.</p>;
@@ -28,6 +33,9 @@ export function Inspector({ event, graph, events }: InspectorProps) {
       e.body.kind === "guard.decision" &&
       (e.body.payload.subject_seq === event.seq ||
         (call && e.body.payload.call_id === call.call_id)),
+  );
+  const citing = divergences.filter(
+    (d) => d.seq === event.seq || d.evidence_seqs.includes(event.seq),
   );
   return (
     <section aria-label="Inspector">
@@ -116,6 +124,27 @@ export function Inspector({ event, graph, events }: InspectorProps) {
                         {d.body.kind === "guard.decision" ? d.body.payload.decision : "decision"}
                       </Badge>
                       {describe(d)}
+                    </li>
+                  ))}
+                </ul>
+              ),
+          },
+          {
+            id: "divergences",
+            label: citing.length > 0 ? `Divergences (${citing.length})` : "Divergences",
+            panel:
+              citing.length === 0 ? (
+                <p className="text-sm text-text-muted">No divergence cites this event.</p>
+              ) : (
+                <ul className="flex flex-col gap-1 text-sm">
+                  {citing.map((d) => (
+                    <li key={d.divergence_id} className="flex flex-wrap items-center gap-2">
+                      <Badge meaning="divergence">{d.rule_id}</Badge>
+                      <span className="font-medium">{d.rule_name}</span>
+                      <span className="text-xs text-text-secondary">
+                        {d.severity} · {d.status.replace("_", " ")}
+                      </span>
+                      <span className="w-full break-words text-text-secondary">{d.summary}</span>
                     </li>
                   ))}
                 </ul>

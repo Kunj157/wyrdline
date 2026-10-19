@@ -186,7 +186,12 @@ export function SessionPage() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(20rem,1fr)_2fr]">
         <Card>
-          <Inspector event={selectedEvent} graph={graph.data} events={list} />
+          <Inspector
+            event={selectedEvent}
+            graph={graph.data}
+            events={list}
+            divergences={divergences.data?.divergences}
+          />
         </Card>
         <Card>
           <Tabs
