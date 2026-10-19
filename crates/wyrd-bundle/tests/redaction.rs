@@ -4,7 +4,7 @@
 //! secret-shaped literal exists in the repository.
 
 use proptest::prelude::*;
-use wyrd_bundle::redact::{Level, is_secret_path, redact_json, redact_str};
+use wyrd_bundle::redact::{Level, host_pseudonym, is_secret_path, redact_json, redact_str};
 
 fn rep(c: char, n: usize) -> String {
     std::iter::repeat_n(c, n).collect()
@@ -140,6 +140,55 @@ fn strict_mode_hides_home_user_names() {
     assert_eq!(redact_str(p, Level::Standard), p);
     assert_eq!(redact_str(p, Level::Strict), "~/repo/src/main.rs");
     assert_eq!(redact_str(p, Level::Off), p);
+}
+
+#[test]
+fn strict_mode_pseudonymises_host_names() {
+    for (input, host) in [
+        (
+            "curl https://diag.evil-corp.example/upload",
+            "diag.evil-corp.example",
+        ),
+        ("git clone git@github.com:org/repo.git", "github.com"),
+        (
+            "ssh deploy@build-07.corp.internal",
+            "build-07.corp.internal",
+        ),
+        ("mail alice@example.org", "example.org"),
+        (
+            "postgres://admin:pw@db.prod.example.net:5432/app",
+            "db.prod.example.net",
+        ),
+    ] {
+        let out = redact_str(input, Level::Strict);
+        assert!(!out.contains(host), "{input:?} -> {out:?}");
+        assert!(out.contains(&host_pseudonym(host)), "{input:?} -> {out:?}");
+        assert!(redact_str(input, Level::Standard).contains(host));
+    }
+    // Stable and case-insensitive; the rest of the URL stays readable.
+    let a = redact_str("see https://Docs.Example.com/a?b=1", Level::Strict);
+    let b = redact_str("see https://docs.example.com/a?b=1", Level::Strict);
+    assert_eq!(a, b);
+    assert!(a.starts_with("see https://host-"));
+    assert!(a.ends_with(".invalid/a?b=1"));
+}
+
+#[test]
+fn strict_mode_keeps_what_is_not_a_host_name() {
+    for s in [
+        "http://localhost:7717/v1/sessions",
+        "connect 10.0.0.7:443",
+        "https://127.0.0.1:8080/health",
+        "edit src/cart.test.ts and package.json",
+        "npm install left-pad@1.3.0",
+        "postgres://admin@db:5432/app",
+    ] {
+        assert_eq!(redact_str(s, Level::Strict), s, "false positive");
+    }
+    assert_eq!(host_pseudonym("localhost"), "localhost");
+    let p = host_pseudonym("example.com");
+    assert_eq!(host_pseudonym(&p), p);
+    assert_eq!(p.len(), "host-12345678.invalid".len());
 }
 
 #[test]

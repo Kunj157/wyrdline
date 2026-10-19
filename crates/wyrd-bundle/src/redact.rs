@@ -19,7 +19,8 @@ pub enum Level {
     /// Known secret formats, credential assignments, auth headers, URL
     /// passwords, and high-entropy tokens.
     Standard,
-    /// Standard plus home-directory user names and host names.
+    /// Standard plus home-directory user names and host names (replaced by
+    /// stable pseudonyms, see [`host_pseudonym`]).
     Strict,
 }
 
@@ -88,6 +89,57 @@ static HOME: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::expect_used)]
     Regex::new(r"/home/([A-Za-z0-9._-]+)|/Users/([A-Za-z0-9._-]+)").expect("valid pattern")
 });
+
+/// A DNS name in a URL authority (after optional `user[:pass]@`).
+static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::expect_used)]
+    Regex::new(
+        r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^\s/@]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})\b",
+    )
+    .expect("valid pattern")
+});
+
+/// A DNS name after `user@` (e-mail addresses, `git@host:repo`, `ssh user@host`).
+static AT_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::expect_used)]
+    Regex::new(r"(?i)\b[a-z0-9._%+-]+@([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})\b")
+        .expect("valid pattern")
+});
+
+/// Reserved top-level domain of pseudonyms (RFC 2606), so a pseudonym is
+/// never a real host and is never pseudonymised again.
+const PSEUDONYM_TLD: &str = ".invalid";
+
+/// Stable pseudonym of a host name: `host-<hash8>.invalid`, where `hash8`
+/// is the first 8 hex digits of BLAKE3 of the lower-cased name. The same
+/// host always gets the same pseudonym, so connections stay correlatable.
+/// `localhost` and existing pseudonyms are returned unchanged.
+pub fn host_pseudonym(host: &str) -> String {
+    let lower = host.to_ascii_lowercase();
+    if lower.is_empty() || lower == "localhost" || lower.ends_with(PSEUDONYM_TLD) {
+        return host.to_string();
+    }
+    format!(
+        "host-{}{PSEUDONYM_TLD}",
+        &hex::encode(blake3::hash(lower.as_bytes()).as_bytes())[..8]
+    )
+}
+
+fn replace_hosts(re: &Regex, s: &str) -> String {
+    re.replace_all(s, |c: &Captures<'_>| {
+        let whole = c.get(0).map_or("", |m| m.as_str());
+        match (c.get(0), c.get(1)) {
+            (Some(w), Some(h)) => {
+                let mut out = whole.to_string();
+                let start = h.start() - w.start();
+                out.replace_range(start..start + h.len(), &host_pseudonym(h.as_str()));
+                out
+            }
+            _ => whole.to_string(),
+        }
+    })
+    .into_owned()
+}
 
 /// JSON object keys whose values are always secrets.
 const SECRET_KEYS: &[&str] = &[
@@ -176,6 +228,8 @@ pub fn redact_str(input: &str, level: Level) -> String {
         .into_owned();
     if level >= Level::Strict {
         s = HOME.replace_all(&s, "~").into_owned();
+        s = replace_hosts(&URL_HOST, &s);
+        s = replace_hosts(&AT_HOST, &s);
     }
     s
 }
