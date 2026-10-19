@@ -816,6 +816,30 @@ impl Session {
         Ok(report)
     }
 
+    /// Record verdict-plane events (claims, divergences, triage). Refused
+    /// while the agent runs and after the ledger is sealed.
+    pub fn record_verdicts(&mut self, bodies: Vec<EventBody>) -> Result<u64> {
+        if bodies
+            .iter()
+            .any(|b| b.plane() != wyrd_schema::Plane::Verdict)
+        {
+            return Err(CellError::Invalid(
+                "only verdict events can be recorded".into(),
+            ));
+        }
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        if self.is_running() {
+            return Err(CellError::Busy("the session is recording".into()));
+        }
+        match self.append(bodies) {
+            Err(CellError::Ledger(wyrd_ledger::LedgerError::Sealed)) => Err(CellError::Busy(
+                "the session is closed and its ledger sealed".into(),
+            )),
+            r => r,
+        }
+    }
+
     /// Stop the agent if needed, write the closing event, and seal the ledger.
     pub fn close(&mut self, reason: &str) -> Result<Seal> {
         let _lock = state::lock(&self.dir.lock())?;
