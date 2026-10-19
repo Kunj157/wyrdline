@@ -237,3 +237,207 @@ pub fn export(a: &ExportArgs) -> anyhow::Result<u8> {
     report(a, &rec.id, redaction, withheld, &out.summary)?;
     Ok(exit::OK)
 }
+
+/// zstd frame magic: the first bytes of every bundle.
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+
+/// Whether `path` is a bundle file (by content, not by name).
+pub fn is_bundle(path: &std::path::Path) -> bool {
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut magic))
+        .is_ok_and(|()| magic == ZSTD_MAGIC)
+}
+
+fn open_bundle(path: &std::path::Path) -> anyhow::Result<wyrd_bundle::Verification> {
+    let f = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    Ok(wyrd_bundle::verify(
+        std::io::BufReader::new(f),
+        &wyrd_bundle::Options::default(),
+    ))
+}
+
+fn mark(status: wyrd_bundle::read::CheckStatus) -> &'static str {
+    match status {
+        wyrd_bundle::read::CheckStatus::Passed => "✓",
+        wyrd_bundle::read::CheckStatus::Failed => "✗",
+        wyrd_bundle::read::CheckStatus::Skipped => "-",
+    }
+}
+
+fn verification_json(path: &std::path::Path, v: &wyrd_bundle::Verification) -> serde_json::Value {
+    let (bundle, error) = match &v.result {
+        Ok(b) => (
+            Some(serde_json::json!({
+                "session": b.manifest.session,
+                "redaction": b.manifest.redaction,
+                "content": b.manifest.content,
+                "events": b.manifest.ledger.events,
+                "head_hash": b.manifest.ledger.head_hash,
+                "manifest_hash": b.manifest_hash,
+                "signer_fingerprint": b.fingerprint(),
+            })),
+            None,
+        ),
+        Err(e) => (
+            None,
+            Some(serde_json::json!({
+                "stage": e.stage(),
+                "seq": e.seq(),
+                "message": e.to_string(),
+            })),
+        ),
+    };
+    serde_json::json!({
+        "path": path,
+        "ok": v.ok(),
+        "checks": v.checks,
+        "bundle": bundle,
+        "error": error,
+    })
+}
+
+/// Print a bundle verification report.
+fn print_verification(
+    path: &std::path::Path,
+    v: &wyrd_bundle::Verification,
+    json: bool,
+) -> anyhow::Result<()> {
+    let mut o = std::io::stdout().lock();
+    if json {
+        serde_json::to_writer_pretty(&mut o, &verification_json(path, v))?;
+        writeln!(o)?;
+        return Ok(());
+    }
+    writeln!(o, "bundle    {}", path.display())?;
+    if let Ok(b) = &v.result {
+        let m = &b.manifest;
+        let name = m.session.name.as_deref().unwrap_or("-");
+        writeln!(
+            o,
+            "session   {} ({name}, {})",
+            m.session.id, m.session.agent
+        )?;
+        writeln!(o, "events    {}", m.ledger.events)?;
+        writeln!(o, "head      {}", m.ledger.head_hash)?;
+        writeln!(o, "redaction {}", m.redaction.as_str())?;
+        if m.content.included {
+            writeln!(o, "content   {} chunks", m.content.chunks)?;
+        } else {
+            writeln!(o, "content   none (exported with --no-content)")?;
+        }
+        writeln!(o, "signer    {}", b.fingerprint())?;
+    }
+    for c in &v.checks {
+        write!(o, "{} {}", mark(c.status), c.stage.describe())?;
+        match &c.detail {
+            Some(d) => writeln!(o, ": {d}")?,
+            None => writeln!(o)?,
+        }
+    }
+    match &v.result {
+        Ok(_) => writeln!(o, "result    ✓ bundle verified")?,
+        Err(e) => writeln!(o, "result    ✗ {e}")?,
+    }
+    Ok(())
+}
+
+/// `wyrd verify <file.wyrd>`.
+pub fn verify(path: &std::path::Path, json: bool) -> anyhow::Result<u8> {
+    let v = open_bundle(path)?;
+    print_verification(path, &v, json)?;
+    Ok(if v.ok() {
+        exit::OK
+    } else {
+        exit::VERIFICATION_FAILED
+    })
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ImportArgs {
+    /// Bundle file to import.
+    file: PathBuf,
+    /// Print the result as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+/// `wyrd import <file.wyrd>`: verify, then add as a read-only session.
+pub fn import(a: &ImportArgs) -> anyhow::Result<u8> {
+    let verification = open_bundle(&a.file)?;
+    if !verification.ok() {
+        print_verification(&a.file, &verification, a.json)?;
+        return Ok(exit::VERIFICATION_FAILED);
+    }
+    let Ok(b) = verification.result else {
+        return Ok(exit::VERIFICATION_FAILED);
+    };
+    let m = &b.manifest;
+    let spec = wyrd_cell::ImportSpec {
+        name: m.session.name.clone(),
+        agent: m.session.agent.clone(),
+        mode: m.session.mode,
+        created_ms: m.session.created_ms,
+        events: b.events.clone(),
+        chunks: b.chunks.values().cloned().collect(),
+        source: wyrd_cell::ImportSource {
+            original_id: m.session.id.clone(),
+            manifest_hash: b.manifest_hash.clone(),
+            signer_fingerprint: b.fingerprint(),
+            redaction: m.redaction.as_str().into(),
+            content: m.content.included,
+            imported_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)),
+        },
+    };
+    let data = DataDir::from_env();
+    let session = Session::import(&data, &spec)?;
+    // The rebuilt ledger must carry the same chain as the bundle.
+    let check = wyrd_ledger::verify(&session.dir().ledger())?;
+    if !check.ok() || check.head_hash != m.ledger.head_hash || check.events != m.ledger.events {
+        anyhow::bail!(
+            "imported ledger of {} does not reproduce the bundle's chain ({} events, head {})",
+            session.record().id,
+            check.events,
+            check.head_hash
+        );
+    }
+    let mut out = std::io::stdout().lock();
+    if a.json {
+        serde_json::to_writer_pretty(
+            &mut out,
+            &serde_json::json!({
+                "session": session.record().id,
+                "original_id": m.session.id,
+                "events": m.ledger.events,
+                "checkpoints": session.record().checkpoints.len(),
+                "chunks": b.chunks.len(),
+                "head_hash": m.ledger.head_hash,
+                "signer_fingerprint": b.fingerprint(),
+            }),
+        )?;
+        writeln!(out)?;
+    } else {
+        writeln!(
+            out,
+            "imported  {} -> session {} (read-only)",
+            a.file.display(),
+            session.record().id
+        )?;
+        writeln!(out, "original  {} on the exporting host", m.session.id)?;
+        writeln!(
+            out,
+            "events    {} (head {})",
+            m.ledger.events, m.ledger.head_hash
+        )?;
+        writeln!(
+            out,
+            "content   {} checkpoints, {} chunks",
+            session.record().checkpoints.len(),
+            b.chunks.len()
+        )?;
+        writeln!(out, "signer    {}", b.fingerprint())?;
+    }
+    Ok(exit::OK)
+}
