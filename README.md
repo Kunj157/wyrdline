@@ -78,6 +78,8 @@ wyrd apply <session> head                            # bring the result into the
 wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enforce in the kernel
 wyrd ask <session>                                   # answer what the policy asks
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
+wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
+wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
 ```
 
 Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).
