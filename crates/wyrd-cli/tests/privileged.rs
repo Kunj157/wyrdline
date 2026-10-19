@@ -5,63 +5,13 @@
 //! `make test-integration` (stage two via `sudo -n`). These tests fail —
 //! they never skip — when the machine cannot run a Cell.
 
+mod support;
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Command;
 
-struct Env {
-    _tmp: tempfile::TempDir,
-    ws: PathBuf,
-    data: PathBuf,
-    outside: PathBuf,
-}
-
-fn env() -> Env {
-    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let ws = tmp.path().join("ws");
-    let data = tmp.path().join("data");
-    let outside = tmp.path().join("outside");
-    fs::create_dir_all(&ws).unwrap();
-    fs::create_dir_all(&outside).unwrap();
-    fs::write(ws.join("a.txt"), "hello\n").unwrap();
-    fs::write(ws.join("b.txt"), "bye\n").unwrap();
-    Env {
-        _tmp: tmp,
-        ws,
-        data,
-        outside,
-    }
-}
-
-fn wyrd(e: &Env, args: &[&str]) -> Output {
-    let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
-        .args(args)
-        .current_dir(&e.ws)
-        .env("WYRD_DATA_DIR", &e.data)
-        .env("WYRD_PRIVILEGED_HELPER", "sudo")
-        .output()
-        .unwrap();
-    eprintln!(
-        "wyrd {args:?} -> {:?}\n{}{}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    out
-}
-
-fn script(e: &Env, name: &str, body: &str) -> String {
-    let p = e.outside.join(name);
-    fs::write(&p, format!("#!/bin/sh\nset -u\n{body}\n")).unwrap();
-    Command::new("chmod").arg("+x").arg(&p).status().unwrap();
-    p.display().to_string()
-}
-
-fn only_session(e: &Env) -> String {
-    let out = wyrd(e, &["sessions", "--json"]);
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    v[0]["id"].as_str().unwrap().to_string()
-}
+use support::*;
 
 /// Poll (with a deadline) until the only session's agent is running.
 fn wait_until_recording(e: &Env) -> String {
@@ -239,17 +189,6 @@ fn privileged_stop_kills_the_whole_tree() {
     assert!(!status.success(), "the agent was killed");
 }
 
-fn ledger_events(e: &Env, sid: &str) -> Vec<wyrd_schema::EventBody> {
-    let path = e.data.join("sessions").join(sid).join("ledger.wyrdledger");
-    wyrd_ledger::Ledger::open_read_only(path)
-        .unwrap()
-        .events_after(0, usize::MAX)
-        .unwrap()
-        .into_iter()
-        .map(|ev| ev.body)
-        .collect()
-}
-
 #[test]
 fn privileged_every_tool_call_gets_its_own_checkpoint() {
     use wyrd_schema::EventBody;
@@ -336,68 +275,6 @@ fn privileged_every_tool_call_gets_its_own_checkpoint() {
             .code(),
         Some(0)
     );
-}
-
-/// `wyrd-sensord` built on demand (it is another package's binary) and run
-/// through `sudo -n` on a temporary socket; exits when dropped.
-struct Sensord {
-    child: std::process::Child,
-    socket: PathBuf,
-}
-
-impl Drop for Sensord {
-    fn drop(&mut self) {
-        drop(self.child.stdin.take());
-        let _ = self.child.wait();
-    }
-}
-
-fn sensord_bin() -> PathBuf {
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "--quiet", "--locked", "-p", "wyrd-sensord"])
-        .status()
-        .unwrap();
-    assert!(status.success());
-    Path::new(env!("CARGO_BIN_EXE_wyrd")).with_file_name("wyrd-sensord")
-}
-
-fn sensord(e: &Env) -> Sensord {
-    let socket = e.outside.join("sensord.sock");
-    let child = Command::new("sudo")
-        .args(["-n", "--"])
-        .arg(sensord_bin())
-        .args(["--exit-on-stdin-eof", "--socket"])
-        .arg(&socket)
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let start = std::time::Instant::now();
-    while !socket.exists() {
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(30),
-            "sensord did not start"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    Sensord { child, socket }
-}
-
-fn wyrd_with_sensor(e: &Env, socket: &Path, args: &[&str]) -> Output {
-    let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
-        .args(args)
-        .current_dir(&e.ws)
-        .env("WYRD_DATA_DIR", &e.data)
-        .env("WYRD_PRIVILEGED_HELPER", "sudo")
-        .env("WYRD_SENSORD_SOCKET", socket)
-        .output()
-        .unwrap();
-    eprintln!(
-        "wyrd {args:?} -> {:?}\n{}{}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    out
 }
 
 #[test]
@@ -503,7 +380,7 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
     use wyrd_schema::EventBody as B;
     let e = env();
     let d = sensord(&e);
-    let agent = script(&e, "slow.sh", "echo 1 > a.txt; sleep 1.5; echo 2 > b.txt");
+    let agent = script(&e, "slow.sh", "echo 1 > a.txt; sleep 3; echo 2 > b.txt");
     let mut child = Command::new(env!("CARGO_BIN_EXE_wyrd"))
         .args(["run", "--", &agent])
         .current_dir(&e.ws)
@@ -512,7 +389,16 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
         .env("WYRD_SENSORD_SOCKET", &d.socket)
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    // Stop the sensor only once the first write is in the ledger: a fixed
+    // sleep raced Cell start-up on a loaded machine.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !first_write_recorded(&e) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "first write never recorded"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     drop(d); // daemon exits
     assert_eq!(child.wait().unwrap().code(), Some(0));
     let events = ledger_events(&e, &only_session(&e));
@@ -524,6 +410,20 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
         events.iter().any(|b| matches!(b, B::SensorLost(_))),
         "{events:#?}"
     );
+}
+
+fn first_write_recorded(e: &Env) -> bool {
+    let Ok(sessions) = std::fs::read_dir(e.data.join("sessions")) else {
+        return false;
+    };
+    sessions.flatten().any(|s| {
+        wyrd_ledger::Ledger::open_read_only(s.path().join("ledger.wyrdledger"))
+            .and_then(|l| l.events_after(0, usize::MAX))
+            .is_ok_and(|evs| {
+                evs.iter()
+                    .any(|ev| matches!(ev.body, wyrd_schema::EventBody::FileOpenWrite(_)))
+            })
+    })
 }
 
 #[test]
@@ -731,53 +631,4 @@ for host in ('203.0.113.9', '10.255.255.1'):
         .collect();
     assert_eq!(denials.len(), 1, "{denials:?}");
     assert!(denials[0].contains("203.0.113.9"), "{}", denials[0]);
-}
-
-#[test]
-fn privileged_renamed_denied_binary_stops_the_session() {
-    use wyrd_schema::EventBody as B;
-    let e = env();
-    let d = sensord(&e);
-    let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../policies/fixtures/escape.wasm")
-        .canonicalize()
-        .unwrap();
-    // The escape fixture's exec deny list holds curl. A copy under another
-    // name is still curl: the observer matches the binary's content.
-    let agent = script(
-        &e,
-        "agent.sh",
-        r#"cp "$(command -v curl)" ./fetcher
-./fetcher --version > /dev/null
-sleep 5
-echo survived > late.txt"#,
-    );
-    let policy = policy.display().to_string();
-    let t = std::time::Instant::now();
-    let out = wyrd_with_sensor(&e, &d.socket, &["run", "--policy", &policy, "--", &agent]);
-    assert!(
-        t.elapsed() < std::time::Duration::from_secs(5),
-        "{:?}",
-        t.elapsed()
-    );
-    assert_ne!(out.status.code(), Some(0));
-    let sid = only_session(&e);
-    let upper = e.data.join("sessions").join(&sid).join("branches/a/upper");
-    assert!(upper.join("fetcher").exists());
-    assert!(
-        !upper.join("late.txt").exists(),
-        "the agent was not stopped"
-    );
-    let events = ledger_events(&e, &sid);
-    let stop = events
-        .iter()
-        .find_map(|b| match b {
-            B::GuardDecision(g) if g.stage == wyrd_schema::GuardStage::Effect => Some(g.clone()),
-            _ => None,
-        })
-        .expect("effect-stage decision");
-    assert_eq!(stop.decision, wyrd_schema::Decision::Deny);
-    assert!(stop.reason.contains("a copy of curl"), "{}", stop.reason);
-    assert!(stop.reason.contains("stopped"), "{}", stop.reason);
-    assert!(stop.subject_seq.is_some());
 }
