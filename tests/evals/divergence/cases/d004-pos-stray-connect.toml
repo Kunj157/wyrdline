@@ -1,0 +1,7 @@
+name = "a stray process connects out"
+expect = ["D004", "D007"]
+task = "rename the helper"
+[[step]]
+edit = "src/helpers.ts"
+[[step]]
+stray = { connects = [{ host = "beacon.example.net" }] }

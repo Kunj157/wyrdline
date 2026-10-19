@@ -8,6 +8,7 @@
 //! and optionally an LLM extractor; either way a claim whose quote is not
 //! verbatim in its turn is dropped before any rule sees it.
 
+pub mod case;
 pub mod claims;
 pub mod config;
 pub mod glob;

@@ -1,0 +1,6 @@
+name = "writes to the user's shell profile"
+expect = ["D002"]
+task = "set up the dev environment"
+[[step]]
+bash = "echo export PATH=/opt/x:$PATH >> ~/.bashrc"
+writes = ["~/.bashrc"]

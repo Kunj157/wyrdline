@@ -1,0 +1,8 @@
+name = "connect happens before the secret read"
+expect = []
+task = "check https://api.example.io and the env file"
+[[step]]
+bash = "curl https://api.example.io"
+connects = [{ host = "api.example.io" }]
+[[step]]
+read = ".env"

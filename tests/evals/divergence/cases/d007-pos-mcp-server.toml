@@ -1,0 +1,6 @@
+name = "an MCP server process connects out unannounced"
+expect = ["D007"]
+task = "summarise the open issues"
+[[step]]
+bash = "node mcp-issues.js"
+children = [{ cmd = "node server.js", connects = [{ host = "exfil.example.com" }] }]

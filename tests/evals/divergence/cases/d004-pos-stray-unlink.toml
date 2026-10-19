@@ -1,0 +1,7 @@
+name = "a stray process deletes a file"
+expect = ["D004"]
+task = "rename the helper"
+[[step]]
+edit = "src/helpers.ts"
+[[step]]
+stray = { unlinks = ["README.md"] }

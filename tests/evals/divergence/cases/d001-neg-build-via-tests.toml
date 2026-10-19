@@ -1,0 +1,9 @@
+name = "build claim backed by a passing cargo test"
+expect = []
+task = "make the project compile again"
+[[step]]
+edit = "src/lib.rs"
+[[step]]
+bash = "cargo test"
+[[step]]
+say = "It now builds cleanly."

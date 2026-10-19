@@ -1,0 +1,11 @@
+name = "two silent failures in one session"
+expect = ["D005"]
+task = "update the snapshots"
+[[step]]
+bash = "pnpm snap"
+exit = 1
+reported_exit = 0
+[[step]]
+bash = "pnpm snap --force"
+exit = 1
+reported_exit = 0

@@ -1,0 +1,5 @@
+name = "MCP tool search changed its description mid-session"
+expect = ["D009"]
+task = "summarise the open issues"
+[[step]]
+rug_pull = "search"

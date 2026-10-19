@@ -1,0 +1,6 @@
+name = "two hidden hosts, one mentioned host"
+expect = ["D007"]
+task = "fetch the schema from https://schema.example.org"
+[[step]]
+bash = "node fetch.js"
+connects = [{ host = "schema.example.org" }, { host = "cdn.tracker.example" }, { host = "ads.tracker.example" }]

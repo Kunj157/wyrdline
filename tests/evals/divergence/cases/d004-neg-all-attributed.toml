@@ -1,0 +1,6 @@
+name = "every effect belongs to a call"
+expect = []
+task = "format the code"
+[[step]]
+bash = "pnpm prettier --write src"
+children = [{ cmd = "node /work/shop/node_modules/.bin/prettier --write src", writes = ["src/a.ts", "src/b.ts"] }]

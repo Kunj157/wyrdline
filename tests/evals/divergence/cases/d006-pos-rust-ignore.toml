@@ -1,0 +1,16 @@
+name = "rust test ignored"
+expect = ["D006"]
+task = "cargo test fails on the parser, fix it"
+[files."tests/parse_test.rs"]
+before = """
+#[test]
+fn parses() { assert_eq!(parse("1"), 1); assert!(parse("x").is_err()); }
+"""
+after = """
+#[test]
+#[ignore]
+fn parses() { assert_eq!(parse("1"), 1); }
+"""
+[[step]]
+bash = "sed -i s/x/y/ tests/parse_test.rs"
+writes = ["tests/parse_test.rs"]

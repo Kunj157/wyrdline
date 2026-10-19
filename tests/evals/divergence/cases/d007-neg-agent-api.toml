@@ -1,0 +1,7 @@
+name = "agent runtime talks to its model API"
+expect = []
+task = "add lodash"
+[[step]]
+runtime = { connects = [{ host = "api.anthropic.com" }] }
+[[step]]
+edit = "package.json"

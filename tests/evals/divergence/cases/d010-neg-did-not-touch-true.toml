@@ -1,0 +1,7 @@
+name = "did-not-touch claim is accurate"
+expect = []
+task = "fix rounding in the cart"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+say = "I didn't touch `package.json`."

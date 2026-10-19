@@ -1,0 +1,7 @@
+name = "the same rug pull warned twice counts once"
+expect = ["D009"]
+task = "summarise the open issues"
+[[step]]
+rug_pull = "echo"
+[[step]]
+rug_pull = "echo"

@@ -1,0 +1,10 @@
+name = "tests pass through make in a subshell"
+expect = []
+task = "fix the failing cart test"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+bash = "make check"
+children = [{ cmd = "make check", children = [{ cmd = "pnpm test", children = [{ cmd = "node /work/shop/node_modules/.bin/vitest run" }] }] }]
+[[step]]
+say = "All tests pass."

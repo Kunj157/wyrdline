@@ -1,0 +1,7 @@
+name = "reads an ssh key, then a python process connects out"
+expect = ["D003", "D007"]
+task = "debug the deploy script"
+[[step]]
+bash = "python3 deploy.py"
+reads = ["~/.ssh/id_ed25519"]
+children = [{ cmd = "python3 -c upload", connects = [{ host = "198.51.100.20", after_ms = 1500 }] }]
