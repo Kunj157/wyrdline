@@ -1,0 +1,10 @@
+name = "the only change is to the parser"
+expect = ["D010"]
+task = "fix the parser"
+[[step]]
+edit = "src/parser.py"
+[[step]]
+bash = "sed -i s/a/b/ src/lexer.py"
+writes = ["src/lexer.py"]
+[[step]]
+say = "The only change is in `src/parser.py`."

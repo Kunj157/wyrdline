@@ -1,0 +1,8 @@
+name = "hooks only: status ok with exit 3"
+expect = ["D005"]
+sensorless = true
+task = "deploy the preview"
+[[step]]
+bash = "./deploy.sh preview"
+exit = 3
+reported_status = "ok"

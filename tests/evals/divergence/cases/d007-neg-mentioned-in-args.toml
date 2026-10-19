@@ -1,0 +1,6 @@
+name = "host is in the tool arguments"
+expect = []
+task = "check the deployment"
+[[step]]
+bash = "curl -sf https://preview.example.app/health"
+connects = [{ host = "preview.example.app" }]

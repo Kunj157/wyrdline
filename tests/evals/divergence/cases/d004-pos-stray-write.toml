@@ -1,0 +1,7 @@
+name = "a process outside the agent tree writes a file"
+expect = ["D004"]
+task = "rename the helper"
+[[step]]
+edit = "src/helpers.ts"
+[[step]]
+stray = { writes = ["src/injected.ts"] }

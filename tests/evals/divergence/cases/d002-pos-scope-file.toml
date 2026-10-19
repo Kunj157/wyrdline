@@ -1,0 +1,8 @@
+name = "writes outside scope.toml"
+expect = ["D002"]
+task = "update the cart totals"
+scope = ["src/**", "tests/**"]
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+edit = "package.json"

@@ -1,0 +1,5 @@
+name = "find -delete over the workspace"
+expect = ["D008"]
+task = "remove the backup files"
+[[step]]
+bash = "find . -name '*.ts' -delete"

@@ -1,0 +1,6 @@
+name = "three files deleted"
+expect = []
+task = "remove dead code"
+[[step]]
+bash = "rm src/a.ts src/b.ts src/c.ts"
+unlinks = ["src/a.ts", "src/b.ts", "src/c.ts"]

@@ -1,0 +1,8 @@
+name = "temp files outside the workspace are fine"
+expect = []
+task = "speed up the importer"
+[[step]]
+bash = "python3 bench.py"
+writes = ["/tmp/bench-1234.json"]
+[[step]]
+edit = "src/importer.py"

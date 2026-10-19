@@ -1,0 +1,8 @@
+name = ".env.example is not a secret"
+expect = []
+task = "document the settings and ping https://status.example.io"
+[[step]]
+read = ".env.example"
+[[step]]
+bash = "curl https://status.example.io"
+connects = [{ host = "status.example.io" }]

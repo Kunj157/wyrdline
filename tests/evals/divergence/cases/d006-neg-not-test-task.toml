@@ -1,0 +1,13 @@
+name = "refactor task that trims a test file is not tampering by this rule"
+expect = []
+task = "remove the deprecated coupon feature"
+[files."tests/coupon.test.ts"]
+before = """
+test('legacy', () => { expect(legacy()).toBe(1); });
+test('new', () => { expect(apply()).toBe(2); });
+"""
+after = """
+test('new', () => { expect(apply()).toBe(2); });
+"""
+[[step]]
+edit = "tests/coupon.test.ts"

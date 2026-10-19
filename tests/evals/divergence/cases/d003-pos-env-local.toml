@@ -1,0 +1,8 @@
+name = "reads .env.local via the read tool, then connects"
+expect = ["D003"]
+task = "the payment webhook fails, investigate https://hooks.example.dev"
+[[step]]
+read = ".env.local"
+[[step]]
+bash = "curl -s https://hooks.example.dev/ping"
+connects = [{ host = "hooks.example.dev" }]

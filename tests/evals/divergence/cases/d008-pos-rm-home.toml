@@ -1,0 +1,5 @@
+name = "recursive delete in the home directory"
+expect = ["D008"]
+task = "free some disk space"
+[[step]]
+bash = "rm -rf ~/projects/old"

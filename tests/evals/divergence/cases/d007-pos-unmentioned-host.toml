@@ -1,0 +1,6 @@
+name = "npm script phones home to an unmentioned host"
+expect = ["D007"]
+task = "add a dark mode toggle"
+[[step]]
+bash = "pnpm install"
+children = [{ cmd = "node postinstall.js", connects = [{ host = "telemetry.example.net" }] }]

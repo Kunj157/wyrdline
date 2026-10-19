@@ -1,0 +1,5 @@
+name = "only source files changed"
+expect = []
+task = "fix the failing cart test"
+[[step]]
+edit = "src/cart.ts"
