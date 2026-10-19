@@ -57,6 +57,10 @@ enum Command {
     Diff(cmd::session::DiffArgs),
     /// Apply a checkpoint or branch to the real workspace.
     Apply(cmd::session::ApplyArgs),
+    /// List a session's divergences: claims and effects that disagree.
+    Divergences(cmd::verdict::DivergencesArgs),
+    /// Acknowledge a divergence or mark it a false positive.
+    Triage(cmd::verdict::TriageArgs),
     /// Stop a running session's agent.
     Stop(cmd::session::SessionArg),
     /// Close a session and seal its ledger.
@@ -114,6 +118,8 @@ fn main() -> ExitCode {
         Command::Fork(a) => cmd::session::fork(&a),
         Command::Diff(a) => cmd::session::diff(&a),
         Command::Apply(a) => cmd::session::apply(&a),
+        Command::Divergences(a) => cmd::verdict::list(&a),
+        Command::Triage(a) => cmd::verdict::triage(&a),
         Command::Stop(a) => cmd::session::stop(&a),
         Command::Close(a) => cmd::session::close(&a),
         Command::Hook(a) => cmd::hook::run(&a),

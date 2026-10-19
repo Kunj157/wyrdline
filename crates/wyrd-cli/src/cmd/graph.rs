@@ -28,7 +28,7 @@ pub struct ExplainArgs {
     json: bool,
 }
 
-fn load(session: &str) -> anyhow::Result<Vec<Event>> {
+pub(crate) fn load(session: &str) -> anyhow::Result<Vec<Event>> {
     let s = Session::open(&DataDir::from_env(), session)?;
     let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
     let mut all = Vec::new();

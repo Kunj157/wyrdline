@@ -243,6 +243,91 @@ fn scenario_basic_observe_records_every_call_and_message() {
     s.assert_secret_absent();
 }
 
+impl Scenario {
+    fn wyrd(&self, args: &[&str]) -> Output {
+        let out = Command::new(wyrd_bin())
+            .args(args)
+            .current_dir(&self.ws)
+            .env("WYRD_DATA_DIR", &self.data)
+            .output()
+            .unwrap();
+        eprintln!(
+            "wyrd {args:?} -> {:?}\n{}{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    }
+
+    fn sid(&self) -> String {
+        self.session_dir()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+#[test]
+fn scenario_basic_observe_records_divergences_and_triage() {
+    let s = Scenario::new();
+    let out = s.run("basic.wyrdscript.toml", &["--deny-tool", "WebFetch"], false);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("1 divergence(s)"));
+    // Without the sensor only intent-based rules can fire: the MCP tool's
+    // description changed mid-session (rug pull).
+    let raised: Vec<_> = s
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            EventBody::DivergenceRaised(d) => Some(d),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        raised
+            .iter()
+            .map(|d| d.rule_id.as_str())
+            .collect::<Vec<_>>(),
+        ["D009"]
+    );
+    let id = raised[0].divergence_id.clone();
+    let sid = s.sid();
+    let listed: serde_json::Value =
+        serde_json::from_slice(&s.wyrd(&["divergences", &sid, "--json"]).stdout).unwrap();
+    assert_eq!(listed[0]["divergence_id"], id.as_str());
+    assert_eq!(listed[0]["status"], "open");
+    assert_eq!(listed[0]["rule_name"], "tool-rug-pull");
+
+    let ack = s.wyrd(&[
+        "triage",
+        &sid,
+        &id,
+        "--false-positive",
+        "--note",
+        "test server",
+    ]);
+    assert_eq!(ack.status.code(), Some(0));
+    let listed: serde_json::Value =
+        serde_json::from_slice(&s.wyrd(&["divergences", &sid, "--json"]).stdout).unwrap();
+    assert_eq!(listed[0]["status"], "false_positive");
+    assert_eq!(listed[0]["note"], "test server");
+    assert_ne!(
+        s.wyrd(&["triage", &sid, "dv-000000000000", "--ack"])
+            .status
+            .code(),
+        Some(0)
+    );
+
+    // Sealed sessions are final: triage is refused with the conflict code.
+    s.close_and_verify();
+    assert_eq!(
+        s.wyrd(&["triage", &sid, &id, "--ack"]).status.code(),
+        Some(4)
+    );
+}
+
 #[cfg(feature = "privileged-tests")]
 #[test]
 fn privileged_scenario_basic_cell_checkpoints_every_finished_call() {
