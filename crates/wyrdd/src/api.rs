@@ -69,6 +69,50 @@ pub struct Checkpoints {
     pub checkpoints: Vec<CheckpointRecord>,
 }
 
+/// An uploaded policy component.
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct PolicyInfo {
+    pub id: String,
+    /// `b3:` + 16 hex digits of the component's BLAKE3 hash.
+    pub version: String,
+    #[ts(type = "number")]
+    pub bytes: u64,
+}
+
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct PolicyList {
+    pub policies: Vec<PolicyInfo>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct BacktestBody {
+    pub session_id: String,
+}
+
+/// One action the policy would have stopped.
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct BacktestFinding {
+    #[ts(type = "number")]
+    pub seq: u64,
+    /// `hook`, `gateway`, `kernel`, or `effect`.
+    pub stage: String,
+    /// `deny` or `ask`.
+    pub decision: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct BacktestReport {
+    pub policy_id: String,
+    pub policy_version: String,
+    pub session_id: String,
+    #[ts(type = "number")]
+    pub events: u64,
+    pub findings: Vec<BacktestFinding>,
+    pub notes: Vec<String>,
+}
+
 /// Questions a running session's policy is waiting on.
 #[derive(Debug, Serialize, JsonSchema, TS)]
 pub struct PendingAsks {

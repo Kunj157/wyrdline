@@ -128,6 +128,17 @@ export const features: Feature[] = [
       alt: "Studio: the Causal River with one Bash tool call selected and its six kernel effects highlighted, the inspector showing the call's payload",
     },
   },
+  {
+    id: "guard",
+    phase: "Phase 9",
+    title: "Guard: policies the kernel enforces",
+    body: "A policy is a sandboxed WebAssembly component. It decides every tool call before it runs (allow, deny, or ask you), and its rules are enforced in the kernel: Landlock keeps the agent out of your keys and outside the workspace, cgroup BPF refuses connections to hosts it did not allow, and a forbidden program, even renamed, stops the session. Replay any recorded session against a stricter policy to see what it would have stopped.",
+    points: [
+      "Prompt-injected curl to an unknown host: EPERM in the kernel, in the ledger",
+      "An escape suite of 13 attempts, every one refused",
+      "Allowed connects pay 0.3 µs at p99",
+    ],
+  },
 ];
 
 export interface Phase {
@@ -138,11 +149,6 @@ export interface Phase {
 
 /** Still to come; each moves into `features` as it ships. */
 export const roadmap: Phase[] = [
-  {
-    n: 9,
-    title: "Guard",
-    body: "Policies as WebAssembly components, enforced in the kernel with Landlock and cgroup BPF, and backtested against recorded sessions.",
-  },
   {
     n: 10,
     title: "Divergence",

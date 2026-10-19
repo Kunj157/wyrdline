@@ -99,6 +99,8 @@ pub struct Metrics {
     pub streams: AtomicU64,
     /// Ingest requests by kind (OTLP, hook) and outcome.
     pub ingest: [[AtomicU64; 2]; 2],
+    /// Policy backtests run.
+    pub backtests: AtomicU64,
 }
 
 /// Ingest kinds, indexes into [`Metrics::ingest`].
@@ -151,6 +153,10 @@ impl Metrics {
         self.ingest[kind][usize::from(!ok)].fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn backtest(&self) {
+        self.backtests.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Prometheus text exposition.
     pub fn render(&self, snap: &Snapshot) -> String {
         let mut out = String::new();
@@ -183,6 +189,17 @@ impl Metrics {
                 );
             }
         }
+        family(
+            &mut out,
+            "wyrdd_policy_backtests_total",
+            "counter",
+            "Policy backtests run.",
+        );
+        let _ = writeln!(
+            out,
+            "wyrdd_policy_backtests_total {}",
+            self.backtests.load(Ordering::Relaxed)
+        );
         family(
             &mut out,
             "wyrdd_sse_streams",

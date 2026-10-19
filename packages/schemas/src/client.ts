@@ -67,13 +67,16 @@ export function createClient(options: ClientOptions = {}) {
     path: string,
     body?: unknown,
     idempotencyKey?: string,
+    raw?: { body: BodyInit; type: string },
   ): Promise<T> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (options.token) headers.authorization = `Bearer ${options.token}`;
     if (body !== undefined) headers["content-type"] = "application/json";
+    if (raw) headers["content-type"] = raw.type;
     if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
+    if (raw) init.body = raw.body;
     const res = await doFetch(`${base}${path}`, init);
     const text = await res.text();
     const json: unknown = text ? JSON.parse(text) : null;
@@ -111,6 +114,16 @@ export function createClient(options: ClientOptions = {}) {
     stop: (sid: string, idempotencyKey?: string) =>
       request<api.Stopped>("POST", `${s(sid)}/stop`, {}, idempotencyKey),
     asks: (sid: string) => request<api.PendingAsks>("GET", `${s(sid)}/asks`),
+    policies: () => request<api.PolicyList>("GET", "/v1/policies"),
+    uploadPolicy: (name: string, wasm: Uint8Array<ArrayBuffer>) =>
+      request<api.PolicyInfo>("POST", `/v1/policies${query({ name })}`, undefined, undefined, {
+        body: wasm,
+        type: "application/wasm",
+      }),
+    backtest: (policyId: string, sessionId: string) =>
+      request<api.BacktestReport>("POST", `/v1/policies/${seg(policyId)}/backtest`, {
+        session_id: sessionId,
+      } satisfies api.BacktestBody),
     answerAsk: (sid: string, id: number, allow: boolean) =>
       request<api.Answered>("POST", `${s(sid)}/asks/${id}`, { allow } satisfies api.AnswerBody),
     rewind: (sid: string, target: string, body: api.RewindBody, idempotencyKey?: string) =>

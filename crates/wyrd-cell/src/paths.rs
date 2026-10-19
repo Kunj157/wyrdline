@@ -32,6 +32,11 @@ impl DataDir {
         self.root.join("sessions")
     }
 
+    /// Uploaded policy components (`<id>.wasm`).
+    pub fn policies(&self) -> PathBuf {
+        self.root.join("policies")
+    }
+
     pub fn cas(&self) -> PathBuf {
         self.root.join("cas")
     }

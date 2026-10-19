@@ -1,9 +1,11 @@
 import { useParams } from "@tanstack/react-router";
 import { Badge, Card, Kbd, Shimmer, Tabs } from "@wyrdline/ui";
 import { ShieldCheck, ShieldX, ZoomIn, ZoomOut } from "lucide-react";
+import type { BacktestReport } from "@wyrdline/schemas/generated-api";
 import { useMemo, useState } from "react";
 
 import { AskDialog } from "../components/AskDialog";
+import { BacktestPanel } from "../components/BacktestPanel";
 import { CheckpointPanel } from "../components/CheckpointPanel";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
@@ -44,7 +46,18 @@ export function SessionPage() {
   const [renderer, setRenderer] = useState<Renderer | null>(null);
   const [tab, setTab] = useState("events");
   const list = useMemo(() => events.data ?? [], [events.data]);
-  const layout = useMemo(() => layoutRiver(list, graph.data), [list, graph.data]);
+  const [backtest, setBacktest] = useState<BacktestReport | null>(null);
+  const layout = useMemo(() => {
+    const base = layoutRiver(list, graph.data);
+    if (!backtest) return base;
+    // Backtest overlay: what the chosen policy would have stopped is drawn
+    // as denied (the panel and the legend say which policy).
+    const marked = new Set(backtest.findings.map((f) => Number(f.seq)));
+    return {
+      ...base,
+      knots: base.knots.map((k) => (marked.has(k.seq) ? { ...k, meaning: "denied" as const } : k)),
+    };
+  }, [list, graph.data, backtest]);
   const drops = useMemo(() => list.reduce((n, e) => n + e.drops_since_last, 0), [list]);
   const selectedEvent = list.find((e) => e.seq === selected);
 
@@ -187,6 +200,17 @@ export function SessionPage() {
                 label: "Transcript",
                 panel: <Transcript events={list} onSelect={setSelected} />,
               },
+              ...(offlineSource() === null
+                ? [
+                    {
+                      id: "backtest",
+                      label: "Backtest",
+                      panel: (
+                        <BacktestPanel sid={sid} onReport={setBacktest} onSelect={setSelected} />
+                      ),
+                    },
+                  ]
+                : []),
             ]}
           />
         </Card>
