@@ -52,6 +52,9 @@ pub struct SessionRecord {
     /// Tools the static pre-execution policy denies (Phase 4; Wasm policies replace it).
     #[serde(default)]
     pub deny_tools: Vec<String>,
+    /// Wasm policy component (`wyrd run --policy`), reused on relaunch.
+    #[serde(default)]
+    pub policy: Option<PathBuf>,
 }
 
 fn generic_agent() -> String {

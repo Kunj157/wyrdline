@@ -56,6 +56,7 @@ export type { NetVerdict } from "./NetVerdict";
 export type { Op } from "./Op";
 export type { OtlpExportResponse } from "./OtlpExportResponse";
 export type { PartialSuccess } from "./PartialSuccess";
+export type { PendingAsk } from "./PendingAsk";
 export type { Problem } from "./Problem";
 export type { ProcExec } from "./ProcExec";
 export type { ProcExit } from "./ProcExit";

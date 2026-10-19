@@ -29,6 +29,8 @@ pub struct CreateOptions {
     pub name: Option<String>,
     pub agent_kind: String,
     pub deny_tools: Vec<String>,
+    /// Wasm policy component and its version (`b3:…`).
+    pub policy: Option<(PathBuf, String)>,
     pub kernel_release: String,
     pub capabilities: BTreeMap<String, bool>,
 }
@@ -191,6 +193,7 @@ impl Session {
             runs: 0,
             agent: opts.agent_kind.clone(),
             deny_tools: opts.deny_tools,
+            policy: opts.policy.as_ref().map(|(p, _)| p.clone()),
         };
         state::save(&dir, &rec)?;
         let mut ledger = Ledger::create(dir.ledger(), &id)?;
@@ -203,7 +206,7 @@ impl Session {
             mode,
             kernel_release: opts.kernel_release,
             capabilities: opts.capabilities,
-            policy_set_hash: None,
+            policy_set_hash: opts.policy.map(|(_, v)| v),
         }))])?;
         let cas = Cas::open(data.cas())?;
         Ok(Session {
