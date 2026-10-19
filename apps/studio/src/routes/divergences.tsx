@@ -24,11 +24,11 @@ function Group({ group, readOnly }: { group: RuleGroup<Entry>; readOnly: boolean
           sid={session.id}
           divergence={divergence}
           readOnly={readOnly}
-          context={
+          title={
             <Link
               to="/sessions/$sid"
               params={{ sid: session.id }}
-              className="text-xs font-medium text-accent hover:underline"
+              className="text-accent hover:underline"
             >
               {session.name ?? session.id.slice(0, 10)}
             </Link>

@@ -33,8 +33,8 @@ export interface DivergenceItemProps {
   divergence: api.DivergenceView;
   /** Select a cited event (the session view); without it evidence is plain text. */
   onSelect?: ((seq: number) => void) | undefined;
-  /** Where the divergence was raised (the inbox names the session). */
-  context?: ReactNode;
+  /** The heading; defaults to the rule (the inbox groups by rule and names the session). */
+  title?: ReactNode;
   readOnly: boolean;
 }
 
@@ -48,7 +48,7 @@ export function DivergenceItem({
   sid,
   divergence: d,
   onSelect,
-  context,
+  title,
   readOnly,
 }: DivergenceItemProps) {
   const id = useId();
@@ -78,13 +78,16 @@ export function DivergenceItem({
     >
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <h3 id={`${id}-title`} className="font-medium">
-          <span className="font-mono">{d.rule_id}</span> {d.rule_name}
+          {title ?? (
+            <>
+              <span className="font-mono">{d.rule_id}</span> {d.rule_name}
+            </>
+          )}
         </h3>
         <Badge meaning={statusMeaning[d.status]}>{statusLabel[d.status]}</Badge>
         <span className="text-xs text-text-secondary">
           {d.severity} · {Math.round(d.confidence_bp / 100)} % confidence
         </span>
-        {context}
       </header>
       <p className="break-words">{d.summary}</p>
       {d.claim && (
