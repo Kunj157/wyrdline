@@ -240,3 +240,88 @@ expect = "allow"
         assert!(wyrd_policy::conformance::parse(bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn backtest_finds_what_the_policy_would_stop_deterministically() {
+    use wyrd_schema::{
+        Event, EventBody, FilePath, IntentSource, NetConnect, NetVerdict, ProcExec, ToolCallStarted,
+    };
+    let ev = |seq: u64, body: EventBody| Event {
+        seq,
+        ts_mono_ns: seq * 1000,
+        ts_wall_ms: 0,
+        process: None,
+        drops_since_last: 0,
+        body,
+    };
+    let call = |tool: &str, source| {
+        EventBody::ToolCallStarted(ToolCallStarted {
+            call_id: format!("c-{tool}"),
+            source,
+            tool: tool.into(),
+            args: serde_json::json!({"command": "x"}),
+            turn: Some(1),
+        })
+    };
+    let connect = |addr: &str| {
+        EventBody::NetConnect(NetConnect {
+            family: 4,
+            addr: addr.into(),
+            port: 443,
+            dns_name: None,
+            verdict: NetVerdict::Allowed,
+        })
+    };
+    let events = vec![
+        ev(1, call("Read", IntentSource::Hook)),
+        ev(2, call("deny", IntentSource::Hook)),
+        ev(3, call("ask", IntentSource::Mcp)),
+        ev(4, connect("203.0.113.9")),
+        ev(5, connect("10.1.2.3")),
+        ev(
+            6,
+            EventBody::ProcExec(ProcExec {
+                filename: "/usr/bin/curl".into(),
+                argv: vec!["curl".into()],
+                cwd: None,
+                truncated: false,
+            }),
+        ),
+        ev(
+            7,
+            EventBody::FileReadSensitive(FilePath {
+                path: "/home/u/.ssh/id_ed25519".into(),
+                in_cell: false,
+                truncated: false,
+            }),
+        ),
+    ];
+    let p = hostile();
+    let ws = std::path::Path::new("/work/shop");
+    let home = Some(std::path::Path::new("/home/u"));
+    let r = wyrd_policy::backtest::backtest(&p, &events, ws, home);
+    let got: Vec<(u64, &str, &str)> = r
+        .findings
+        .iter()
+        .map(|f| (f.seq, f.stage.as_str(), f.decision.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (2, "hook", "deny"),
+            (3, "gateway", "ask"),
+            (4, "kernel", "deny"),
+            (5, "effect", "ask"),
+            (6, "kernel", "deny"),
+            (7, "kernel", "deny"),
+        ]
+    );
+    assert_eq!(r.events, 7);
+    assert_eq!(r.policy_id, "hostile");
+    assert!(r.findings[2].reason.contains("203.0.113.9"));
+    // Same policy, same events: the same report, from a fresh load too.
+    assert_eq!(
+        wyrd_policy::backtest::backtest(&hostile(), &events, ws, home),
+        r
+    );
+}

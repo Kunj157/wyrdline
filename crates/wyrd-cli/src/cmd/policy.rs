@@ -16,6 +16,19 @@ pub enum PolicyCmd {
     Build(BuildArgs),
     /// Run conformance cases against a policy component.
     Test(TestArgs),
+    /// Replay a recorded session against a policy: what would it stop?
+    Backtest(BacktestArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BacktestArgs {
+    /// Policy component (`.wasm`).
+    policy: PathBuf,
+    /// Session id (or unique prefix), or an events file
+    /// (`wyrd events <session> --json`).
+    session: String,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -39,6 +52,7 @@ pub fn run(c: &PolicyCmd) -> anyhow::Result<u8> {
     match c {
         PolicyCmd::Build(a) => build(a),
         PolicyCmd::Test(a) => test(a),
+        PolicyCmd::Backtest(a) => backtest(a),
     }
 }
 
@@ -129,6 +143,66 @@ fn test(a: &TestArgs) -> anyhow::Result<u8> {
     } else {
         exit::VERIFICATION_FAILED
     })
+}
+
+/// The events of a session, from its ledger or from an events file, and
+/// its workspace.
+pub fn recorded(session: &str) -> anyhow::Result<(Vec<wyrd_schema::Event>, PathBuf)> {
+    let path = Path::new(session);
+    let events: Vec<wyrd_schema::Event> = if path.is_file() {
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {session}"))?;
+        text.lines()
+            .filter(|l| !l.trim().is_empty())
+            .enumerate()
+            .map(|(i, l)| {
+                serde_json::from_str(l).with_context(|| format!("{session}: line {}", i + 1))
+            })
+            .collect::<anyhow::Result<_>>()?
+    } else {
+        let s = wyrd_cell::Session::open(&wyrd_cell::DataDir::from_env(), session)?;
+        let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
+        ledger.events_after(0, usize::MAX)?
+    };
+    let workspace = events
+        .iter()
+        .find_map(|e| match &e.body {
+            wyrd_schema::EventBody::SessionStarted(s) => Some(PathBuf::from(&s.workspace_root)),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("{session}: no session start event"))?;
+    Ok((events, workspace))
+}
+
+fn backtest(a: &BacktestArgs) -> anyhow::Result<u8> {
+    let policy = Policy::load_file(&a.policy)?;
+    let (events, workspace) = recorded(&a.session)?;
+    let home = wyrd_cell::launch::home_dir();
+    let report = wyrd_policy::backtest::backtest(&policy, &events, &workspace, home.as_deref());
+    let mut o = std::io::stdout().lock();
+    if a.json {
+        serde_json::to_writer_pretty(&mut o, &report)?;
+        writeln!(o)?;
+        return Ok(exit::OK);
+    }
+    writeln!(
+        o,
+        "{} {} over {} events: {} finding(s)",
+        report.policy_id,
+        report.policy_version,
+        report.events,
+        report.findings.len()
+    )?;
+    for f in &report.findings {
+        writeln!(
+            o,
+            "  seq {:<6} {:<7} {:<4} {}",
+            f.seq, f.stage, f.decision, f.reason
+        )?;
+    }
+    for n in &report.notes {
+        writeln!(o, "  note: {n}")?;
+    }
+    Ok(exit::OK)
 }
 
 #[cfg(test)]
