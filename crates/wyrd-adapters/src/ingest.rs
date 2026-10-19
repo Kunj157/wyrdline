@@ -2,7 +2,8 @@
 //! decisions. Pure apart from the [`Sink`], so it is tested without a
 //! socket, a ledger, or a Cell.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use wyrd_bundle::redact::{Level, redact_json, redact_str};
@@ -11,6 +12,7 @@ use wyrd_schema::{
     Role, ToolCallDenied, ToolCallFinished, ToolCallStarted,
 };
 
+use crate::asks::{Answer, Asks};
 use crate::mcp::{McpState, PINNING_POLICY};
 use crate::{Adapter, Direction, Request, Response};
 
@@ -75,6 +77,22 @@ impl StaticPolicy {
     }
 }
 
+/// A pre-execution policy (the Wasm policy of `wyrd run --policy`), kept
+/// behind a trait so this crate does not depend on the Wasm runtime.
+pub trait ToolPolicy: Send + Sync + std::fmt::Debug {
+    fn id(&self) -> &str;
+    fn version(&self) -> &str;
+    /// Decide on a tool call; `args` is already redacted. A failing policy
+    /// must return a deny.
+    fn on_tool_call(
+        &self,
+        tool: &str,
+        args: &Value,
+        adapter: &str,
+        prior_denials: u32,
+    ) -> (Decision, String);
+}
+
 /// Policy id recorded for decisions Wyrdline makes about its own input.
 pub const INGEST_POLICY: &str = "wyrdline.ingest";
 
@@ -84,6 +102,9 @@ pub struct Ingest<S> {
     sink: S,
     mode: CaptureMode,
     policy: StaticPolicy,
+    tool_policy: Option<Arc<dyn ToolPolicy>>,
+    asks: Option<Arc<Asks>>,
+    denials: AtomicU32,
     turn: Mutex<u32>,
     mcp: Mutex<McpState>,
 }
@@ -91,7 +112,7 @@ pub struct Ingest<S> {
 fn guard(
     stage: GuardStage,
     decision: Decision,
-    policy: &str,
+    (policy, version): (&str, &str),
     reason: String,
     call_id: Option<String>,
 ) -> EventBody {
@@ -99,7 +120,7 @@ fn guard(
         stage,
         decision,
         policy_id: policy.to_string(),
-        policy_version: StaticPolicy::VERSION.to_string(),
+        policy_version: version.to_string(),
         reason,
         call_id,
         subject_seq: None,
@@ -113,9 +134,98 @@ impl<S: Sink> Ingest<S> {
             sink,
             mode,
             policy,
+            tool_policy: None,
+            asks: None,
+            denials: AtomicU32::new(0),
             turn: Mutex::new(turn),
             mcp: Mutex::new(McpState::default()),
         }
+    }
+
+    /// Decide tool calls with `policy` after the static deny list.
+    #[must_use]
+    pub fn with_policy(mut self, policy: Arc<dyn ToolPolicy>) -> Self {
+        self.tool_policy = Some(policy);
+        self
+    }
+
+    /// Hold `ask` decisions for a human answer; without this, `ask` is
+    /// passed through to the agent.
+    #[must_use]
+    pub fn with_asks(mut self, asks: Arc<Asks>) -> Self {
+        self.asks = Some(asks);
+        self
+    }
+
+    pub fn asks(&self) -> Option<&Arc<Asks>> {
+        self.asks.as_ref()
+    }
+
+    /// Decide a tool call: the static deny list, then the policy, then a
+    /// human for `ask`. Events recorded so far (`bodies`) are appended
+    /// before waiting, so the pending call is visible while it waits.
+    /// Returns the final decision, its reason, and the deciding policy.
+    fn decide(
+        &self,
+        stage: GuardStage,
+        call_id: &str,
+        tool: &str,
+        args: &Value,
+        adapter: &str,
+        bodies: &mut Vec<EventBody>,
+    ) -> Result<(Decision, String, String), Response> {
+        let static_id = (StaticPolicy::ID, StaticPolicy::VERSION);
+        let (mut decision, mut reason) = self.policy.decide(tool);
+        let mut who = static_id;
+        let owned;
+        if decision == Decision::Allow
+            && let Some(p) = &self.tool_policy
+        {
+            let prior = self.denials.load(Ordering::Relaxed);
+            (decision, reason) = p.on_tool_call(tool, args, adapter, prior);
+            owned = (p.id().to_string(), p.version().to_string());
+            who = (owned.0.as_str(), owned.1.as_str());
+        }
+        bodies.push(guard(
+            stage,
+            decision,
+            who,
+            reason.clone(),
+            Some(call_id.into()),
+        ));
+        if decision == Decision::Ask
+            && let Some(asks) = &self.asks
+        {
+            self.append(std::mem::take(bodies))?;
+            let started = std::time::Instant::now();
+            let answer = asks.ask(call_id, tool, &args.to_string(), &reason, who.0);
+            let secs = started.elapsed().as_secs_f32();
+            (decision, reason) = match answer {
+                Answer::Allow { by } => (
+                    Decision::Allow,
+                    format!("allowed by the user ({by}, {secs:.1} s): {reason}"),
+                ),
+                Answer::Deny { by } => (
+                    Decision::Deny,
+                    format!("denied by the user ({by}, {secs:.1} s): {reason}"),
+                ),
+                Answer::TimedOut => (
+                    Decision::Deny,
+                    format!("no answer within {} s: {reason}", asks.timeout().as_secs()),
+                ),
+            };
+            bodies.push(guard(
+                stage,
+                decision,
+                who,
+                reason.clone(),
+                Some(call_id.into()),
+            ));
+        }
+        if decision == Decision::Deny {
+            self.denials.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok((decision, reason, who.0.to_string()))
     }
 
     pub fn sink(&self) -> &S {
@@ -125,6 +235,31 @@ impl<S: Sink> Ingest<S> {
     pub fn handle(&self, req: Request) -> Response {
         match req {
             Request::Ping => Response::Ok,
+            Request::Asks { token } => match &self.asks {
+                Some(a) if a.authorised(&token) => Response::Asks { asks: a.pending() },
+                _ => Response::Error {
+                    message: "not authorised".into(),
+                },
+            },
+            Request::Answer {
+                token,
+                id,
+                allow,
+                by,
+            } => match &self.asks {
+                Some(a) if a.authorised(&token) => {
+                    if a.answer(id, allow, &by) {
+                        Response::Ok
+                    } else {
+                        Response::Error {
+                            message: format!("no pending ask {id}"),
+                        }
+                    }
+                }
+                _ => Response::Error {
+                    message: "not authorised".into(),
+                },
+            },
             Request::Hook { adapter, payload } => match Adapter::from_name(&adapter) {
                 Some(a) => self.hook(a, &payload),
                 None => Response::Error {
@@ -186,25 +321,28 @@ impl<S: Sink> Ingest<S> {
         };
         self.sink.before_tool_call();
         let turn = self.turn();
-        let (decision, reason) = self.policy.decide(&tool);
         bodies.push(EventBody::ToolCallStarted(ToolCallStarted {
             call_id: call_id.clone(),
             source: IntentSource::Mcp,
-            tool,
-            args,
+            tool: tool.clone(),
+            args: args.clone(),
             turn: (turn > 0).then_some(turn),
         }));
-        bodies.push(guard(
+        let (decision, reason, policy_id) = match self.decide(
             GuardStage::Gateway,
-            decision,
-            StaticPolicy::ID,
-            reason.clone(),
-            Some(call_id.clone()),
-        ));
+            &call_id,
+            &tool,
+            &args,
+            "mcp",
+            &mut bodies,
+        ) {
+            Ok(d) => d,
+            Err(r) => return r,
+        };
         if decision == Decision::Deny {
             bodies.push(EventBody::ToolCallDenied(ToolCallDenied {
                 call_id,
-                policy_id: StaticPolicy::ID.into(),
+                policy_id,
                 reason: reason.clone(),
             }));
         }
@@ -237,7 +375,7 @@ impl<S: Sink> Ingest<S> {
         let event = guard(
             GuardStage::Hook,
             decision,
-            INGEST_POLICY,
+            (INGEST_POLICY, StaticPolicy::VERSION),
             reason.clone(),
             None,
         );
@@ -294,7 +432,7 @@ impl<S: Sink> Ingest<S> {
                 call_id,
                 tool,
                 args,
-            } => self.pre_tool(call_id, tool, &args),
+            } => self.pre_tool(adapter, call_id, &tool, &args),
             HookEvent::PostTool {
                 call_id,
                 status,
@@ -318,33 +456,35 @@ impl<S: Sink> Ingest<S> {
         }
     }
 
-    fn pre_tool(&self, call_id: String, tool: String, args: &Value) -> Response {
+    fn pre_tool(&self, adapter: Adapter, call_id: String, tool: &str, args: &Value) -> Response {
         self.sink.before_tool_call();
         let turn = *self
             .turn
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (decision, reason) = self.policy.decide(&tool);
-        let mut bodies = vec![
-            EventBody::ToolCallStarted(ToolCallStarted {
-                call_id: call_id.clone(),
-                source: IntentSource::Hook,
-                tool,
-                args: redact_json(args, INGEST_LEVEL),
-                turn: (turn > 0).then_some(turn),
-            }),
-            guard(
-                GuardStage::Hook,
-                decision,
-                StaticPolicy::ID,
-                reason.clone(),
-                Some(call_id.clone()),
-            ),
-        ];
+        let args = redact_json(args, INGEST_LEVEL);
+        let mut bodies = vec![EventBody::ToolCallStarted(ToolCallStarted {
+            call_id: call_id.clone(),
+            source: IntentSource::Hook,
+            tool: tool.to_string(),
+            args: args.clone(),
+            turn: (turn > 0).then_some(turn),
+        })];
+        let (decision, reason, policy_id) = match self.decide(
+            GuardStage::Hook,
+            &call_id,
+            tool,
+            &args,
+            adapter.name(),
+            &mut bodies,
+        ) {
+            Ok(d) => d,
+            Err(r) => return r,
+        };
         if decision == Decision::Deny {
             bodies.push(EventBody::ToolCallDenied(ToolCallDenied {
                 call_id,
-                policy_id: StaticPolicy::ID.into(),
+                policy_id,
                 reason: reason.clone(),
             }));
         }

@@ -16,4 +16,8 @@ agent: string,
 /**
  * Tools the static pre-execution policy denies (Phase 4; Wasm policies replace it).
  */
-deny_tools: Array<string>, };
+deny_tools: Array<string>, 
+/**
+ * Wasm policy component (`wyrd run --policy`), reused on relaunch.
+ */
+policy: string | null, };

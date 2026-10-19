@@ -1821,6 +1821,26 @@
               "message"
             ],
             "type": "object"
+          },
+          {
+            "description": "Pending asks, oldest first.",
+            "properties": {
+              "asks": {
+                "items": {
+                  "$ref": "#/components/schemas/PendingAsk"
+                },
+                "type": "array"
+              },
+              "type": {
+                "const": "asks",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "asks"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -2049,6 +2069,50 @@
         "type": "object"
       },
       "PartialSuccess": {
+        "type": "object"
+      },
+      "PendingAsk": {
+        "description": "One question waiting for a human.",
+        "properties": {
+          "args": {
+            "description": "Redacted tool input as JSON.",
+            "type": "string"
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "expires_in_ms": {
+            "description": "Milliseconds until the call is denied for lack of an answer.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "policy_id": {
+            "description": "Policy that asked.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the policy asks.",
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "call_id",
+          "tool",
+          "args",
+          "reason",
+          "policy_id",
+          "expires_in_ms"
+        ],
         "type": "object"
       },
       "Problem": {
@@ -2471,6 +2535,14 @@
               "null"
             ]
           },
+          "policy": {
+            "default": null,
+            "description": "Wasm policy component (`wyrd run --policy`), reused on relaunch.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "runs": {
             "format": "uint32",
             "minimum": 0,
@@ -2502,6 +2574,7 @@
           "runs",
           "agent",
           "deny_tools",
+          "policy",
           "head_seq",
           "head_hash",
           "sealed"
@@ -2590,6 +2663,14 @@
               "null"
             ]
           },
+          "policy": {
+            "default": null,
+            "description": "Wasm policy component (`wyrd run --policy`), reused on relaunch.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "runs": {
             "format": "uint32",
             "minimum": 0,
@@ -2617,7 +2698,8 @@
           "pid",
           "runs",
           "agent",
-          "deny_tools"
+          "deny_tools",
+          "policy"
         ],
         "type": "object"
       },

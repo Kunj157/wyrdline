@@ -33,6 +33,18 @@ pub enum Request {
         request: serde_json::Value,
     },
     Ping,
+    /// Pending asks (`wyrd ask`, the daemon for Studio); needs the
+    /// session's control token.
+    Asks {
+        token: String,
+    },
+    /// Allow or deny a pending ask; `by` names the answering surface.
+    Answer {
+        token: String,
+        id: u64,
+        allow: bool,
+        by: String,
+    },
 }
 
 /// Which way an MCP message travelled through the gateway.
@@ -58,6 +70,10 @@ pub enum Response {
     Ok,
     Error {
         message: String,
+    },
+    /// Pending asks, oldest first.
+    Asks {
+        asks: Vec<crate::asks::PendingAsk>,
     },
 }
 

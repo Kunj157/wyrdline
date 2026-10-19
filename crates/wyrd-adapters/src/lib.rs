@@ -7,6 +7,7 @@
 //! everything it receives is untrusted: kernel effects (Phase 5) are the
 //! ground truth intent is checked against.
 
+pub mod asks;
 pub mod claude_code;
 pub mod daemon;
 pub mod gemini_cli;
@@ -16,7 +17,7 @@ pub mod mcp;
 pub mod protocol;
 pub mod server;
 
-pub use ingest::{HookEvent, Ingest, Sink, StaticPolicy};
+pub use ingest::{HookEvent, Ingest, Sink, StaticPolicy, ToolPolicy};
 pub use protocol::{Direction, Request, Response};
 
 /// Environment variable carrying the intent socket path into the Cell.

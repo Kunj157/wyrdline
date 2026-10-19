@@ -16,8 +16,9 @@ use crate::protocol::call;
 use crate::{Adapter, Request, Response, claude_code};
 
 /// How long the hook waits for the intent socket (it may be taking a
-/// checkpoint of the previous call first).
-pub const TIMEOUT: Duration = Duration::from_secs(20);
+/// checkpoint of the previous call first, or waiting for a human to answer
+/// an ask, which times out sooner: `asks::DEFAULT_TIMEOUT`).
+pub const TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Most of a malformed payload kept for the record.
 const MALFORMED_KEEP: usize = 4096;
@@ -110,6 +111,7 @@ pub fn run(adapter: Adapter, input: &str, socket: Option<&Path>, mode: CaptureMo
             warning: None,
         },
         Ok(Response::Error { message }) => fail(format!("wyrdline rejected the hook: {message}")),
+        Ok(Response::Asks { .. }) => fail("wyrdline sent an unexpected answer".into()),
         Err(e) => fail(format!("wyrdline unavailable: {e}")),
     }
 }

@@ -29,6 +29,13 @@ pub struct RunArgs {
     /// Deny a tool before it runs (exact name, or a prefix ending in `*`).
     #[arg(long = "deny-tool", value_name = "TOOL")]
     deny_tools: Vec<String>,
+    /// Wasm policy component deciding tool calls (`policies/default.wasm`).
+    #[arg(long, value_name = "FILE")]
+    policy: Option<PathBuf>,
+    /// Seconds a tool call waits for an answer when the policy asks
+    /// (`wyrd ask`, Studio) before it is denied.
+    #[arg(long, value_name = "SECS", default_value_t = 30)]
+    ask_timeout: u64,
     /// Agent command, after `--`.
     #[arg(last = true, required = true)]
     command: Vec<String>,
@@ -136,9 +143,32 @@ fn read_userns_reason() -> String {
     }
 }
 
-fn run_session(s: &mut Session) -> anyhow::Result<u8> {
+fn load_policy(path: &Path) -> anyhow::Result<std::sync::Arc<wyrd_policy::Policy>> {
+    let p = wyrd_policy::Policy::load_file(path)
+        .with_context(|| format!("loading the policy {}", path.display()))?;
+    Ok(std::sync::Arc::new(p))
+}
+
+fn run_session(
+    s: &mut Session,
+    policy: Option<std::sync::Arc<wyrd_policy::Policy>>,
+    ask_timeout: Option<std::time::Duration>,
+) -> anyhow::Result<u8> {
     let helper = helper()?;
-    let capture = intent::start(&data(), s, &helper)?;
+    let policy = match (policy, &s.record().policy) {
+        (Some(p), _) => Some(p),
+        (None, Some(path)) => Some(load_policy(path)?),
+        (None, None) => None,
+    };
+    let capture = intent::start(
+        &data(),
+        s,
+        &helper,
+        intent::GuardOptions {
+            policy,
+            ask_timeout,
+        },
+    )?;
     let checkpoints = capture.checkpoints.clone();
     let data_dir = data();
     let ledger = s.dir().ledger();
@@ -191,6 +221,15 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
             uid: rustix::process::getuid().as_raw(),
         },
     ));
+    let policy_path = a
+        .policy
+        .as_ref()
+        .map(|p| {
+            p.canonicalize()
+                .with_context(|| format!("policy {}", p.display()))
+        })
+        .transpose()?;
+    let loaded = policy_path.as_deref().map(load_policy).transpose()?;
     let mut s = Session::create(
         &data(),
         CreateOptions {
@@ -203,12 +242,20 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
                 .clone()
                 .unwrap_or_else(|| intent::detect_agent(&a.command)),
             deny_tools: a.deny_tools.clone(),
+            policy: policy_path.zip(loaded.as_ref().map(|l| l.version.clone())),
             kernel_release: doctor.kernel_release.clone(),
             capabilities: doctor.capabilities(),
         },
     )?;
     writeln!(out(), "wyrd: session {} started", s.record().id)?;
-    run_session(&mut s)
+    if let Some(p) = &loaded {
+        writeln!(out(), "wyrd: policy {} {}", p.id, p.version)?;
+    }
+    run_session(
+        &mut s,
+        loaded,
+        Some(std::time::Duration::from_secs(a.ask_timeout)),
+    )
 }
 
 pub fn list(a: &ListArgs) -> anyhow::Result<u8> {
@@ -299,7 +346,7 @@ fn rewind_or_fork(
         b.forked_from.as_deref().unwrap_or("-")
     )?;
     if relaunch {
-        run_session(&mut s)
+        run_session(&mut s, None, None)
     } else {
         Ok(exit::OK)
     }
