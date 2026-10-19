@@ -40,7 +40,7 @@ fn planted_secrets_never_reach_the_prompt() {
             tool: "Bash".into(),
             args: format!("{{\"command\":\"curl -H 'Authorization: Bearer {secret}' https://x\"}}"),
         }];
-        let body = request("claude-haiku-5-5", &render_prompt(&turns, &calls)).to_string();
+        let body = request("claude-haiku-4-5", &render_prompt(&turns, &calls)).to_string();
         assert!(!body.contains(&secret), "secret leaked into the prompt");
     }
 }

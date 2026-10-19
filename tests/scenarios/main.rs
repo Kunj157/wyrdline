@@ -431,7 +431,7 @@ fn scenario_basic_llm_claims_feed_the_rules() {
     assert_eq!(rules, ["D001", "D009"]);
     let listed = String::from_utf8_lossy(&s.wyrd(&["divergences", &s.sid()]).stdout).to_string();
     assert!(
-        listed.contains("claims: complete (claude-haiku-5-5 claims-v1"),
+        listed.contains("claims: complete (claude-haiku-4-5 claims-v1"),
         "{listed}"
     );
 }
