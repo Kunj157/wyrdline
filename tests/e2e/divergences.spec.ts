@@ -32,7 +32,10 @@ test("evidence selects the cited event, and divergences are knots on the river",
   const item = page.getByRole("article", { name: /D002 out-of-scope-write/ });
   await expect(item).toContainText("wrote /home/user/.bashrc outside the workspace");
   await item.getByRole("button", { name: /^Select event #/ }).click();
-  await expect(page.getByRole("region", { name: "Inspector" })).toContainText("/home/user/.bashrc");
+  const inspector = page.getByRole("region", { name: "Inspector" });
+  await expect(inspector).toContainText("/home/user/.bashrc");
+  await inspector.getByRole("tab", { name: "Divergences (1)" }).click();
+  await expect(inspector).toContainText("out-of-scope-write");
   await page.getByRole("tab", { name: "Events" }).click();
   await expect(page.getByRole("row", { selected: true })).toContainText("/home/user/.bashrc");
   // The SVG river exposes each knot's meaning; both divergences' evidence is marked.
