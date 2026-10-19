@@ -3155,6 +3155,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "toml",
+ "wyrd-correlator",
  "wyrd-schema",
 ]
 
