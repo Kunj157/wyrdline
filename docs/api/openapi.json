@@ -2097,6 +2097,21 @@
               "asks"
             ],
             "type": "object"
+          },
+          {
+            "description": "The answer to a [`Request::Session`] query.",
+            "properties": {
+              "result": true,
+              "type": {
+                "const": "view",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "result"
+            ],
+            "type": "object"
           }
         ]
       },
