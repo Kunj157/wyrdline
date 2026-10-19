@@ -30,7 +30,8 @@ use serde::Deserialize;
 use wyrd_schema::{
     CallStatus, CaptureMode, Decision, Event, EventBody, FileOpenWrite, FilePath, FileRename,
     FileUnlink, GuardDecision, GuardStage, IntentSource, Message, NetConnect, NetVerdict, ProcExec,
-    ProcExit, ProcFork, ProcessRef, Role, SessionStarted, ToolCallFinished, ToolCallStarted,
+    ProcExit, ProcFork, ProcessRef, Role, SessionStarted, ToolCallDenied, ToolCallFinished,
+    ToolCallStarted,
 };
 
 use crate::FileChange;
@@ -134,7 +135,8 @@ pub struct Step {
     pub exit: i32,
     /// Exit code the hook reports (defaults to `exit`).
     pub reported_exit: Option<i32>,
-    /// Status the hook reports (`ok` unless the command failed).
+    /// Status the hook reports (`ok` unless the command failed); `denied`:
+    /// the call was refused and never ran.
     pub reported_status: Option<String>,
     #[serde(default)]
     pub children: Vec<Child>,
@@ -505,6 +507,17 @@ impl Builder {
             self.message(Role::User, t);
         } else if let Some(cmd) = &s.bash {
             let id = self.call("Bash", serde_json::json!({ "command": cmd }));
+            if s.reported_status.as_deref() == Some("denied") {
+                self.push(
+                    None,
+                    EventBody::ToolCallDenied(ToolCallDenied {
+                        call_id: id,
+                        policy_id: "case".into(),
+                        reason: "denied by the case".into(),
+                    }),
+                );
+                return;
+            }
             let sh = self.spawn(
                 Some(agent),
                 "/usr/bin/bash",
