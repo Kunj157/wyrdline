@@ -37,6 +37,12 @@ impl From<CellError> for Problem {
                 "The real workspace changed since the session started",
             )
             .detail(paths.join(", ")),
+            CellError::Busy(why) => Problem::new(
+                StatusCode::CONFLICT,
+                "busy",
+                "Not possible in the session's state",
+            )
+            .detail(why),
             other => Problem::internal(other.to_string()),
         }
     }

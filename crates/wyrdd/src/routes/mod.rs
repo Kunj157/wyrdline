@@ -2,6 +2,7 @@
 
 mod actions;
 mod asks;
+mod divergences;
 mod ingest;
 mod policies;
 mod sessions;
@@ -15,7 +16,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::{Request, State};
 use axum::http::Method;
 use axum::response::{IntoResponse as _, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use tower::ServiceExt as _;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -52,6 +53,11 @@ pub fn api() -> Router<Arc<AppState>> {
                 .layer(DefaultBodyLimit::max(wyrd_policy::MAX_COMPONENT_BYTES)),
         )
         .route("/v1/policies/{pid}/backtest", post(policies::backtest))
+        .route("/v1/sessions/{sid}/divergences", get(divergences::list))
+        .route(
+            "/v1/sessions/{sid}/divergences/{did}",
+            patch(divergences::triage),
+        )
         .route("/v1/sessions/{sid}/asks", get(asks::list))
         .route("/v1/sessions/{sid}/asks/{id}", post(asks::answer))
         .route(

@@ -31,6 +31,7 @@ wyrd-adapters = { path = "../wyrd-adapters" }
 wyrd-policy = { path = "../wyrd-policy" }
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-correlator = { path = "../wyrd-correlator" }
+wyrd-divergence = { path = "../wyrd-divergence" }
 wyrd-doctor = { path = "../wyrd-doctor" }
 wyrd-ledger = { path = "../wyrd-ledger" }
 wyrd-schema = { path = "../wyrd-schema" }
