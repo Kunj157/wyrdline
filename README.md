@@ -80,6 +80,8 @@ wyrd ask <session>                                   # answer what the policy as
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
+wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
+wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
 ```
 
 Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).
