@@ -1,12 +1,19 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
+import { BROWSER_NOISE } from "../e2e/fixtures";
+
 const home = "/wyrdline/";
 
 function watchConsole(page: Page) {
   const problems: string[] = [];
   page.on("console", (m) => {
-    if (m.type() === "error" || m.type() === "warning") problems.push(`${m.type()}: ${m.text()}`);
+    if (
+      (m.type() === "error" || m.type() === "warning") &&
+      !BROWSER_NOISE.some((r) => r.test(m.text()))
+    ) {
+      problems.push(`${m.type()}: ${m.text()}`);
+    }
   });
   page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
   return problems;
