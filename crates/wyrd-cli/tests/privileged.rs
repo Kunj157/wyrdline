@@ -380,7 +380,7 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
     use wyrd_schema::EventBody as B;
     let e = env();
     let d = sensord(&e);
-    let agent = script(&e, "slow.sh", "echo 1 > a.txt; sleep 1.5; echo 2 > b.txt");
+    let agent = script(&e, "slow.sh", "echo 1 > a.txt; sleep 3; echo 2 > b.txt");
     let mut child = Command::new(env!("CARGO_BIN_EXE_wyrd"))
         .args(["run", "--", &agent])
         .current_dir(&e.ws)
@@ -389,7 +389,16 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
         .env("WYRD_SENSORD_SOCKET", &d.socket)
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    // Stop the sensor only once the first write is in the ledger: a fixed
+    // sleep raced Cell start-up on a loaded machine.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !first_write_recorded(&e) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "first write never recorded"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     drop(d); // daemon exits
     assert_eq!(child.wait().unwrap().code(), Some(0));
     let events = ledger_events(&e, &only_session(&e));
@@ -401,6 +410,20 @@ fn privileged_sensor_loss_mid_run_is_recorded() {
         events.iter().any(|b| matches!(b, B::SensorLost(_))),
         "{events:#?}"
     );
+}
+
+fn first_write_recorded(e: &Env) -> bool {
+    let Ok(sessions) = std::fs::read_dir(e.data.join("sessions")) else {
+        return false;
+    };
+    sessions.flatten().any(|s| {
+        wyrd_ledger::Ledger::open_read_only(s.path().join("ledger.wyrdledger"))
+            .and_then(|l| l.events_after(0, usize::MAX))
+            .is_ok_and(|evs| {
+                evs.iter()
+                    .any(|ev| matches!(ev.body, wyrd_schema::EventBody::FileOpenWrite(_)))
+            })
+    })
 }
 
 #[test]
