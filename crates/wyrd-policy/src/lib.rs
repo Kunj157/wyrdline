@@ -188,6 +188,11 @@ fn err_text(e: &wasmtime::Error) -> String {
     e.to_string().lines().next().unwrap_or_default().to_string()
 }
 
+/// A component's version: `b3:` + the first 16 hex digits of its BLAKE3 hash.
+pub fn version_of(bytes: &[u8]) -> String {
+    format!("b3:{}", &hex::encode(blake3::hash(bytes).as_bytes())[..16])
+}
+
 type Raw<T> = (Result<T, String>, u64, Vec<String>);
 
 impl Policy {
@@ -224,12 +229,11 @@ impl Policy {
             .instantiate_pre(&component)
             .and_then(bindings::PolicyPre::new)
             .map_err(invalid)?;
-        let hash = blake3::hash(bytes);
         Ok(Policy {
             engine,
             pre,
             id: id.to_string(),
-            version: format!("b3:{}", &hex::encode(hash.as_bytes())[..16]),
+            version: version_of(bytes),
         })
     }
 
