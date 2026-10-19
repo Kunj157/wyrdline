@@ -11,14 +11,21 @@ publish.workspace = true
 
 [dependencies]
 blake3.workspace = true
+ciborium.workspace = true
+ed25519-dalek.workspace = true
 hex.workspace = true
 regex.workspace = true
 ruzstd.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+wyrd-divergence = { path = "../wyrd-divergence" }
+wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
 proptest.workspace = true
 tar.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

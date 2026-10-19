@@ -3089,12 +3089,19 @@ name = "wyrd-bundle"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "ciborium",
+ "ed25519-dalek",
  "hex",
  "proptest",
  "regex",
  "ruzstd",
+ "serde",
  "serde_json",
  "tar",
+ "tempfile",
+ "thiserror",
+ "wyrd-divergence",
+ "wyrd-schema",
 ]
 
 [[package]]
