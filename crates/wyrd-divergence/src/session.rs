@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use wyrd_correlator::{Attribution, Graph};
-use wyrd_schema::{Event, EventBody, NetVerdict, Role};
+use wyrd_schema::{CallStatus, Event, EventBody, NetVerdict, Role};
 
 /// A file-changing effect.
 #[derive(Debug, Clone)]
@@ -231,6 +231,8 @@ fn tool_runs(events: &[Event], graph: &Graph) -> Vec<Run> {
     graph
         .calls
         .iter()
+        // A denied or unfinished call never ran (as far as anyone reported).
+        .filter(|c| matches!(c.status, Some(CallStatus::Ok | CallStatus::Error)))
         .filter_map(|c| {
             let cmd = c.command.clone()?;
             let ts = events

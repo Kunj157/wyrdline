@@ -14,6 +14,7 @@ pub mod config;
 pub mod glob;
 mod rules;
 mod session;
+pub mod view;
 
 use std::collections::BTreeMap;
 

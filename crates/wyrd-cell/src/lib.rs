@@ -48,6 +48,9 @@ pub enum CellError {
     NoNamespace(String),
     #[error("apply refused; the real workspace changed since the session started: {0:?}")]
     Conflicts(Vec<String>),
+    /// The session's state does not allow the operation right now.
+    #[error("{0}")]
+    Busy(String),
 }
 
 pub type Result<T> = std::result::Result<T, CellError>;

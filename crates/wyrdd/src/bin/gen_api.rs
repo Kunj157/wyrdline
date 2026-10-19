@@ -28,6 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_out_dir(&ts_dir)
         .with_large_int("number");
     api::Health::export_all(&cfg)?;
+    api::DivergenceList::export_all(&cfg)?;
+    api::TriageBody::export_all(&cfg)?;
     api::Ready::export_all(&cfg)?;
     api::SessionList::export_all(&cfg)?;
     api::SessionDetail::export_all(&cfg)?;
