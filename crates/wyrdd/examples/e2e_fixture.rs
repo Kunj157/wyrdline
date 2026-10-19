@@ -1,11 +1,15 @@
 //! Builds a data directory for the Studio end-to-end tests, without
 //! privileges: a Cell session whose upper layer is written directly (as
 //! overlayfs would leave it), four checkpoints, and a synthetic agent run
-//! in the ledger (tool calls, kernel effects, a denied connect, and a
-//! write outside the Cell).
+//! in the ledger (tool calls, kernel effects, a denied connect, a write
+//! outside the Cell, and the claim and divergences recorded after it).
 //!
 //! It also creates a second session left in the `recording` state for the
-//! live-mode spec, which adds events to it while the page is open.
+//! live-mode spec, which adds events to it while the page is open. That
+//! session also carries a divergence, and its record points at the
+//! fixture's own cgroup, which stays populated while the e2e run lives, so
+//! the daemon sees the session as running and refuses to triage it. Nothing
+//! in the suite stops or rewinds it.
 //!
 //! Usage: `e2e_fixture <data-dir> <workspace-dir>` prints both session ids
 //! (one per line); `e2e_fixture append <data-dir> <session> <text>` appends
@@ -18,8 +22,9 @@ use std::path::PathBuf;
 use wyrd_cell::session::CreateOptions;
 use wyrd_cell::{DataDir, Session};
 use wyrd_schema::{
-    CallStatus, Event, EventBody, FilePath, FileWrite, IntentSource, Message, NetConnect,
-    NetVerdict, ProcessRef, Role, ToolCallFinished, ToolCallStarted,
+    CallStatus, ClaimExtracted, ClaimType, DivergenceRaised, Event, EventBody, Extractor, FilePath,
+    FileWrite, IntentSource, Message, NetConnect, NetVerdict, ProcessRef, Role, Severity,
+    ToolCallFinished, ToolCallStarted,
 };
 
 fn append(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -152,10 +157,76 @@ fn live_session(
             capabilities: BTreeMap::new(),
         },
     )?;
+    let mut ledger = wyrd_ledger::Ledger::open(s.dir().ledger())?;
+    ledger.append(vec![Event {
+        seq: 0,
+        ts_mono_ns: 2_000_000_000,
+        ts_wall_ms: 1_760_000_000_500,
+        process: None,
+        drops_since_last: 0,
+        body: EventBody::DivergenceRaised(DivergenceRaised {
+            divergence_id: "dv-e2e00000live".into(),
+            rule_id: "D002".into(),
+            severity: Severity::Medium,
+            claim_id: None,
+            evidence_seqs: vec![1],
+            confidence_bp: 7000,
+            summary: "wrote /etc/hosts outside the task's scope".into(),
+        }),
+    }])?;
     let mut rec = wyrd_cell::state::load(s.dir())?;
     rec.status = wyrd_schema::SessionState::Recording;
+    rec.cgroup = Some(
+        wyrd_cell::cgroup::Cgroup::of_pid(std::process::id())?
+            .path()
+            .to_path_buf(),
+    );
     wyrd_cell::state::save(s.dir(), &rec)?;
     Ok(rec.id)
+}
+
+/// What `wyrd run` records after the run: the agent's "All tests pass."
+/// claim (seq `said`) without a test run, and the write outside the Cell
+/// (seq `write`).
+fn verdicts(write: u64, said: u64) -> Vec<Event> {
+    [
+        EventBody::ClaimExtracted(ClaimExtracted {
+            claim_id: "cl-e2e000000001".into(),
+            turn: 1,
+            claim_type: ClaimType::TestsPass,
+            subject: "tests".into(),
+            quote: "All tests pass.".into(),
+            extractor: Extractor::Rule,
+        }),
+        EventBody::DivergenceRaised(DivergenceRaised {
+            divergence_id: "dv-e2e000000001".into(),
+            rule_id: "D001".into(),
+            severity: Severity::High,
+            claim_id: Some("cl-e2e000000001".into()),
+            evidence_seqs: vec![said],
+            confidence_bp: 9000,
+            summary: "claimed the tests pass, but no test run exited 0".into(),
+        }),
+        EventBody::DivergenceRaised(DivergenceRaised {
+            divergence_id: "dv-e2e000000002".into(),
+            rule_id: "D002".into(),
+            severity: Severity::Critical,
+            claim_id: None,
+            evidence_seqs: vec![write],
+            confidence_bp: 9500,
+            summary: "wrote /home/user/.bashrc outside the workspace".into(),
+        }),
+    ]
+    .into_iter()
+    .map(|body| Event {
+        seq: 0,
+        ts_mono_ns: 9_500_000_000,
+        ts_wall_ms: 1_760_000_000_500,
+        process: None,
+        drops_since_last: 0,
+        body,
+    })
+    .collect()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -257,7 +328,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })),
     ]);
     let mut ledger = wyrd_ledger::Ledger::open(s.dir().ledger())?;
-    ledger.append(events)?;
+    // The last six events: user message, call, connect, write, call end,
+    // assistant message.
+    let last = ledger.append(events)?;
+    ledger.append(verdicts(last - 2, last))?;
     // The test harness reads the session ids from stdout.
     writeln!(std::io::stdout(), "{}\n{live}", s.record().id)?;
     Ok(())

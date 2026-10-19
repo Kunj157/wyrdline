@@ -154,4 +154,14 @@ suite("model", () => {
     const xs = r.knots.map((k) => k.x);
     expect([...xs].sort((a, b) => a - b)).toEqual(xs);
   });
+
+  it("draws divergence evidence as divergence knots, even off the usual lanes", () => {
+    const r = layoutRiver(events, undefined, new Set([4, 8]));
+    const bySeq = new Map(r.knots.map((k) => [k.seq, k]));
+    expect(bySeq.get(4)).toMatchObject({ lane: "effect", meaning: "divergence" });
+    // The assistant's claim is not a tool call, but it is the evidence.
+    expect(bySeq.get(8)).toMatchObject({ lane: "intent", meaning: "divergence" });
+    expect(bySeq.get(5)?.meaning).toBe("denied");
+    expect(bySeq.has(1)).toBe(false);
+  });
 });
