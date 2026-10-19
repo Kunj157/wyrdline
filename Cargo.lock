@@ -3258,6 +3258,7 @@ dependencies = [
 name = "wyrd-schema"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "ciborium",
  "proptest",
  "schemars",
