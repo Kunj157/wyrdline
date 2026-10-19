@@ -57,6 +57,12 @@ export function describe(e: Event): string {
       return `${b.payload.decision}: ${b.payload.reason}`;
     case "meta.session.state_changed":
       return `${b.payload.from} → ${b.payload.to}`;
+    case "meta.rewind.requested":
+      return `agent asks to rewind to ${b.payload.checkpoint_id}`;
+    case "meta.rewind.confirmed":
+      return `rewind to ${b.payload.checkpoint_id} confirmed (${b.payload.by})`;
+    case "meta.rewind.rejected":
+      return `rewind request ${b.payload.request_seq} rejected (${b.payload.by})`;
     default:
       return b.kind;
   }

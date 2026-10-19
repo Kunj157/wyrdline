@@ -78,6 +78,22 @@ suite("model", () => {
     expect(describe(at(1))).toBe("Bash pnpm test");
     expect(describe(at(4))).toBe("connect evil.example:443 (denied)");
     expect(describe(at(5))).toBe("checkpoint c1 (1 file)");
+    expect(
+      describe(
+        ev({
+          kind: "meta.rewind.requested",
+          payload: { checkpoint_id: "c1", reason: "broke it", source: "mcp" },
+        }),
+      ),
+    ).toBe("agent asks to rewind to c1");
+    expect(
+      describe(
+        ev({
+          kind: "meta.rewind.rejected",
+          payload: { request_seq: 9, by: "studio", note: null },
+        }),
+      ),
+    ).toBe("rewind request 9 rejected (studio)");
   });
 
   it("flags what a rewind cannot undo", () => {
