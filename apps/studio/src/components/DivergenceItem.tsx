@@ -19,10 +19,14 @@ const statusLabel: Record<Status, string> = {
 };
 
 /** The triage buttons for each status, in order. */
-const actions: { status: Status; label: string }[] = [
-  { status: "acknowledged", label: "Acknowledge" },
-  { status: "false_positive", label: "False positive" },
-  { status: "open", label: "Reopen" },
+const actions: { status: Status; label: string; legend: (rule: string) => string }[] = [
+  { status: "acknowledged", label: "Acknowledge", legend: (r) => `Acknowledge ${r}` },
+  {
+    status: "false_positive",
+    label: "False positive",
+    legend: (r) => `Mark ${r} a false positive`,
+  },
+  { status: "open", label: "Reopen", legend: (r) => `Reopen ${r}` },
 ];
 
 /** Longest note the daemon accepts. */
@@ -135,8 +139,13 @@ export function DivergenceItem({
       )}
       {!readOnly && target !== null && (
         <form onSubmit={submit} className="flex flex-col gap-2">
-          <div className="flex flex-col gap-1">
-            <label htmlFor={`${id}-note`}>Note</label>
+          <fieldset className="flex flex-col gap-1">
+            <legend className="mb-1 font-medium">
+              {actions.find((a) => a.status === target)?.legend(d.rule_id)}
+            </legend>
+            <label htmlFor={`${id}-note`} className="text-text-secondary">
+              Note
+            </label>
             <textarea
               id={`${id}-note`}
               value={note}
@@ -149,7 +158,7 @@ export function DivergenceItem({
             <span id={`${id}-hint`} className="text-xs text-text-muted">
               Optional. Stored in the ledger, so keep secrets out.
             </span>
-          </div>
+          </fieldset>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" variant="primary" size="sm" disabled={triage.isPending}>
               Save
@@ -163,7 +172,6 @@ export function DivergenceItem({
             >
               Cancel
             </Button>
-            <span className="text-xs text-text-muted">as {statusLabel[target]}</span>
           </div>
         </form>
       )}
