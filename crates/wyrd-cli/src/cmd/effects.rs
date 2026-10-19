@@ -13,6 +13,58 @@ use wyrd_ledger::Ledger;
 use wyrd_schema::{Event, EventBody, SensorLost, SensorResumed};
 use wyrd_sensor::{SensorClient, ServerMsg};
 
+/// The policy's egress rules for the kernel: fixed prefixes, host names
+/// resolved now and every [`REFRESH`], and ports.
+#[derive(Debug, Clone, Default)]
+pub struct EgressPlan {
+    pub cidrs: Vec<String>,
+    pub hosts: Vec<String>,
+    pub ports: Vec<u16>,
+    /// Whether destinations are restricted at all (else ports only).
+    pub restrict_hosts: bool,
+    pub policy_id: String,
+    pub policy_version: String,
+}
+
+/// How often allowed host names are resolved again; addresses they no
+/// longer resolve to are removed from the allow-list.
+pub const REFRESH: Duration = Duration::from_secs(60);
+
+impl EgressPlan {
+    /// Current rules: the fixed prefixes plus every address the host names
+    /// resolve to (names that do not resolve contribute nothing).
+    pub fn rules(
+        &self,
+        resolve: &dyn Fn(&str) -> Vec<std::net::IpAddr>,
+    ) -> wyrd_sensor::EgressRules {
+        let mut cidrs = self.cidrs.clone();
+        for h in &self.hosts {
+            for ip in resolve(h) {
+                cidrs.push(match ip {
+                    std::net::IpAddr::V4(a) => format!("{a}/32"),
+                    std::net::IpAddr::V6(a) => format!("{a}/128"),
+                });
+            }
+        }
+        cidrs.sort();
+        cidrs.dedup();
+        wyrd_sensor::EgressRules {
+            cidrs,
+            restrict_hosts: self.restrict_hosts,
+            ports: self.ports.clone(),
+        }
+    }
+}
+
+/// Resolve with the system resolver (the same one the agent uses).
+pub fn resolve(host: &str) -> Vec<std::net::IpAddr> {
+    use std::net::ToSocketAddrs as _;
+    (host, 443)
+        .to_socket_addrs()
+        .map(|it| it.map(|a| a.ip()).collect())
+        .unwrap_or_default()
+}
+
 const BATCH: usize = 500;
 const FLUSH_EVERY: Duration = Duration::from_millis(50);
 const RECONNECT_EVERY: Duration = Duration::from_secs(1);
@@ -67,6 +119,7 @@ pub fn start(
     ledger: PathBuf,
     cgroup: Option<&Path>,
     workspace: &Path,
+    egress: Option<EgressPlan>,
 ) -> EffectCapture {
     let socket = wyrd_sensor::client::socket_path();
     let stop = Arc::new(AtomicBool::new(false));
@@ -81,6 +134,7 @@ pub fn start(
         socket,
         stop: stop.clone(),
         warning: warning.clone(),
+        egress,
     };
     let thread = std::thread::Builder::new()
         .name("effects".into())
@@ -105,6 +159,7 @@ struct Ctx {
     socket: PathBuf,
     stop: Arc<AtomicBool>,
     warning: Arc<Mutex<Option<String>>>,
+    egress: Option<EgressPlan>,
 }
 
 impl Ctx {
@@ -119,6 +174,12 @@ impl Ctx {
     }
 
     fn lost(&self, reason: &str) {
+        let reason = if self.egress.is_some() {
+            format!("{reason}; the network policy is not enforced in the kernel")
+        } else {
+            reason.to_string()
+        };
+        let reason = reason.as_str();
         self.append(vec![meta(EventBody::SensorLost(SensorLost {
             reason: reason.to_string(),
         }))]);
@@ -139,7 +200,62 @@ impl Ctx {
                 self.socket.display()
             ));
         }
-        SensorClient::connect(&self.socket, cgroup, &self.workspace).map_err(|e| e.to_string())
+        let rules = self.egress.as_ref().map(|e| e.rules(&resolve));
+        let client = SensorClient::connect_with(&self.socket, cgroup, &self.workspace, rules)
+            .map_err(|e| e.to_string())?;
+        if let Some(why) = &client.egress_error {
+            let reason = format!("the network policy is not enforced in the kernel: {why}");
+            let _ = Session::mark_degraded(&self.data, &self.session_id, &reason);
+            if let Ok(mut w) = self.warning.lock() {
+                w.get_or_insert(reason);
+            }
+        }
+        Ok(client)
+    }
+
+    /// Re-resolve the allowed host names every [`REFRESH`] and send the
+    /// rules again when they changed.
+    fn refresh_egress(
+        &self,
+        client: Option<&SensorClient>,
+        refreshed: &mut Instant,
+        current: &mut Option<wyrd_sensor::EgressRules>,
+    ) {
+        let (Some(plan), Some(c)) = (&self.egress, client) else {
+            return;
+        };
+        if refreshed.elapsed() < REFRESH {
+            return;
+        }
+        *refreshed = Instant::now();
+        let next = plan.rules(&resolve);
+        if current.as_ref() != Some(&next) {
+            if let Err(e) = c.send_egress(&next) {
+                tracing::warn!(error = %e, "could not update the egress rules");
+            }
+            *current = Some(next);
+        }
+    }
+
+    /// A kernel-stage decision next to every connect the kernel refused.
+    fn guard_for(&self, body: &EventBody) -> Option<EventBody> {
+        let (EventBody::NetConnect(c), Some(plan)) = (body, &self.egress) else {
+            return None;
+        };
+        (c.verdict == wyrd_schema::NetVerdict::Denied).then(|| {
+            EventBody::GuardDecision(wyrd_schema::GuardDecision {
+                stage: wyrd_schema::GuardStage::Kernel,
+                decision: wyrd_schema::Decision::Deny,
+                policy_id: plan.policy_id.clone(),
+                policy_version: plan.policy_version.clone(),
+                reason: format!(
+                    "connect to {} port {} refused in the kernel: not on the egress allow-list",
+                    c.addr, c.port
+                ),
+                call_id: None,
+                subject_seq: None,
+            })
+        })
     }
 
     fn run(self, ready: &mpsc::SyncSender<()>) {
@@ -160,7 +276,10 @@ impl Ctx {
         let mut last_flush = Instant::now();
         let mut last_attempt = Instant::now();
         let mut stopping: Option<Instant> = None;
+        let mut refreshed = Instant::now();
+        let mut current = self.egress.as_ref().map(|e| e.rules(&resolve));
         loop {
+            self.refresh_egress(client.as_ref(), &mut refreshed, &mut current);
             if stopping.is_none() && self.stop.load(Ordering::SeqCst) {
                 stopping = Some(Instant::now());
             }
@@ -193,7 +312,11 @@ impl Ctx {
                 })) => {
                     let drops =
                         u32::try_from(std::mem::take(&mut pending_drops)).unwrap_or(u32::MAX);
+                    let guard = self.guard_for(&body);
                     batch.push(event(ts_mono_ns, Some(process), drops, body));
+                    if let Some(g) = guard {
+                        batch.push(event(ts_mono_ns, Some(process), 0, g));
+                    }
                 }
                 Ok(Some(ServerMsg::Drops { total })) => {
                     let prev = *drops_total.get_or_insert(total);
@@ -232,5 +355,41 @@ impl Ctx {
             }
         }
         self.append(batch);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn egress_rules_combine_prefixes_with_resolved_hosts() {
+        let plan = EgressPlan {
+            cidrs: vec!["127.0.0.0/8".into()],
+            hosts: vec!["api.example".into(), "gone.example".into()],
+            ports: vec![443],
+            restrict_hosts: true,
+            policy_id: "p".into(),
+            policy_version: "b3:0".into(),
+        };
+        let fake = |h: &str| -> Vec<std::net::IpAddr> {
+            match h {
+                "api.example" => vec![
+                    "203.0.113.7".parse().unwrap(),
+                    "2001:db8::7".parse().unwrap(),
+                ],
+                _ => Vec::new(),
+            }
+        };
+        let r = plan.rules(&fake);
+        assert_eq!(
+            r.cidrs,
+            ["127.0.0.0/8", "2001:db8::7/128", "203.0.113.7/32"]
+        );
+        assert!(r.restrict_hosts);
+        assert_eq!(r.ports, [443]);
+        // A changed resolution changes the rules (and so triggers an update).
+        let moved = |_: &str| vec!["198.51.100.1".parse().unwrap()];
+        assert_ne!(plan.rules(&moved), r);
     }
 }

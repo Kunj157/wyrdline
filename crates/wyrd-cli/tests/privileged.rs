@@ -661,3 +661,74 @@ for port in (9, 443):
     assert!(g.reason.contains("/.ssh"), "{}", g.reason);
     assert!(g.reason.contains("[443]"), "{}", g.reason);
 }
+
+#[test]
+fn privileged_policy_egress_is_denied_in_the_kernel_and_recorded() {
+    use wyrd_schema::EventBody as B;
+    let e = env();
+    let d = sensord(&e);
+    let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../policies/fixtures/hostile.wasm")
+        .canonicalize()
+        .unwrap();
+    // The hostile fixture allows 10.0.0.0/8 (and example.org) on port 443.
+    let agent = script(
+        &e,
+        "agent.sh",
+        r#"python3 -c "
+import socket
+for host in ('203.0.113.9', '10.255.255.1'):
+    s = socket.socket()
+    s.settimeout(0.5)
+    try:
+        s.connect((host, 443))
+        r = 'open'
+    except PermissionError:
+        r = 'denied'
+    except OSError:
+        r = 'not denied'
+    print(host, r)
+" > egress.txt"#,
+    );
+    let policy = policy.display().to_string();
+    let out = wyrd_with_sensor(&e, &d.socket, &["run", "--policy", &policy, "--", &agent]);
+    assert_eq!(out.status.code(), Some(0));
+    let sid = only_session(&e);
+    let got = fs::read_to_string(
+        e.data
+            .join("sessions")
+            .join(&sid)
+            .join("branches/a/upper/egress.txt"),
+    )
+    .unwrap();
+    assert_eq!(got, "203.0.113.9 denied\n10.255.255.1 not denied\n");
+    let events = ledger_events(&e, &sid);
+    let connects: Vec<(String, wyrd_schema::NetVerdict)> = events
+        .iter()
+        .filter_map(|b| match b {
+            B::NetConnect(c) if c.port == 443 => Some((c.addr.clone(), c.verdict)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        connects,
+        [
+            ("203.0.113.9".to_string(), wyrd_schema::NetVerdict::Denied),
+            ("10.255.255.1".to_string(), wyrd_schema::NetVerdict::Allowed),
+        ]
+    );
+    let denials: Vec<&str> = events
+        .iter()
+        .filter_map(|b| match b {
+            B::GuardDecision(g)
+                if g.stage == wyrd_schema::GuardStage::Kernel
+                    && g.decision == wyrd_schema::Decision::Deny =>
+            {
+                Some(g.reason.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(denials.len(), 1, "{denials:?}");
+    assert!(denials[0].contains("203.0.113.9"), "{}", denials[0]);
+}
