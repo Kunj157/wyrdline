@@ -405,3 +405,55 @@ fn privileged_egress_rules_do_not_touch_other_cgroups() {
     enforced.release();
     let _ = enforced.child.wait();
 }
+
+/// An allowed host name that now resolves elsewhere: `wyrd run` sends the
+/// new address set, and the old address is refused from then on.
+#[test]
+fn privileged_egress_update_drops_addresses_a_host_no_longer_has() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let out = tmp.path().join("moved.txt");
+    let d = daemon(tmp.path(), &[]);
+    let g = gated(
+        tmp.path(),
+        "moved",
+        &format!(
+            r#"python3 -c "
+import socket
+for host in ('10.255.255.1', '10.255.255.2'):
+    s = socket.socket()
+    s.settimeout(0.5)
+    try:
+        s.connect((host, 9))
+        r = 'open'
+    except PermissionError:
+        r = 'denied'
+    except OSError:
+        r = 'not-denied'
+    print(host, r)
+" > {}"#,
+            out.display()
+        ),
+    );
+    let before = wyrd_sensor::EgressRules {
+        cidrs: vec!["10.255.255.1/32".into()],
+        restrict_hosts: true,
+        ports: Vec::new(),
+    };
+    let mut client = SensorClient::connect_with(&d.socket, &g.cgroup, &ws, Some(before)).unwrap();
+    client
+        .send_egress(&wyrd_sensor::EgressRules {
+            cidrs: vec!["10.255.255.2/32".into()],
+            restrict_hosts: true,
+            ports: Vec::new(),
+        })
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    g.release();
+    let _ = collect(&mut client, g.child.id());
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        "10.255.255.1 denied\n10.255.255.2 not-denied\n"
+    );
+}
