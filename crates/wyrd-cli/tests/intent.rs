@@ -532,7 +532,9 @@ hook '{{"hook_event_name":"PreToolUse","tool_name":"deny","tool_use_id":"t2","to
     let guards: Vec<(Decision, String)> = session_events(&e)
         .into_iter()
         .filter_map(|ev| match ev {
-            EventBody::GuardDecision(g) => Some((g.decision, g.policy_id)),
+            EventBody::GuardDecision(g) if g.stage != wyrd_schema::GuardStage::Kernel => {
+                Some((g.decision, g.policy_id))
+            }
             _ => None,
         })
         .collect();

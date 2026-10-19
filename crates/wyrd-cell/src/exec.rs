@@ -39,7 +39,9 @@ pub struct LaunchSpec {
     pub work: PathBuf,
     /// `cgroup.procs` to join before anything else (root mode).
     pub cgroup_procs: Option<PathBuf>,
-    pub write_allow: Vec<PathBuf>,
+    /// Landlock rules (`write_allow`, `read_deny`, `tcp_connect_ports`).
+    #[serde(flatten)]
+    pub confine: crate::confine::Confinement,
     pub cwd: PathBuf,
     pub command: Vec<String>,
     pub env: Vec<(String, String)>,
@@ -152,12 +154,9 @@ pub fn run(spec: &LaunchSpec) -> Result<Infallible> {
         LaunchMode::Observe => {}
     }
     if spec.mode != LaunchMode::Observe {
-        let enforcement = confine::restrict_writes(&spec.write_allow)?;
+        let enforcement = confine::restrict(&spec.confine)?;
         if enforcement != confine::Enforcement::Full {
-            tracing::warn!(
-                ?enforcement,
-                "Landlock write confinement is not fully enforced"
-            );
+            tracing::warn!(?enforcement, "Landlock confinement is not fully enforced");
         }
     }
     // Setup is done; block here so stage one registers the cgroup with the
