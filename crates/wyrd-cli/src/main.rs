@@ -71,6 +71,9 @@ enum Command {
     Daemon(cmd::daemon::DaemonCmd),
     /// Forward an agent hook payload (stdin) to the running session.
     Hook(cmd::hook::Args),
+    /// Build and test Wasm policies.
+    #[command(subcommand)]
+    Policy(cmd::policy::PolicyCmd),
     /// Proxy a stdio MCP server, recording and checking its traffic.
     McpProxy(cmd::mcp_proxy::Args),
     /// Internal: stage two of a Cell launch.
@@ -113,6 +116,7 @@ fn main() -> ExitCode {
         Command::Close(a) => cmd::session::close(&a),
         Command::Hook(a) => cmd::hook::run(&a),
         Command::McpProxy(a) => cmd::mcp_proxy::run(&a),
+        Command::Policy(c) => cmd::policy::run(&c),
         Command::CellExec { spec } => cmd::session::cell_exec(&spec),
         Command::CellCleanup { work } => wyrd_cell::exec::cleanup_workdir(&work)
             .map(|()| exit::OK)

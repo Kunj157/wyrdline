@@ -28,6 +28,7 @@ wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-doctor = { path = "../wyrd-doctor" }
 wyrd-gateway = { path = "../wyrd-gateway" }
 wyrd-ledger = { path = "../wyrd-ledger" }
+wyrd-policy = { path = "../wyrd-policy" }
 wyrd-schema = { path = "../wyrd-schema" }
 wyrd-sensor = { path = "../wyrd-sensor" }
 
