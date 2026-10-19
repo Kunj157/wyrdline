@@ -3145,6 +3145,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wyrd-divergence"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "toml",
+ "wyrd-schema",
+]
+
+[[package]]
 name = "wyrd-doctor"
 version = "0.0.0"
 dependencies = [
