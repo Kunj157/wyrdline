@@ -1,0 +1,8 @@
+{
+  "name": "victim-shop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/*.test.ts"
+  }
+}

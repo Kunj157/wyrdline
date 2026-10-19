@@ -1,0 +1,2 @@
+# The task scope: the cart, the API, and the docs. CI is out of scope.
+include = ["src/**", "api/**", "README.md"]
