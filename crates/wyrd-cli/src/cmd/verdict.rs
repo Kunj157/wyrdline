@@ -122,6 +122,100 @@ fn test_files(s: &Session, events: &[Event], config: &Config) -> BTreeMap<String
     out
 }
 
+/// File in the session directory holding one JSON judge run per line.
+pub const JUDGE_RUNS: &str = "judge-runs.jsonl";
+
+/// The LLM extractor when one is configured: `LLM_PROVIDER=anthropic`
+/// (the default when `ANTHROPIC_API_KEY` is set) or `none`.
+fn llm_settings() -> Option<(
+    wyrd_divergence::llm::AnthropicHttp,
+    wyrd_divergence::llm::Settings,
+)> {
+    let key = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty());
+    let provider = std::env::var("LLM_PROVIDER")
+        .unwrap_or_else(|_| if key.is_some() { "anthropic" } else { "none" }.into());
+    if provider != "anthropic" {
+        return None;
+    }
+    let base =
+        std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com".into());
+    let mut settings = wyrd_divergence::llm::Settings::default();
+    if let Ok(m) = std::env::var("WYRD_CLAIM_MODEL") {
+        settings.model = m;
+    }
+    if let Some(c) = std::env::var("WYRD_LLM_MAX_COST_USD")
+        .ok()
+        .and_then(|c| c.parse().ok())
+    {
+        settings.max_cost_usd = c;
+    }
+    Some((
+        wyrd_divergence::llm::AnthropicHttp::new(
+            &base,
+            key.unwrap_or_default(),
+            std::time::Duration::from_secs(60),
+        ),
+        settings,
+    ))
+}
+
+fn call_summaries(events: &[Event]) -> Vec<wyrd_divergence::llm::CallSummary> {
+    events
+        .iter()
+        .filter_map(|e| match &e.body {
+            EventBody::ToolCallStarted(t) => Some(wyrd_divergence::llm::CallSummary {
+                tool: t.tool.clone(),
+                args: t.args.to_string(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Regex claims, plus the model's when an extractor is configured; the
+/// judge run is appended to the session's `judge-runs.jsonl`.
+fn extract_claims(s: &Session, events: &[Event]) -> Vec<wyrd_schema::ClaimExtracted> {
+    use wyrd_divergence::claims;
+    let turns = claims::assistant_turns(events);
+    let rule = claims::extract_all(&turns);
+    let Some((http, settings)) = llm_settings() else {
+        return rule;
+    };
+    let x = wyrd_divergence::llm::extract(
+        &http,
+        &settings,
+        &turns,
+        &call_summaries(events),
+        &std::thread::sleep,
+    );
+    if let Some(e) = &x.run.error {
+        let _ = writeln!(
+            std::io::stderr(),
+            "wyrd: warning: claims partial (rules only): {e}"
+        );
+    }
+    if let Ok(line) = serde_json::to_string(&x.run) {
+        let path = s.dir().root().join(JUDGE_RUNS);
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut f| writeln!(f, "{line}"));
+    }
+    claims::merge(&turns, rule.into_iter().chain(x.claims))
+}
+
+/// Judge runs of a session, oldest first.
+pub fn judge_runs(s: &Session) -> Vec<wyrd_divergence::llm::JudgeRun> {
+    std::fs::read_to_string(s.dir().root().join(JUDGE_RUNS))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
 /// Extract claims, run the rules, and append what is new to the ledger
 /// (`verdict.claim.extracted`, `verdict.divergence.raised`). Returns the
 /// number of divergences raised.
@@ -129,8 +223,16 @@ pub fn record(s: &mut Session, events: &[Event]) -> anyhow::Result<usize> {
     let config = project_config(&s.record().workspace)?;
     let graph = wyrd_correlator::correlate(events);
     let files = test_files(s, events, &config);
-    let (claims, divergences) =
-        wyrd_divergence::evaluate_rules_only(events, &graph, &files, &config);
+    let claims = extract_claims(s, events);
+    let divergences = wyrd_divergence::evaluate(
+        &wyrd_divergence::Input {
+            events,
+            graph: &graph,
+            claims: &claims,
+            files: &files,
+        },
+        &config,
+    );
     let known = recorded_ids(events);
     let raised = divergences.len();
     let bodies: Vec<EventBody> = claims
@@ -196,6 +298,26 @@ pub fn list(a: &DivergencesArgs) -> anyhow::Result<u8> {
         .any(|e| e.plane() == wyrd_schema::Plane::Verdict);
     if recorded {
         print(&project(&events), a.json, false)?;
+        if !a.json
+            && let Some(run) = judge_runs(&s).last()
+        {
+            writeln!(
+                std::io::stdout(),
+                "claims: {} ({} {}, {} in / {} out tokens, ${:.4})",
+                if run.error.is_some() {
+                    "partial"
+                } else {
+                    "complete"
+                },
+                run.model,
+                run.prompt_version,
+                run.usage.input_tokens
+                    + run.usage.cache_read_input_tokens
+                    + run.usage.cache_creation_input_tokens,
+                run.usage.output_tokens,
+                run.est_cost_usd
+            )?;
+        }
         return Ok(exit::OK);
     }
     let config = project_config(&s.record().workspace)?;
