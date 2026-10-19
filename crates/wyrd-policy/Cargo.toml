@@ -19,6 +19,7 @@ wasmtime.workspace = true
 wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

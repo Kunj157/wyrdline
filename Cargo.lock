@@ -3243,6 +3243,7 @@ dependencies = [
  "blake3",
  "hex",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",
@@ -3333,6 +3334,7 @@ dependencies = [
  "wyrd-correlator",
  "wyrd-doctor",
  "wyrd-ledger",
+ "wyrd-policy",
  "wyrd-schema",
 ]
 
