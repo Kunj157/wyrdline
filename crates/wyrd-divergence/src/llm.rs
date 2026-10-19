@@ -23,7 +23,7 @@ use crate::claims::{Turn, claim_id, verify_quote};
 pub const PROMPT_VERSION: &str = "claims-v1";
 
 /// Default model for claim extraction (plan §11.1).
-pub const DEFAULT_MODEL: &str = "claude-haiku-5-5";
+pub const DEFAULT_MODEL: &str = "claude-haiku-4-5";
 
 /// Roughly 16 k tokens of transcript at ~4 characters per token.
 pub const MAX_TRANSCRIPT_CHARS: usize = 64_000;
@@ -83,9 +83,10 @@ pub struct Pricing {
 /// priced like the most expensive tier so budgets stay conservative.
 pub fn pricing(model: &str) -> Pricing {
     let (input, output) = match model {
-        "claude-haiku-5-5" => (0.10, 0.50),
-        "claude-sonnet-5-5" | "claude-sonnet-5" => (2.00, 10.00),
+        "claude-haiku-4-5" => (1.00, 5.00),
+        "claude-sonnet-5" => (2.00, 10.00),
         "claude-opus-5-5" => (4.00, 20.00),
+        "claude-opus-5" => (5.00, 25.00),
         _ => (10.00, 50.00),
     };
     Pricing {
@@ -267,11 +268,19 @@ pub fn request(model: &str, prompt: &str) -> Value {
         "max_tokens": MAX_OUTPUT_TOKENS,
         "system": [{ "type": "text", "text": SYSTEM, "cache_control": { "type": "ephemeral" } }],
         "messages": [{ "role": "user", "content": prompt }],
-        "output_config": {
-            "effort": "low",
-            "format": { "type": "json_schema", "schema": schema() }
-        }
+        "output_config": output_config(model),
     })
+}
+
+/// Structured output, plus low effort on models that accept the effort
+/// parameter (Haiku rejects it with a 400).
+fn output_config(model: &str) -> Value {
+    let format = json!({ "type": "json_schema", "schema": schema() });
+    if model.starts_with("claude-haiku") {
+        json!({ "format": format })
+    } else {
+        json!({ "effort": "low", "format": format })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -603,6 +612,15 @@ mod tests {
             output_tokens: 1_000_000,
             ..Usage::default()
         };
-        assert!((u.cost_usd(pricing("claude-haiku-5-5")) - 0.60).abs() < 1e-9);
+        assert!((u.cost_usd(pricing("claude-haiku-4-5")) - 6.00).abs() < 1e-9);
+        assert!(
+            request("claude-haiku-4-5", "p")["output_config"]
+                .get("effort")
+                .is_none()
+        );
+        assert_eq!(
+            request("claude-sonnet-5", "p")["output_config"]["effort"],
+            "low"
+        );
     }
 }
