@@ -19,6 +19,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 ts-rs.workspace = true
+ureq.workspace = true
+wyrd-bundle = { path = "../wyrd-bundle" }
 wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-schema = { path = "../wyrd-schema" }
 

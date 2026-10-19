@@ -3158,6 +3158,8 @@ dependencies = [
  "thiserror",
  "toml",
  "ts-rs",
+ "ureq",
+ "wyrd-bundle",
  "wyrd-correlator",
  "wyrd-schema",
 ]
