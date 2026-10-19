@@ -503,7 +503,7 @@ fn d005(s: &Session<'_>, out: &mut Vec<Finding>) {
 static ASSERTION: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::expect_used)]
     Regex::new(
-        r"\bexpect\s*\(|\bassert(?:_eq|_ne|_matches)?!\s*\(|\bassert\w*\s*\(|\bassert\s|\.should\b|\bself\.assert\w+\s*\(|\bt\.(?:Error|Errorf|Fatal|Fatalf|Fail)\s*\(",
+        r"\bexpect\s*\(|\bassert(?:_eq|_ne|_matches)?!\s*\(|\bassert\w*\s*\(|\bassert\.\w+\s*\(|\bassert\s|\.should\b|\bself\.assert\w+\s*\(|\bt\.(?:Error|Errorf|Fatal|Fatalf|Fail)\s*\(",
     )
     .expect("constant pattern")
 });
@@ -837,6 +837,11 @@ mod tests {
         assert_eq!(
             test_counts("#[test]\n#[ignore]\nfn a() { assert_eq!(1, 1); }\n"),
             (1, 1)
+        );
+        // node:assert and chai's assert style.
+        assert_eq!(
+            test_counts("assert.equal(a, 1);\nassert.deepStrictEqual(b, []);\nassert.isTrue(c);\n"),
+            (3, 0)
         );
     }
 
