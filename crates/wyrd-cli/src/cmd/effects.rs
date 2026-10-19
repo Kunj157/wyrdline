@@ -65,6 +65,56 @@ pub fn resolve(host: &str) -> Vec<std::net::IpAddr> {
         .unwrap_or_default()
 }
 
+/// Effect-time checks: the policy's `on-effect` and the exec deny list. A
+/// deny can only stop the agent (freeze and kill the Cell): the effect has
+/// already happened.
+#[derive(Debug)]
+pub struct EffectGuard {
+    pub policy: Option<Arc<wyrd_policy::Policy>>,
+    pub ctx: wyrd_policy::SessionCtx,
+    pub exec_deny: wyrd_policy::effects::ExecDeny,
+    /// Stop the agent on a deny (Cell mode); observe mode only records.
+    pub enforce: bool,
+    pub workspace: PathBuf,
+    /// The Cell's upper layer: files the agent created live here.
+    pub upper: PathBuf,
+    pub policy_id: String,
+    pub policy_version: String,
+}
+
+impl EffectGuard {
+    /// A path the agent saw, as readable from outside its mount namespace.
+    fn host_path(&self, p: &str) -> PathBuf {
+        let path = Path::new(p);
+        match path.strip_prefix(&self.workspace) {
+            Ok(rel) => {
+                let up = self.upper.join(rel);
+                if up.exists() { up } else { path.to_path_buf() }
+            }
+            Err(_) => path.to_path_buf(),
+        }
+    }
+
+    /// Why this effect must stop the session, if it must.
+    pub fn check(&self, body: &EventBody) -> Option<String> {
+        if let EventBody::ProcExec(x) = body
+            && let Some(why) = self
+                .exec_deny
+                .check(&x.filename, &|p| Some(self.host_path(p)))
+        {
+            return Some(why);
+        }
+        let policy = self.policy.as_ref()?;
+        let effect = wyrd_policy::effects::effect_of(body)?;
+        let out = policy.on_effect(&effect, &self.ctx);
+        match out.value {
+            wyrd_policy::Verdict::Allow => None,
+            // An effect cannot wait for a human: ask stops it like deny.
+            wyrd_policy::Verdict::Deny(r) | wyrd_policy::Verdict::Ask(r) => Some(r),
+        }
+    }
+}
+
 const BATCH: usize = 500;
 const FLUSH_EVERY: Duration = Duration::from_millis(50);
 const RECONNECT_EVERY: Duration = Duration::from_secs(1);
@@ -120,6 +170,7 @@ pub fn start(
     cgroup: Option<&Path>,
     workspace: &Path,
     egress: Option<EgressPlan>,
+    guard: Option<EffectGuard>,
 ) -> EffectCapture {
     let socket = wyrd_sensor::client::socket_path();
     let stop = Arc::new(AtomicBool::new(false));
@@ -135,6 +186,8 @@ pub fn start(
         stop: stop.clone(),
         warning: warning.clone(),
         egress,
+        guard,
+        stopped: AtomicBool::new(false),
     };
     let thread = std::thread::Builder::new()
         .name("effects".into())
@@ -160,6 +213,8 @@ struct Ctx {
     stop: Arc<AtomicBool>,
     warning: Arc<Mutex<Option<String>>>,
     egress: Option<EgressPlan>,
+    guard: Option<EffectGuard>,
+    stopped: AtomicBool,
 }
 
 impl Ctx {
@@ -211,6 +266,48 @@ impl Ctx {
             }
         }
         Ok(client)
+    }
+
+    /// Record an effect-time deny right after its effect (appending the
+    /// pending batch first, so the decision can cite the effect's seq), and
+    /// stop the agent once in Cell mode.
+    fn effect_denied(&self, batch: &mut Vec<Event>, reason: &str) {
+        let Some(g) = &self.guard else {
+            return;
+        };
+        let seq = match Ledger::open(&self.ledger).and_then(|mut l| l.append(std::mem::take(batch)))
+        {
+            Ok(last) => Some(last),
+            Err(e) => {
+                tracing::error!(error = %e, "could not append kernel effects");
+                None
+            }
+        };
+        let reason = if g.enforce {
+            format!("{reason}; the agent was stopped (the effect itself cannot be undone)")
+        } else {
+            format!("{reason}; observe mode: not stopped")
+        };
+        self.append(vec![meta(EventBody::GuardDecision(
+            wyrd_schema::GuardDecision {
+                stage: wyrd_schema::GuardStage::Effect,
+                decision: wyrd_schema::Decision::Deny,
+                policy_id: g.policy_id.clone(),
+                policy_version: g.policy_version.clone(),
+                reason: reason.clone(),
+                call_id: None,
+                subject_seq: seq,
+            },
+        ))]);
+        if g.enforce && !self.stopped.swap(true, Ordering::SeqCst) {
+            let stopped = Session::open(&self.data, &self.session_id).and_then(|mut s| s.stop());
+            if let Err(e) = stopped {
+                tracing::error!(error = %e, "could not stop the agent after an effect-time deny");
+            }
+            if let Ok(mut w) = self.warning.lock() {
+                w.get_or_insert(format!("policy stopped the agent: {reason}"));
+            }
+        }
     }
 
     /// Re-resolve the allowed host names every [`REFRESH`] and send the
@@ -313,9 +410,13 @@ impl Ctx {
                     let drops =
                         u32::try_from(std::mem::take(&mut pending_drops)).unwrap_or(u32::MAX);
                     let guard = self.guard_for(&body);
+                    let stop = self.guard.as_ref().and_then(|g| g.check(&body));
                     batch.push(event(ts_mono_ns, Some(process), drops, body));
                     if let Some(g) = guard {
                         batch.push(event(ts_mono_ns, Some(process), 0, g));
+                    }
+                    if let Some(reason) = stop {
+                        self.effect_denied(&mut batch, &reason);
                     }
                 }
                 Ok(Some(ServerMsg::Drops { total })) => {

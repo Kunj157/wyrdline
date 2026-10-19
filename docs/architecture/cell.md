@@ -68,6 +68,24 @@ A policy whose `kernel-rules` fails cannot start a session. When the
 kernel's Landlock ABI cannot enforce a requested right (or in observe
 mode), the session is marked Degraded with the reason.
 
+## Effect-time guard
+
+While the agent runs, every kernel effect is also checked:
+
+- the exec deny list (`exec-deny`): an exec whose program name is on the
+  list, or whose binary has the same size and BLAKE3 hash as a listed
+  program found on `PATH` at session start (a renamed copy), is denied;
+- the policy's `on-effect` for execs, sensitive reads, writes, unlinks,
+  renames, and connects (`ask` counts as deny: an effect cannot wait).
+
+A deny is recorded as an effect-stage `guard.decision` citing the
+effect's `seq`, and in Cell mode the agent is stopped (cgroup frozen and
+killed). This is **detect-and-stop**: the effect has already happened
+and cannot be undone; the forbidden program may run briefly. Network and
+filesystem access are enforced before the fact by the cgroup connect
+programs and Landlock. Observe mode records the decision without
+stopping.
+
 ## Checkpoints
 
 A checkpoint is the CAS manifest of the branch's upper layer. One is taken

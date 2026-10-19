@@ -732,3 +732,52 @@ for host in ('203.0.113.9', '10.255.255.1'):
     assert_eq!(denials.len(), 1, "{denials:?}");
     assert!(denials[0].contains("203.0.113.9"), "{}", denials[0]);
 }
+
+#[test]
+fn privileged_renamed_denied_binary_stops_the_session() {
+    use wyrd_schema::EventBody as B;
+    let e = env();
+    let d = sensord(&e);
+    let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../policies/fixtures/hostile.wasm")
+        .canonicalize()
+        .unwrap();
+    // The hostile fixture's exec deny list holds curl. A copy under another
+    // name is still curl: the observer matches the binary's content.
+    let agent = script(
+        &e,
+        "agent.sh",
+        r#"cp "$(command -v curl)" ./fetcher
+./fetcher --version > /dev/null
+sleep 5
+echo survived > late.txt"#,
+    );
+    let policy = policy.display().to_string();
+    let t = std::time::Instant::now();
+    let out = wyrd_with_sensor(&e, &d.socket, &["run", "--policy", &policy, "--", &agent]);
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        t.elapsed()
+    );
+    assert_ne!(out.status.code(), Some(0));
+    let sid = only_session(&e);
+    let upper = e.data.join("sessions").join(&sid).join("branches/a/upper");
+    assert!(upper.join("fetcher").exists());
+    assert!(
+        !upper.join("late.txt").exists(),
+        "the agent was not stopped"
+    );
+    let events = ledger_events(&e, &sid);
+    let stop = events
+        .iter()
+        .find_map(|b| match b {
+            B::GuardDecision(g) if g.stage == wyrd_schema::GuardStage::Effect => Some(g.clone()),
+            _ => None,
+        })
+        .expect("effect-stage decision");
+    assert_eq!(stop.decision, wyrd_schema::Decision::Deny);
+    assert!(stop.reason.contains("a copy of curl"), "{}", stop.reason);
+    assert!(stop.reason.contains("stopped"), "{}", stop.reason);
+    assert!(stop.subject_seq.is_some());
+}

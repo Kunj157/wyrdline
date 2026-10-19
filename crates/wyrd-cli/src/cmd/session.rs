@@ -276,6 +276,26 @@ fn run_session(
         (Some((k, _)), Some(p)) if !observe => egress_plan(k, p),
         _ => None,
     };
+    let effect_guard = match (&kernel, &policy) {
+        (Some((k, _)), Some(p)) => Some(super::effects::EffectGuard {
+            policy: Some(p.clone()),
+            ctx: wyrd_policy::SessionCtx {
+                repo_root: s.record().workspace.display().to_string(),
+                scope_globs: Vec::new(),
+                prior_denials: 0,
+            },
+            exec_deny: wyrd_policy::effects::ExecDeny::resolve(
+                &k.exec_deny,
+                &std::env::var("PATH").unwrap_or_default(),
+            ),
+            enforce: !observe,
+            workspace: s.record().workspace.clone(),
+            upper: s.dir().upper(&s.record().current_branch),
+            policy_id: p.id.clone(),
+            policy_version: p.version.clone(),
+        }),
+        _ => None,
+    };
     let confine = kernel.map(|(_, c)| c).unwrap_or_default();
     let capture = intent::start(
         &data(),
@@ -303,6 +323,7 @@ fn run_session(
                 st.cgroup.as_deref(),
                 &st.workspace,
                 egress,
+                effect_guard,
             ));
             if !degraded.is_empty() {
                 let reason = degraded.join("; ");
