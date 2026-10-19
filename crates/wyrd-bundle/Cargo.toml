@@ -1,6 +1,6 @@
 [package]
 name = "wyrd-bundle"
-description = "Session sharing: secret redaction, and later .wyrd bundle export, import, and signing"
+description = "Session sharing: secret redaction and signed .wyrd bundles"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,10 +13,12 @@ publish.workspace = true
 blake3.workspace = true
 hex.workspace = true
 regex.workspace = true
+ruzstd.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+tar.workspace = true
 
 [lints]
 workspace = true
