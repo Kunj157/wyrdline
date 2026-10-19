@@ -3115,6 +3115,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "wyrd-adapters",
+ "wyrd-bundle",
  "wyrd-cell",
  "wyrd-correlator",
  "wyrd-divergence",
