@@ -571,3 +571,93 @@ fn privileged_sensor_restart_recovers_the_session() {
 fn serde_json_lite(b: &wyrd_schema::EventBody) -> String {
     format!("{b:?}").chars().take(120).collect()
 }
+
+#[test]
+fn privileged_policy_kernel_rules_are_enforced_by_landlock() {
+    let e = env();
+    let home = e.outside.join("home");
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/id_test"), "secret key\n").unwrap();
+    fs::write(home.join("notes"), "fine\n").unwrap();
+    let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../policies/fixtures/hostile.wasm")
+        .canonicalize()
+        .unwrap();
+    // The hostile fixture denies reads of ~/.ssh and allows TCP port 443 only.
+    let data = e.data.display();
+    let agent = script(
+        &e,
+        "agent.sh",
+        &format!(
+            r#"try() {{ name=$1; shift; if "$@" >/dev/null 2>&1; then echo "$name=ok"; else echo "$name=denied"; fi; }}
+{{
+try ssh cat "$HOME/.ssh/id_test"
+try notes cat "$HOME/notes"
+try token sh -c 'cat {data}/sessions/*/control.token'
+try ledger sh -c 'cat {data}/sessions/*/ledger.wyrdledger'
+try own sh -c 'cat {data}/sessions/*/launch.json'
+python3 -c "
+import socket
+for port in (9, 443):
+    s = socket.socket()
+    s.settimeout(2)
+    try:
+        s.connect(('127.0.0.1', port))
+        print(f'port{{port}}=open')
+    except PermissionError:
+        print(f'port{{port}}=denied')
+    except OSError:
+        print(f'port{{port}}=refused')
+"
+}} > results.txt"#
+        ),
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+        .args(["run", "--policy"])
+        .arg(&policy)
+        .args(["--", &agent])
+        .current_dir(&e.ws)
+        .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_PRIVILEGED_HELPER", "sudo")
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    eprintln!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let sid = only_session(&e);
+    let results = fs::read_to_string(
+        e.data
+            .join("sessions")
+            .join(&sid)
+            .join("branches/a/upper/results.txt"),
+    )
+    .unwrap();
+    let got: Vec<&str> = results.lines().collect();
+    assert_eq!(
+        got,
+        [
+            "ssh=denied",
+            "notes=ok",
+            "token=denied",
+            "ledger=denied",
+            "own=ok",
+            "port9=denied",
+            "port443=refused",
+        ]
+    );
+    // The compiled rules are in the ledger as a kernel-stage decision.
+    let kernel = ledger_events(&e, &sid).into_iter().find_map(|b| match b {
+        wyrd_schema::EventBody::GuardDecision(g) if g.stage == wyrd_schema::GuardStage::Kernel => {
+            Some(g)
+        }
+        _ => None,
+    });
+    let g = kernel.expect("kernel decision");
+    assert_eq!(g.policy_id, "hostile");
+    assert!(g.reason.contains("/.ssh"), "{}", g.reason);
+    assert!(g.reason.contains("[443]"), "{}", g.reason);
+}

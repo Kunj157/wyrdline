@@ -40,7 +40,7 @@ pub fn run(args: &Args) -> anyhow::Result<u8> {
 
 /// Restricting a process with Landlock is irreversible, so the ABI is probed
 /// in a short-lived child running `wyrd __probe-landlock`.
-fn landlock_abi_from_child() -> Option<i32> {
+pub fn landlock_abi_from_child() -> Option<i32> {
     let exe = std::env::current_exe().ok()?;
     let out = Command::new(exe).arg("__probe-landlock").output().ok()?;
     if !out.status.success() {

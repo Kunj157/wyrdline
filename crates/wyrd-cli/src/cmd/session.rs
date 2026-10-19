@@ -149,6 +149,89 @@ fn load_policy(path: &Path) -> anyhow::Result<std::sync::Arc<wyrd_policy::Policy
     Ok(std::sync::Arc::new(p))
 }
 
+/// The policy's kernel rules for this session: what the Cell enforces,
+/// recorded as a kernel-stage decision. A policy whose `kernel-rules` fails
+/// cannot start a session.
+fn kernel_plan(
+    s: &Session,
+    policy: &wyrd_policy::Policy,
+) -> anyhow::Result<(
+    wyrd_policy::kernel::Compiled,
+    wyrd_cell::confine::Confinement,
+)> {
+    let rec = s.record();
+    let ctx = wyrd_policy::SessionCtx {
+        repo_root: rec.workspace.display().to_string(),
+        scope_globs: Vec::new(),
+        prior_denials: 0,
+    };
+    let out = policy.kernel_rules(&ctx);
+    let Some(rules) = out.value else {
+        anyhow::bail!(
+            "the policy {} failed to produce kernel rules ({}); not starting an unenforced session",
+            policy.id,
+            out.error.unwrap_or_default()
+        );
+    };
+    let home = wyrd_cell::launch::home_dir();
+    let compiled = wyrd_policy::kernel::compile(&rules, home.as_deref(), &rec.workspace);
+    let confine = wyrd_cell::confine::Confinement {
+        write_allow: compiled.write_allow.clone(),
+        read_deny: compiled.read_deny.clone(),
+        tcp_connect_ports: compiled.tcp_connect_ports.clone(),
+    };
+    let list = |v: &[std::path::PathBuf]| {
+        v.iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let expressible_elsewhere = if compiled.not_expressible.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; left to tool-call and effect-time checks: {}",
+            compiled.not_expressible.join("; ")
+        )
+    };
+    let reason = format!(
+        "kernel rules: no reads of [{}]; extra writes to [{}]; TCP ports {}{expressible_elsewhere}",
+        list(&compiled.read_deny),
+        list(&compiled.write_allow),
+        compiled
+            .tcp_connect_ports
+            .as_ref()
+            .map_or_else(|| "any".to_string(), |p| format!("{p:?}")),
+    );
+    let mut ledger = wyrd_ledger::Ledger::open(s.dir().ledger())?;
+    ledger.append(vec![wyrd_schema::Event {
+        seq: 0,
+        ts_mono_ns: wyrd_cell::mono_ns(),
+        ts_wall_ms: wyrd_cell::now_ms(),
+        process: None,
+        drops_since_last: 0,
+        body: wyrd_schema::EventBody::GuardDecision(wyrd_schema::GuardDecision {
+            stage: wyrd_schema::GuardStage::Kernel,
+            decision: wyrd_schema::Decision::Allow,
+            policy_id: policy.id.clone(),
+            policy_version: policy.version.clone(),
+            reason,
+            call_id: None,
+            subject_seq: None,
+        }),
+    }])?;
+    Ok((compiled, confine))
+}
+
+/// Why the Cell cannot enforce everything the policy asked for.
+fn unenforced(s: &Session, confine: &wyrd_cell::confine::Confinement) -> Vec<String> {
+    if s.record().mode == wyrd_schema::CaptureMode::Observe {
+        return vec!["observe mode: the policy's kernel rules are not enforced".into()];
+    }
+    let abi = super::doctor::landlock_abi_from_child().and_then(|a| u32::try_from(a).ok());
+    wyrd_cell::confine::unenforced(confine, abi)
+}
+
 fn run_session(
     s: &mut Session,
     policy: Option<std::sync::Arc<wyrd_policy::Policy>>,
@@ -160,6 +243,12 @@ fn run_session(
         (None, Some(path)) => Some(load_policy(path)?),
         (None, None) => None,
     };
+    let kernel = policy.as_deref().map(|p| kernel_plan(s, p)).transpose()?;
+    let degraded = kernel
+        .as_ref()
+        .map(|(_, c)| unenforced(s, c))
+        .unwrap_or_default();
+    let confine = kernel.map(|(_, c)| c).unwrap_or_default();
     let capture = intent::start(
         &data(),
         s,
@@ -186,7 +275,13 @@ fn run_session(
                 st.cgroup.as_deref(),
                 &st.workspace,
             ));
+            if !degraded.is_empty() {
+                let reason = degraded.join("; ");
+                let _ = writeln!(std::io::stderr(), "wyrd: warning: {reason}");
+                let _ = Session::mark_degraded(&data_dir, &st.session_id, &reason);
+            }
         })),
+        confine,
     };
     let code = s.run(&helper, probe_userns(&helper), opts);
     if let Some(e) = effects {
