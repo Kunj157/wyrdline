@@ -1,6 +1,35 @@
 {
   "components": {
     "schemas": {
+      "AnswerBody": {
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allow"
+        ],
+        "type": "object"
+      },
+      "Answered": {
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "allow"
+        ],
+        "type": "object"
+      },
       "ApplyBody": {
         "additionalProperties": false,
         "properties": {
@@ -2115,6 +2144,21 @@
         ],
         "type": "object"
       },
+      "PendingAsks": {
+        "description": "Questions a running session's policy is waiting on.",
+        "properties": {
+          "asks": {
+            "items": {
+              "$ref": "#/components/schemas/PendingAsk"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "asks"
+        ],
+        "type": "object"
+      },
       "Problem": {
         "description": "An error answered as `application/problem+json`.",
         "properties": {
@@ -3382,6 +3426,215 @@
           }
         ],
         "summary": "One session with its ledger head"
+      }
+    },
+    "/v1/sessions/{sid}/asks": {
+      "get": {
+        "operationId": "getSessionsSidAsks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingAsks"
+                }
+              }
+            },
+            "description": "Pending asks"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Questions the session's policy is waiting on"
+      }
+    },
+    "/v1/sessions/{sid}/asks/{id}": {
+      "post": {
+        "operationId": "postSessionsSidAsksId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answered"
+                }
+              }
+            },
+            "description": "Answered"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Allow or deny a pending ask"
       }
     },
     "/v1/sessions/{sid}/checkpoints": {
