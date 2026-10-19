@@ -12,6 +12,7 @@ pub mod case;
 pub mod claims;
 pub mod config;
 pub mod glob;
+pub mod llm;
 mod rules;
 mod session;
 pub mod view;
