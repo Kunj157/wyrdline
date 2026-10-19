@@ -387,3 +387,120 @@ fn without_a_session_the_server_refuses_to_start() {
     s.initialize();
     structured(&s.call(1, "list_checkpoints", &json!({})));
 }
+
+fn request(e: &Env, checkpoint: &str, reason: &str) -> u64 {
+    let mut s = mcp(e);
+    s.initialize();
+    let r = s.call(
+        1,
+        "request_rewind",
+        &json!({"checkpoint_id": checkpoint, "reason": reason}),
+    );
+    structured(&r)["request"]["id"].as_u64().unwrap()
+}
+
+fn requests_json(e: &Env) -> Value {
+    let out = wyrd(e)
+        .args(["rewind", &e.id, "--requests", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn a_human_rejects_or_confirms_a_request_in_the_cli() {
+    let e = env();
+    let first = request(&e, "c1", "tests\x1b[31m broke");
+    let second = request(&e, "c1", "try again from c1");
+
+    let text = wyrd(&e)
+        .args(["rewind", &e.id, "--requests"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.contains("pending"), "{text}");
+    assert!(
+        !text.contains('\x1b'),
+        "control characters reach the terminal"
+    );
+    assert!(text.contains("--confirm"), "{text}");
+
+    let out = wyrd(&e)
+        .args([
+            "rewind",
+            &e.id,
+            "--reject",
+            &first.to_string(),
+            "--note",
+            "no",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v = requests_json(&e);
+    assert_eq!(v["requests"][0]["status"], "rejected");
+    assert_eq!(v["requests"][0]["decided_by"], "cli");
+    assert_eq!(v["requests"][0]["note"], "no");
+    assert_eq!(
+        Session::open(&e.data, &e.id)
+            .unwrap()
+            .record()
+            .branches
+            .len(),
+        1
+    );
+
+    // A decided request cannot be decided again.
+    let out = wyrd(&e)
+        .args(["rewind", &e.id, "--confirm", &first.to_string()])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+
+    let out = wyrd(&e)
+        .args(["rewind", &e.id, "--confirm", &second.to_string()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let s = Session::open(&e.data, &e.id).unwrap();
+    assert_eq!(s.record().current_branch, "b");
+    let v = requests_json(&e);
+    assert_eq!(v["requests"][1]["status"], "confirmed");
+    // The decision precedes the rewind in the ledger.
+    let kinds: Vec<&str> = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())
+        .unwrap()
+        .events_after(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .map(wyrd_schema::Event::kind)
+        .filter(|k| k.starts_with("meta.rewind") || *k == "state.checkpoint.rewound")
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "meta.rewind.requested",
+            "meta.rewind.requested",
+            "meta.rewind.rejected",
+            "meta.rewind.confirmed",
+            "state.checkpoint.rewound"
+        ]
+    );
+    // Unknown requests are errors, and the old usage still works.
+    assert!(
+        !wyrd(&e)
+            .args(["rewind", &e.id, "--confirm", "999999"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        wyrd(&e)
+            .args(["rewind", &e.id, "c2"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
