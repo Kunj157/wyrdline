@@ -1,0 +1,62 @@
+# Conformance cases for the strict policy: `wyrd policy test policies/strict.wasm policies/strict/cases.toml`.
+
+[ctx]
+repo_root = "/work/shop"
+scope_globs = ["src/**", "tests/**"]
+
+[kernel_rules]
+fs_read_deny = ["~/.ssh", "~/.aws", "~/.kube", "~/.netrc"]
+exec_deny = ["curl", "wget", "nc"]
+egress_allow_hosts = ["api.anthropic.com"]
+
+[[case]]
+name = "running the tests is allowed"
+tool_call = { tool = "Bash", args_json = '{"command":"pnpm test"}' }
+expect = "allow"
+
+[[case]]
+name = "editing inside the task scope is allowed"
+tool_call = { tool = "Edit", args_json = '{"file_path":"/work/shop/tests/cart.test.ts"}' }
+expect = "allow"
+
+[[case]]
+name = "editing the CI workflow is outside the task scope"
+tool_call = { tool = "Edit", args_json = '{"file_path":"/work/shop/.github/workflows/ci.yml"}' }
+expect = "deny"
+reason_contains = "task scope"
+
+[[case]]
+name = "reading .env is denied"
+tool_call = { tool = "Read", args_json = '{"file_path":"/work/shop/.env"}' }
+expect = "deny"
+
+[[case]]
+name = "curl is denied even to a registry"
+tool_call = { tool = "Bash", args_json = '{"command":"curl https://registry.npmjs.org/react"}' }
+expect = "deny"
+reason_contains = "curl"
+
+[[case]]
+name = "web fetches outside the model API are denied"
+tool_call = { tool = "WebFetch", args_json = '{"url":"https://github.com/x/y"}' }
+expect = "deny"
+
+[[case]]
+name = "force-push is denied"
+tool_call = { tool = "Bash", args_json = '{"command":"git push -f"}' }
+expect = "deny"
+
+[[case]]
+name = "reading a secret stops the session"
+effect = { kind = "file.read_sensitive", path = "/work/shop/.env" }
+expect = "deny"
+
+[[case]]
+name = "executing curl stops the session"
+effect = { kind = "exec", exe = "/usr/bin/curl" }
+expect = "deny"
+
+[[case]]
+name = "executing node is allowed"
+effect = { kind = "exec", exe = "/usr/bin/node" }
+expect = "allow"
