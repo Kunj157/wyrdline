@@ -466,6 +466,7 @@ impl Session {
         probe_userns: impl FnOnce() -> std::result::Result<(), String>,
         opts: RunOptions<'_>,
     ) -> Result<i32> {
+        self.writable()?;
         let RunOptions {
             env: extra_env,
             command,
@@ -538,6 +539,7 @@ impl Session {
 
     /// Checkpoint the current branch (freezing the Cell while reading).
     pub fn checkpoint(&mut self, after_call: Option<String>) -> Result<CheckpointRecord> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         self.checkpoint_locked(after_call)
@@ -659,6 +661,7 @@ impl Session {
     /// Materialise `target` into a new branch and make it current.
     /// `fork_name` = `None` is a rewind (auto-named branch).
     pub fn rewind(&mut self, target: &str, fork_name: Option<&str>) -> Result<Branch> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         let cp = self.resolve(target)?;
@@ -794,6 +797,7 @@ impl Session {
 
     /// Apply a checkpoint/branch to the real workspace.
     pub fn apply(&mut self, target: &str, dry_run: bool, force: bool) -> Result<ApplyReport> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         let cp = self.resolve(target)?;
@@ -827,6 +831,7 @@ impl Session {
                 "only verdict events can be recorded".into(),
             ));
         }
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         if self.is_running() {
@@ -842,6 +847,7 @@ impl Session {
 
     /// Stop the agent if needed, write the closing event, and seal the ledger.
     pub fn close(&mut self, reason: &str) -> Result<Seal> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         self.stop()?;
@@ -854,5 +860,171 @@ impl Session {
         let key = HostKey::load_or_create(&self.data.host_key())?;
         let mut l = Ledger::open(self.dir.ledger())?;
         Ok(l.seal(&key, now_ms())?)
+    }
+}
+
+/// Where an imported session came from (`import.json` in its directory).
+/// An imported session is read-only: nothing can run, checkpoint, rewind,
+/// apply, or append to it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ImportSource {
+    /// Session id in the bundle (on the machine that recorded it).
+    pub original_id: String,
+    /// `b3:` + hex of the bundle's `manifest.json`.
+    pub manifest_hash: String,
+    pub signer_fingerprint: String,
+    /// `standard` or `strict`.
+    pub redaction: String,
+    /// False when the bundle had no checkpoint content (`--no-content`).
+    pub content: bool,
+    pub imported_ms: i64,
+}
+
+/// A verified bundle's session, as [`Session::import`] takes it.
+#[derive(Debug, Clone)]
+pub struct ImportSpec {
+    pub name: Option<String>,
+    pub agent: String,
+    pub mode: CaptureMode,
+    pub created_ms: i64,
+    /// Events in seq order, dense from 1.
+    pub events: Vec<Event>,
+    /// CAS chunks (each stored under the BLAKE3 of its bytes).
+    pub chunks: Vec<Vec<u8>>,
+    pub source: ImportSource,
+}
+
+fn add_branch(branches: &mut Vec<Branch>, id: &str, forked_from: Option<String>, ms: i64) {
+    if !branches.iter().any(|b| b.id == id) {
+        branches.push(Branch {
+            id: id.into(),
+            name: id.into(),
+            forked_from,
+            created_ms: ms,
+        });
+    }
+}
+
+/// Checkpoints and branches recorded in `events`.
+fn recorded_tree(events: &[Event]) -> (Vec<Branch>, Vec<CheckpointRecord>) {
+    let mut branches: Vec<Branch> = Vec::new();
+    let mut checkpoints = Vec::new();
+    for e in events {
+        match &e.body {
+            EventBody::CheckpointCreated(c) => {
+                add_branch(&mut branches, &c.branch_id, None, e.ts_wall_ms);
+                checkpoints.push(CheckpointRecord {
+                    id: c.checkpoint_id.clone(),
+                    branch: c.branch_id.clone(),
+                    parent: c.parent_id.clone(),
+                    manifest: c.manifest.clone(),
+                    seq: e.seq,
+                    created_ms: e.ts_wall_ms,
+                    files: u64::from(c.files_changed),
+                    bytes_read: c.bytes_added,
+                });
+            }
+            EventBody::CheckpointForked(f) => {
+                add_branch(
+                    &mut branches,
+                    &f.branch_id,
+                    Some(f.checkpoint_id.clone()),
+                    e.ts_wall_ms,
+                );
+            }
+            _ => {}
+        }
+    }
+    if branches.is_empty() {
+        add_branch(&mut branches, "a", None, 0);
+    }
+    (branches, checkpoints)
+}
+
+impl Session {
+    /// Add a verified bundle as a new, read-only session. The ledger is
+    /// rebuilt from the events (so its chain head equals the bundle's) and
+    /// left unsealed; `import.json` records the provenance. Nothing is
+    /// visible under `sessions/` until the import is complete.
+    pub fn import(data: &DataDir, spec: &ImportSpec) -> Result<Session> {
+        mkdirs(&data.sessions())?;
+        let cas = Cas::open(data.cas())?;
+        for chunk in &spec.chunks {
+            cas.put(chunk)?;
+        }
+        let id = ulid::Ulid::generate().to_string().to_lowercase();
+        let staging = data.session(&format!(".import-{id}"));
+        let result = (|| {
+            mkdirs(staging.root())?;
+            let (branches, checkpoints) = recorded_tree(&spec.events);
+            let command = spec
+                .events
+                .iter()
+                .find_map(|e| match &e.body {
+                    EventBody::SessionStarted(s) => Some(s.command.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let rec = SessionRecord {
+                id: id.clone(),
+                name: spec.name.clone(),
+                workspace: PathBuf::new(),
+                command,
+                mode: spec.mode,
+                created_ms: spec.created_ms,
+                status: SessionState::Closed,
+                current_branch: branches.last().map_or_else(|| "a".into(), |b| b.id.clone()),
+                branches,
+                checkpoints,
+                cgroup: None,
+                pid: None,
+                runs: 0,
+                agent: spec.agent.clone(),
+                deny_tools: Vec::new(),
+                policy: None,
+            };
+            let mut ledger = Ledger::create(staging.ledger(), &id)?;
+            ledger.append(spec.events.clone())?;
+            let source = serde_json::to_vec_pretty(&spec.source)
+                .map_err(|e| CellError::Invalid(e.to_string()))?;
+            fs::write(staging.import(), source).map_err(io_err(&staging.import()))?;
+            state::save(&staging, &rec)?;
+            Ok(rec)
+        })();
+        let rec = match result {
+            Ok(rec) => rec,
+            Err(e) => {
+                let _ = fs::remove_dir_all(staging.root());
+                return Err(e);
+            }
+        };
+        let dir = data.session(&id);
+        if let Err(e) = fs::rename(staging.root(), dir.root()) {
+            let _ = fs::remove_dir_all(staging.root());
+            return Err(io_err(dir.root())(e));
+        }
+        Ok(Session {
+            data: data.clone(),
+            dir,
+            rec,
+            cas,
+        })
+    }
+
+    /// Provenance of an imported session; `None` for a recorded one.
+    pub fn imported(&self) -> Option<ImportSource> {
+        let bytes = fs::read(self.dir.import()).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Refuse to change an imported session.
+    fn writable(&self) -> Result<()> {
+        if self.dir.import().exists() {
+            return Err(CellError::Busy(format!(
+                "session {} was imported from a bundle and is read-only",
+                self.rec.id
+            )));
+        }
+        Ok(())
     }
 }
