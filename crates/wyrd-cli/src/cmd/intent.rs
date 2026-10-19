@@ -242,6 +242,7 @@ pub struct GuardOptions {
 /// The session's ingest: ledger sink, static deny list, Wasm policy, and
 /// the ask registry with its control token (written 0600 to the session).
 fn ingest(
+    data: &DataDir,
     session: &Session,
     ledger: Ledger,
     checkpoints: Option<Arc<Checkpointer>>,
@@ -269,7 +270,11 @@ fn ingest(
         },
         turn,
     )
-    .with_asks(asks);
+    .with_asks(asks)
+    .with_views(Arc::new(super::mcp::views::RunViews {
+        data: data.clone(),
+        session: rec.id.clone(),
+    }));
     if let Some(p) = guard.policy {
         ingest = ingest.with_policy(Arc::new(super::guard::WasmToolPolicy::new(
             p,
@@ -295,7 +300,7 @@ pub fn start(
     let turn = last_turn(&ledger)?;
     let checkpoints =
         (rec.mode == CaptureMode::Cell).then(|| Checkpointer::start(data.clone(), rec.id.clone()));
-    let (ingest, token_file) = ingest(session, ledger, checkpoints.clone(), turn, guard)?;
+    let (ingest, token_file) = ingest(data, session, ledger, checkpoints.clone(), turn, guard)?;
     std::thread::Builder::new()
         .name("wyrd-intent".into())
         .spawn(move || server::serve(&listener, &ingest))

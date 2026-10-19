@@ -29,6 +29,7 @@ serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true
 wyrd-adapters = { path = "../wyrd-adapters" }
+wyrd-bundle = { path = "../wyrd-bundle" }
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-divergence = { path = "../wyrd-divergence" }
