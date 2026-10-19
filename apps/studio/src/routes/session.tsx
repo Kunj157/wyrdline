@@ -16,11 +16,13 @@ import { Transcript } from "../components/Transcript";
 import {
   offlineSource,
   useCheckpoints,
+  useDivergences,
   useEvents,
   useGraph,
   useSession,
   useVerify,
 } from "../lib/api";
+import { evidenceSeqs } from "../lib/divergences";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
 import { statusMeaning } from "./sessions";
@@ -38,6 +40,7 @@ export function SessionPage() {
   const graph = useGraph(sid);
   const verify = useVerify(sid);
   const checkpoints = useCheckpoints(sid);
+  const divergences = useDivergences(sid);
   const recording = session.data?.status === "recording" || session.data?.status === "degraded";
   const live = useLiveEvents(sid, Boolean(recording && events.data));
   const [selected, setSelected] = useState<number | null>(null);
@@ -48,7 +51,7 @@ export function SessionPage() {
   const list = useMemo(() => events.data ?? [], [events.data]);
   const [backtest, setBacktest] = useState<BacktestReport | null>(null);
   const layout = useMemo(() => {
-    const base = layoutRiver(list, graph.data);
+    const base = layoutRiver(list, graph.data, evidenceSeqs(divergences.data?.divergences ?? []));
     if (!backtest) return base;
     // Backtest overlay: what the chosen policy would have stopped is drawn
     // as denied (the panel and the legend say which policy).
@@ -57,7 +60,7 @@ export function SessionPage() {
       ...base,
       knots: base.knots.map((k) => (marked.has(k.seq) ? { ...k, meaning: "denied" as const } : k)),
     };
-  }, [list, graph.data, backtest]);
+  }, [list, graph.data, divergences.data, backtest]);
   const drops = useMemo(() => list.reduce((n, e) => n + e.drops_since_last, 0), [list]);
   const selectedEvent = list.find((e) => e.seq === selected);
 

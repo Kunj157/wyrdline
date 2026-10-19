@@ -48,6 +48,7 @@ export const keys = {
   verify: (sid: string) => ["verify", sid] as const,
   checkpoints: (sid: string) => ["checkpoints", sid] as const,
   asks: (sid: string) => ["asks", sid] as const,
+  divergences: (sid: string) => ["divergences", sid] as const,
   policies: ["policies"] as const,
   diff: (sid: string, a: string, b: string) => ["diff", sid, a, b] as const,
   diffFile: (sid: string, a: string, b: string, path: string) =>
@@ -165,6 +166,14 @@ export function useAnswerAsk(sid: string) {
   return useMutation({
     mutationFn: (v: { id: number; allow: boolean }) => apiClient().answerAsk(sid, v.id, v.allow),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.asks(sid) }),
+  });
+}
+
+/** A session's divergences with their triage state. */
+export function useDivergences(sid: string) {
+  return useQuery({
+    queryKey: keys.divergences(sid),
+    queryFn: () => apiClient().divergences(sid),
   });
 }
 

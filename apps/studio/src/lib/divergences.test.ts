@@ -1,6 +1,6 @@
 import type { Event } from "@wyrdline/schemas";
 
-import { projectDivergences } from "./divergences";
+import { evidenceSeqs, projectDivergences } from "./divergences";
 
 function ev(seq: number, body: Event["body"]): Event {
   return { seq, ts_mono_ns: seq, ts_wall_ms: seq, process: null, drops_since_last: 0, body };
@@ -57,5 +57,17 @@ describe("divergences from the ledger", () => {
     ]);
     expect(out[0]?.claim?.quote).toBe("All tests pass.");
     expect(out[1]?.claim).toBeNull();
+  });
+
+  it("cites evidence of every divergence not marked a false positive", () => {
+    const views = projectDivergences([
+      raised(2, "dv-a", "D001"),
+      raised(3, "dv-b", "D002"),
+      ev(4, {
+        kind: "verdict.divergence.updated",
+        payload: { divergence_id: "dv-b", status: "false_positive", note: null },
+      }),
+    ]).map((d, i) => ({ ...d, evidence_seqs: [10 + i, 20] }));
+    expect([...evidenceSeqs(views)].sort()).toEqual([10, 20]);
   });
 });

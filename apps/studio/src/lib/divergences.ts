@@ -52,3 +52,10 @@ export function projectDivergences(events: Event[]): api.DivergenceView[] {
   }
   return out;
 }
+
+/** Events cited by divergences still standing (not marked a false positive). */
+export function evidenceSeqs(divergences: api.DivergenceView[]): Set<number> {
+  return new Set(
+    divergences.filter((d) => d.status !== "false_positive").flatMap((d) => d.evidence_seqs),
+  );
+}
