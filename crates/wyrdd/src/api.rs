@@ -69,6 +69,25 @@ pub struct Checkpoints {
     pub checkpoints: Vec<CheckpointRecord>,
 }
 
+/// Questions a running session's policy is waiting on.
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct PendingAsks {
+    pub asks: Vec<wyrd_adapters::asks::PendingAsk>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerBody {
+    pub allow: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct Answered {
+    #[ts(type = "number")]
+    pub id: u64,
+    pub allow: bool,
+}
+
 #[derive(Debug, Serialize, JsonSchema, TS)]
 pub struct Stopped {
     /// False when no agent was running.

@@ -79,6 +79,8 @@ describe("daemon client", () => {
       c.checkpoints("s"),
       c.checkpoint("s"),
       c.stop("s"),
+      c.asks("s"),
+      c.answerAsk("s", 1, true),
       c.rewind("s", "c1", {}),
       c.fork("s", "c1", { name: "n" }),
       c.apply("s", "c1", {}),

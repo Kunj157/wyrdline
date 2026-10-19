@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+/// Session file holding the control token (0600), present while the
+/// session runs.
+pub const CONTROL_TOKEN_FILE: &str = "control.token";
+
 /// Default wait for an answer. Below the hook client's and the gateway's
 /// own timeouts, so the agent always gets a decision.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);

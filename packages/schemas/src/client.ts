@@ -110,6 +110,9 @@ export function createClient(options: ClientOptions = {}) {
       request<api.CheckpointRecord>("POST", `${s(sid)}/checkpoints`, {}, idempotencyKey),
     stop: (sid: string, idempotencyKey?: string) =>
       request<api.Stopped>("POST", `${s(sid)}/stop`, {}, idempotencyKey),
+    asks: (sid: string) => request<api.PendingAsks>("GET", `${s(sid)}/asks`),
+    answerAsk: (sid: string, id: number, allow: boolean) =>
+      request<api.Answered>("POST", `${s(sid)}/asks/${id}`, { allow } satisfies api.AnswerBody),
     rewind: (sid: string, target: string, body: api.RewindBody, idempotencyKey?: string) =>
       request<api.BranchCreated | api.Relaunching>(
         "POST",

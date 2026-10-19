@@ -212,6 +212,22 @@ fn operations(s: &mut Schemas) -> Vec<Operation> {
             "Stop the running agent",
             (200, "Stopped", s.out::<api::Stopped>()),
         ),
+        op(
+            "get",
+            "/v1/sessions/{sid}/asks",
+            "Questions the session's policy is waiting on",
+            (200, "Pending asks", s.out::<api::PendingAsks>()),
+        ),
+        Operation {
+            request: Some(s.inp::<api::AnswerBody>()),
+            problems: ACTION,
+            ..op(
+                "post",
+                "/v1/sessions/{sid}/asks/{id}",
+                "Allow or deny a pending ask",
+                (200, "Answered", s.out::<api::Answered>()),
+            )
+        },
         Operation {
             request: Some(s.inp::<api::RewindBody>()),
             also: relaunch(s),

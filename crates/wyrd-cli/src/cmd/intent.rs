@@ -230,8 +230,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .with_context(|| format!("writing {}", path.display()))
 }
 
-/// Session file holding the control token that answers asks (0600).
-pub const CONTROL_TOKEN_FILE: &str = "control.token";
+pub use wyrd_adapters::asks::CONTROL_TOKEN_FILE;
 
 /// What decides tool calls in a run besides `--deny-tool`.
 #[derive(Debug, Default)]

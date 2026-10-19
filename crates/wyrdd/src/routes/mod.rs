@@ -1,6 +1,7 @@
 //! Route table.
 
 mod actions;
+mod asks;
 mod ingest;
 mod sessions;
 mod stream;
@@ -43,6 +44,8 @@ pub fn api() -> Router<Arc<AppState>> {
             get(sessions::checkpoints).post(actions::checkpoint),
         )
         .route("/v1/sessions/{sid}/stop", post(actions::stop))
+        .route("/v1/sessions/{sid}/asks", get(asks::list))
+        .route("/v1/sessions/{sid}/asks/{id}", post(asks::answer))
         .route(
             "/v1/sessions/{sid}/checkpoints/{target}/rewind",
             post(actions::rewind),

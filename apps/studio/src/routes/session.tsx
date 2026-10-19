@@ -3,6 +3,7 @@ import { Badge, Card, Kbd, Shimmer, Tabs } from "@wyrdline/ui";
 import { ShieldCheck, ShieldX, ZoomIn, ZoomOut } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { AskDialog } from "../components/AskDialog";
 import { CheckpointPanel } from "../components/CheckpointPanel";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
@@ -195,6 +196,7 @@ export function SessionPage() {
         <h2 className="mb-2 text-sm font-semibold">Checkpoints &amp; branches</h2>
         <CheckpointPanel sid={sid} checkpoints={checkpoints.data} events={list} />
       </Card>
+      {offlineSource() === null && <AskDialog sid={sid} live={Boolean(recording)} />}
     </div>
   );
 }
