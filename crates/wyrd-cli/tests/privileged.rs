@@ -580,10 +580,10 @@ fn privileged_policy_kernel_rules_are_enforced_by_landlock() {
     fs::write(home.join(".ssh/id_test"), "secret key\n").unwrap();
     fs::write(home.join("notes"), "fine\n").unwrap();
     let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../policies/fixtures/hostile.wasm")
+        .join("../../policies/fixtures/escape.wasm")
         .canonicalize()
         .unwrap();
-    // The hostile fixture denies reads of ~/.ssh and allows TCP port 443 only.
+    // The escape fixture denies reads of ~/.ssh and allows TCP port 443 only.
     let data = e.data.display();
     let agent = script(
         &e,
@@ -657,7 +657,7 @@ for port in (9, 443):
         _ => None,
     });
     let g = kernel.expect("kernel decision");
-    assert_eq!(g.policy_id, "hostile");
+    assert_eq!(g.policy_id, "escape");
     assert!(g.reason.contains("/.ssh"), "{}", g.reason);
     assert!(g.reason.contains("[443]"), "{}", g.reason);
 }
@@ -668,10 +668,10 @@ fn privileged_policy_egress_is_denied_in_the_kernel_and_recorded() {
     let e = env();
     let d = sensord(&e);
     let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../policies/fixtures/hostile.wasm")
+        .join("../../policies/fixtures/escape.wasm")
         .canonicalize()
         .unwrap();
-    // The hostile fixture allows 10.0.0.0/8 (and example.org) on port 443.
+    // The escape fixture allows 10.0.0.0/8 and loopback, on port 443.
     let agent = script(
         &e,
         "agent.sh",
@@ -739,10 +739,10 @@ fn privileged_renamed_denied_binary_stops_the_session() {
     let e = env();
     let d = sensord(&e);
     let policy = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../policies/fixtures/hostile.wasm")
+        .join("../../policies/fixtures/escape.wasm")
         .canonicalize()
         .unwrap();
-    // The hostile fixture's exec deny list holds curl. A copy under another
+    // The escape fixture's exec deny list holds curl. A copy under another
     // name is still curl: the observer matches the binary's content.
     let agent = script(
         &e,

@@ -1,0 +1,13 @@
+[package]
+name = "escape"
+description = "Test guest with kernel rules only, for the privileged tests and the escape suite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen.workspace = true
