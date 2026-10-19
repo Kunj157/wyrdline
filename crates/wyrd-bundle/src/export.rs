@@ -49,6 +49,11 @@ impl Signer for ed25519_dalek::SigningKey {
     }
 }
 
+/// Projects `divergences.json` from the redacted events. The divergence
+/// view lives in `wyrd-divergence`, which itself depends on this crate for
+/// redaction, so the caller supplies it (`wyrd_divergence::view::project`).
+pub type DivergenceProjection = fn(&[Event]) -> Result<serde_json::Value, serde_json::Error>;
+
 /// Everything a bundle is made from.
 #[derive(Debug, Clone, Copy)]
 pub struct ExportInput<'a> {
@@ -61,6 +66,7 @@ pub struct ExportInput<'a> {
     pub content: bool,
     pub withheld_files: u64,
     pub redaction: Redaction,
+    pub divergences: DivergenceProjection,
 }
 
 /// What [`export`] wrote.
@@ -199,6 +205,7 @@ fn content_files(
     events: &[Event],
     ledger: Vec<u8>,
     chunks: &BTreeMap<Hash, Vec<u8>>,
+    divergences: DivergenceProjection,
 ) -> Result<BTreeMap<String, Vec<u8>>, ExportError> {
     let claims: Vec<&ClaimExtracted> = events
         .iter()
@@ -207,7 +214,10 @@ fn content_files(
             _ => None,
         })
         .collect();
-    let divergences = wyrd_divergence::view::project(events);
+    let divergences = divergences(events).map_err(|e| ExportError::Encode {
+        what: "divergences",
+        reason: e.to_string(),
+    })?;
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     files.insert(CLAIMS.into(), json("claims", &claims)?);
     files.insert(DIVERGENCES.into(), json("divergences", &divergences)?);
@@ -227,7 +237,7 @@ pub fn export(input: &ExportInput<'_>, signer: &dyn Signer) -> Result<Exported, 
     let (events, known) = redact_all(input.events, level)?;
     let (ledger, head) = encode_ledger(&events)?;
     let ledger_bytes = ledger.len() as u64;
-    let files = content_files(&events, ledger, input.chunks)?;
+    let files = content_files(&events, ledger, input.chunks, input.divergences)?;
 
     let public_key = signer.public_key();
     let fingerprint = format::fingerprint(&public_key);

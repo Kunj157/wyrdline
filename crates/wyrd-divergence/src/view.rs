@@ -80,6 +80,12 @@ pub fn recorded_ids(events: &[Event]) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// [`project`] as JSON, the shape of a bundle's `divergences.json`
+/// (`wyrd_bundle::DivergenceProjection`).
+pub fn project_json(events: &[Event]) -> Result<serde_json::Value, serde_json::Error> {
+    serde_json::to_value(project(events))
+}
+
 #[cfg(test)]
 mod tests {
     use wyrd_schema::{DivergenceUpdated, Severity};

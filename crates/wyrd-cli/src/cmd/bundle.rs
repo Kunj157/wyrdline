@@ -227,6 +227,7 @@ pub fn export(a: &ExportArgs) -> anyhow::Result<u8> {
             content: !a.no_content,
             withheld_files: withheld,
             redaction,
+            divergences: wyrd_divergence::view::project_json,
         },
         &signer,
     )?;

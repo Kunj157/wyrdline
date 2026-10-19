@@ -19,13 +19,13 @@ ruzstd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-wyrd-divergence = { path = "../wyrd-divergence" }
 wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
 proptest.workspace = true
 tar.workspace = true
 tempfile.workspace = true
+wyrd-divergence = { path = "../wyrd-divergence" }
 
 [lints]
 workspace = true
