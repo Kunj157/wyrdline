@@ -344,3 +344,146 @@ fn overhead_of_capture_on_a_syscall_dense_workload() {
         o.pct(o.captured)
     );
 }
+
+/// Times `n` non-blocking connects to `ip:port` and prints the p50 and p99
+/// of the syscall in nanoseconds.
+const CONNECT_TIMER_C: &str = r#"
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+static int cmp(const void *a, const void *b) {
+    long x = *(const long *)a, y = *(const long *)b;
+    return (x > y) - (x < y);
+}
+
+int main(int argc, char **argv) {
+    int n = atoi(argv[3]);
+    long *t = malloc(sizeof(long) * n);
+    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(atoi(argv[2])) };
+    inet_pton(AF_INET, argv[1], &a.sin_addr);
+    for (int i = 0; i < n; i++) {
+        int s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        connect(s, (struct sockaddr *)&a, sizeof a);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        close(s);
+        t[i] = (t1.tv_sec - t0.tv_sec) * 1000000000L + (t1.tv_nsec - t0.tv_nsec);
+    }
+    qsort(t, n, sizeof(long), cmp);
+    printf("%ld %ld\n", t[n / 2], t[n * 99 / 100]);
+    return 0;
+}
+"#;
+
+/// (p50, p99) in µs of connects from a captured scope, optionally enforced.
+fn connect_latency(
+    dir: &Path,
+    socket: &Path,
+    timer: &Path,
+    name: &str,
+    target: &str,
+    egress: Option<wyrd_sensor::EgressRules>,
+) -> (f64, f64) {
+    let out = dir.join(format!("{name}.txt"));
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let mut client = None;
+    run_scoped(
+        dir,
+        name,
+        &format!("{} {target} 1 20000 > {}", timer.display(), out.display()),
+        |cg| {
+            let c = SensorClient::connect_with(socket, cg, &ws, egress).unwrap();
+            assert_eq!(c.egress_error, None);
+            client = Some(c);
+        },
+    );
+    drop(client);
+    let text = std::fs::read_to_string(&out).unwrap();
+    let mut it = text
+        .split_whitespace()
+        .map(|v| v.parse::<f64>().unwrap() / 1000.0);
+    (it.next().unwrap(), it.next().unwrap())
+}
+
+#[test]
+#[ignore = "release measurement; make test-perf"]
+fn latency_of_connect_enforcement() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let d = daemon(tmp.path());
+    let c = tmp.path().join("timer.c");
+    let timer = tmp.path().join("timer");
+    std::fs::write(&c, CONNECT_TIMER_C).unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-O2", "-o"])
+            .arg(&timer)
+            .arg(&c)
+            .status()
+            .unwrap()
+            .success()
+    );
+    // A realistic allow-list: loopback plus a thousand host addresses.
+    let mut cidrs = vec!["127.0.0.0/8".to_string()];
+    cidrs.extend((0..1000).map(|i| format!("198.51.{}.{}/32", i / 250, i % 250 + 1)));
+    let rules = wyrd_sensor::EgressRules {
+        cidrs,
+        restrict_hosts: true,
+        ports: Vec::new(),
+    };
+    let mut rounds = Vec::new();
+    for round in 0..3 {
+        let base = connect_latency(
+            tmp.path(),
+            &d.socket,
+            &timer,
+            &format!("base{round}"),
+            "127.0.0.1",
+            None,
+        );
+        let allowed = connect_latency(
+            tmp.path(),
+            &d.socket,
+            &timer,
+            &format!("allowed{round}"),
+            "127.0.0.1",
+            Some(rules.clone()),
+        );
+        let denied = connect_latency(
+            tmp.path(),
+            &d.socket,
+            &timer,
+            &format!("denied{round}"),
+            "10.255.255.1",
+            Some(rules.clone()),
+        );
+        eprintln!(
+            "round {round}: captured, not enforced p50 {:.1} p99 {:.1} µs; enforced, allowed p50 {:.1} p99 {:.1} µs; enforced, denied p50 {:.1} p99 {:.1} µs",
+            base.0, base.1, allowed.0, allowed.1, denied.0, denied.1
+        );
+        rounds.push((base, allowed, denied));
+    }
+    let med = |f: &dyn Fn(&((f64, f64), (f64, f64), (f64, f64))) -> f64| {
+        let mut v: Vec<f64> = rounds.iter().map(f).collect();
+        v.sort_by(f64::total_cmp);
+        v[1]
+    };
+    let added_allowed = med(&|r| r.1.1 - r.0.1);
+    let added_denied = med(&|r| r.2.1 - r.0.1);
+    eprintln!(
+        "median p99 added: allowed {added_allowed:.1} µs, denied {added_denied:.1} µs (target ≤ 50 µs)"
+    );
+    assert!(
+        added_allowed <= 50.0,
+        "allowed connect adds {added_allowed:.1} µs at p99"
+    );
+    assert!(
+        added_denied <= 50.0,
+        "denied connect adds {added_denied:.1} µs at p99"
+    );
+}

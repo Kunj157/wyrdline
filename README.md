@@ -42,7 +42,7 @@ From that it can:
 ## Status
 
 Pre-alpha. Work proceeds phase by phase; see the [roadmap](#roadmap).
-Phases 0–8 are done: `wyrd doctor`, the hash-chained ledger and
+Phases 0–9 are done: `wyrd doctor`, the hash-chained ledger and
 content-addressed store, the Cell (checkpoint, rewind, fork, diff, apply),
 the intent plane — agent hooks, an MCP gateway (stdio and Streamable
 HTTP servers), OTLP traces, redaction, and a checkpoint after every tool
@@ -56,7 +56,13 @@ authenticated HTTP API, a resumable live event stream, and an
 the daemon serves: the Causal River (WebGPU, with Canvas2D and SVG
 fallbacks), an inspector for every event, live mode, rewind, fork, diff,
 and apply, and offline replay of exported sessions with the correlator
-running in the browser ([performance](docs/results/studio-perf.md)):
+running in the browser ([performance](docs/results/studio-perf.md)) — and the
+**Guard**: policies as sandboxed WebAssembly components that decide every
+tool call (allow, deny, or ask a human), with their rules enforced in the
+kernel — Landlock for files and ports, cgroup BPF for network egress, an
+exec observer that stops forbidden programs — and backtests of recorded
+sessions ([policy guide](docs/policies/README.md),
+[escape suite and latency](docs/results/enforcement.md)):
 
 ```
 wyrd run -- claude -p "fix the failing cart test"   # hooks injected, workspace sandboxed
@@ -69,6 +75,9 @@ wyrd studio                                         # open Studio in the browser
 wyrd checkpoints <session>                          # one checkpoint per tool call
 wyrd rewind <session> c3 && wyrd diff <session> c3 head
 wyrd apply <session> head                            # bring the result into the real tree
+wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enforce in the kernel
+wyrd ask <session>                                   # answer what the policy asks
+wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 ```
 
 Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).
@@ -131,6 +140,7 @@ reports exactly what is available and what degrades without it.
   [the eBPF sensor](docs/architecture/sensor.md), [the correlator](docs/architecture/correlator.md),
   [the daemon and its API](docs/architecture/daemon.md)
 - [Ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md)
+- [Writing a policy](docs/policies/README.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Threat model](docs/threat-model/scope.md)
 
