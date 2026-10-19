@@ -5,6 +5,7 @@ mod asks;
 mod divergences;
 mod ingest;
 mod policies;
+mod rewind_requests;
 mod sessions;
 mod stream;
 mod system;
@@ -60,6 +61,14 @@ pub fn api() -> Router<Arc<AppState>> {
         )
         .route("/v1/sessions/{sid}/asks", get(asks::list))
         .route("/v1/sessions/{sid}/asks/{id}", post(asks::answer))
+        .route(
+            "/v1/sessions/{sid}/rewind-requests",
+            get(rewind_requests::list),
+        )
+        .route(
+            "/v1/sessions/{sid}/rewind-requests/{id}",
+            post(rewind_requests::decide),
+        )
         .route(
             "/v1/sessions/{sid}/checkpoints/{target}/rewind",
             post(actions::rewind),

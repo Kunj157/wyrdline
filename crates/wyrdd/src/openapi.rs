@@ -280,6 +280,22 @@ fn operations(s: &mut Schemas) -> Vec<Operation> {
                 (200, "Answered", s.out::<api::Answered>()),
             )
         },
+        op(
+            "get",
+            "/v1/sessions/{sid}/rewind-requests",
+            "Rewind requests the agent made, with their decisions",
+            (200, "Rewind requests", s.out::<api::RewindRequests>()),
+        ),
+        Operation {
+            request: Some(s.inp::<api::RewindDecisionBody>()),
+            problems: ACTION,
+            ..op(
+                "post",
+                "/v1/sessions/{sid}/rewind-requests/{id}",
+                "Confirm (rewind) or reject a pending rewind request",
+                (200, "Decided", s.out::<api::RewindDecided>()),
+            )
+        },
         Operation {
             request: Some(s.inp::<api::RewindBody>()),
             also: relaunch(s),
