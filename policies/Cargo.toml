@@ -1,0 +1,23 @@
+# Policy guests: Rust crates compiled to wasm32-wasip2 components
+# (`wyrd policy build`, `make policies`). A workspace of its own, separate
+# from the host crates under crates/.
+[workspace]
+resolver = "3"
+members = ["common", "default", "strict", "examples/hostile", "examples/escape"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+wit-bindgen = { version = "0.63.0", default-features = false, features = ["macros", "realloc"] }
+serde_json = "1.0.154"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

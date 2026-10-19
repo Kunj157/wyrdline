@@ -9,7 +9,7 @@ pub mod tracefs;
 
 pub use client::{ClientMsg, SensorClient, ServerMsg};
 pub use decode::{Decoded, Decoder};
-pub use loader::{LoadReport, Sensor, SensorConfig};
+pub use loader::{EgressRules, LoadReport, Sensor, SensorConfig};
 
 /// The compiled eBPF object.
 pub static EBPF_OBJECT: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/wyrd-ebpf"));

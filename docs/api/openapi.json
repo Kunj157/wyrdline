@@ -1,6 +1,35 @@
 {
   "components": {
     "schemas": {
+      "AnswerBody": {
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allow"
+        ],
+        "type": "object"
+      },
+      "Answered": {
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "allow"
+        ],
+        "type": "object"
+      },
       "ApplyBody": {
         "additionalProperties": false,
         "properties": {
@@ -60,6 +89,85 @@
             "type": "string"
           }
         ]
+      },
+      "BacktestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "BacktestFinding": {
+        "description": "One action the policy would have stopped.",
+        "properties": {
+          "decision": {
+            "description": "`deny` or `ask`.",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stage": {
+            "description": "`hook`, `gateway`, `kernel`, or `effect`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "stage",
+          "decision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "BacktestReport": {
+        "properties": {
+          "events": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestFinding"
+            },
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "policy_id": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "policy_version",
+          "session_id",
+          "events",
+          "findings",
+          "notes"
+        ],
+        "type": "object"
       },
       "Branch": {
         "properties": {
@@ -1821,6 +1929,26 @@
               "message"
             ],
             "type": "object"
+          },
+          {
+            "description": "Pending asks, oldest first.",
+            "properties": {
+              "asks": {
+                "items": {
+                  "$ref": "#/components/schemas/PendingAsk"
+                },
+                "type": "array"
+              },
+              "type": {
+                "const": "asks",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "asks"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -2049,6 +2177,102 @@
         "type": "object"
       },
       "PartialSuccess": {
+        "type": "object"
+      },
+      "PendingAsk": {
+        "description": "One question waiting for a human.",
+        "properties": {
+          "args": {
+            "description": "Redacted tool input as JSON.",
+            "type": "string"
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "expires_in_ms": {
+            "description": "Milliseconds until the call is denied for lack of an answer.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "policy_id": {
+            "description": "Policy that asked.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the policy asks.",
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "call_id",
+          "tool",
+          "args",
+          "reason",
+          "policy_id",
+          "expires_in_ms"
+        ],
+        "type": "object"
+      },
+      "PendingAsks": {
+        "description": "Questions a running session's policy is waiting on.",
+        "properties": {
+          "asks": {
+            "items": {
+              "$ref": "#/components/schemas/PendingAsk"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "asks"
+        ],
+        "type": "object"
+      },
+      "PolicyInfo": {
+        "description": "An uploaded policy component.",
+        "properties": {
+          "bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "description": "`b3:` + 16 hex digits of the component's BLAKE3 hash.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "PolicyList": {
+        "properties": {
+          "policies": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "policies"
+        ],
         "type": "object"
       },
       "Problem": {
@@ -2471,6 +2695,14 @@
               "null"
             ]
           },
+          "policy": {
+            "default": null,
+            "description": "Wasm policy component (`wyrd run --policy`), reused on relaunch.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "runs": {
             "format": "uint32",
             "minimum": 0,
@@ -2502,6 +2734,7 @@
           "runs",
           "agent",
           "deny_tools",
+          "policy",
           "head_seq",
           "head_hash",
           "sealed"
@@ -2590,6 +2823,14 @@
               "null"
             ]
           },
+          "policy": {
+            "default": null,
+            "description": "Wasm policy component (`wyrd run --policy`), reused on relaunch.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "runs": {
             "format": "uint32",
             "minimum": 0,
@@ -2617,7 +2858,8 @@
           "pid",
           "runs",
           "agent",
-          "deny_tools"
+          "deny_tools",
+          "policy"
         ],
         "type": "object"
       },
@@ -3075,6 +3317,295 @@
         "summary": "Prometheus metrics"
       }
     },
+    "/v1/policies": {
+      "get": {
+        "operationId": "getPolicies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyList"
+                }
+              }
+            },
+            "description": "Policies"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Uploaded policy components"
+      },
+      "post": {
+        "operationId": "postPolicies",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/wasm": {
+              "schema": {
+                "contentMediaType": "application/wasm",
+                "description": "A wyrdline:policy component",
+                "type": "string"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyInfo"
+                }
+              }
+            },
+            "description": "Stored"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Body too large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Upload a policy component (?name=)"
+      }
+    },
+    "/v1/policies/{pid}/backtest": {
+      "post": {
+        "operationId": "postPoliciesPidBacktest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestReport"
+                }
+              }
+            },
+            "description": "Findings"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Replay a recorded session against a policy"
+      }
+    },
     "/v1/ready": {
       "get": {
         "operationId": "getReady",
@@ -3300,6 +3831,215 @@
           }
         ],
         "summary": "One session with its ledger head"
+      }
+    },
+    "/v1/sessions/{sid}/asks": {
+      "get": {
+        "operationId": "getSessionsSidAsks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingAsks"
+                }
+              }
+            },
+            "description": "Pending asks"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Questions the session's policy is waiting on"
+      }
+    },
+    "/v1/sessions/{sid}/asks/{id}": {
+      "post": {
+        "operationId": "postSessionsSidAsksId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answered"
+                }
+              }
+            },
+            "description": "Answered"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Allow or deny a pending ask"
       }
     },
     "/v1/sessions/{sid}/checkpoints": {

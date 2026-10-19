@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "wyrd hook claude-code",
-            "timeout": 30
+            "timeout": 60
           }
         ]
       }

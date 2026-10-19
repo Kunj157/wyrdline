@@ -3,8 +3,10 @@
 use std::os::fd::AsFd as _;
 use std::time::Duration;
 
+use aya::maps::lpm_trie::{Key, LpmTrie};
 use aya::maps::{HashMap, MapData, PerCpuArray, RingBuf};
-use aya::programs::TracePoint;
+use aya::programs::cgroup_sock_addr::CgroupSockAddrLinkId;
+use aya::programs::{CgroupAttachMode, CgroupSockAddr, TracePoint};
 use aya::{Ebpf, EbpfLoader};
 use wyrd_common::RawEvent;
 
@@ -62,7 +64,46 @@ pub const PARKED: &[&str] = &[
     "truncate",
     "chdir",
     "fchdir",
+    "connect",
 ];
+
+/// The cgroup connect programs, attached per enforced session.
+const CONNECT_PROGRAMS: &[&str] = &["connect4", "connect6"];
+
+/// Egress rules of one session, enforced in the kernel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EgressRules {
+    /// Allowed destination prefixes (`10.0.0.0/8`, `::1/128`, bare
+    /// addresses); empty with `restrict_hosts` means no destination at all.
+    pub cidrs: Vec<String>,
+    /// Whether destinations are restricted to `cidrs`.
+    pub restrict_hosts: bool,
+    /// Allowed TCP/UDP destination ports; empty means every port.
+    pub ports: Vec<u16>,
+}
+
+/// Parse a prefix into (address bytes, prefix length).
+pub fn parse_prefix(s: &str) -> Option<(std::net::IpAddr, u32)> {
+    let (a, p) = s.split_once('/').unwrap_or((s, ""));
+    let addr: std::net::IpAddr = a.trim().parse().ok()?;
+    let max = if addr.is_ipv4() { 32 } else { 128 };
+    let prefix = if p.is_empty() {
+        max
+    } else {
+        p.trim().parse().ok()?
+    };
+    (prefix <= max).then_some((addr, prefix))
+}
+
+/// Kernel state of one enforced session, for replacement and cleanup.
+#[derive(Debug, Default)]
+struct Enforced {
+    links: Vec<(&'static str, CgroupSockAddrLinkId)>,
+    /// (prefix length, key data) of every inserted prefix.
+    v4: Vec<(u32, wyrd_common::Egress4)>,
+    v6: Vec<(u32, wyrd_common::Egress6)>,
+    ports: Vec<wyrd_common::PortKey>,
+}
 
 #[derive(Debug, Clone)]
 pub struct SensorConfig {
@@ -92,6 +133,9 @@ pub struct Sensor {
     ring: RingBuf<MapData>,
     /// Registered sessions per cgroup depth.
     levels: std::collections::BTreeMap<u32, u32>,
+    enforced: std::collections::HashMap<u64, Enforced>,
+    /// Why the connect programs could not be loaded, if they could not.
+    connect_unavailable: Option<String>,
 }
 
 /// Depth of a cgroup directory below the cgroup2 mount (`/sys/fs/cgroup` = 0).
@@ -148,6 +192,26 @@ impl Sensor {
                 Err(e) => report.skipped.push((tp, e.to_string())),
             }
         }
+        // The connect programs are loaded now (verifier) but attached only
+        // to the cgroups of sessions whose egress is enforced.
+        let mut connect_unavailable = None;
+        for name in CONNECT_PROGRAMS {
+            let loaded = ebpf
+                .program_mut(name)
+                .ok_or_else(|| format!("program {name} missing from object"))
+                .and_then(|p| {
+                    let p: &mut CgroupSockAddr =
+                        p.try_into().map_err(|e| format!("{name}: {e}"))?;
+                    p.load().map_err(|e| format!("{name}: verifier: {e}"))
+                });
+            match loaded {
+                Ok(()) => report.attached.push(format!("{name} (per session)")),
+                Err(e) => {
+                    report.skipped.push(((*name).to_string(), e.clone()));
+                    connect_unavailable.get_or_insert(e);
+                }
+            }
+        }
         let ring = RingBuf::try_from(
             ebpf.take_map("EVENTS")
                 .ok_or_else(|| map_err("EVENTS missing"))?,
@@ -158,6 +222,8 @@ impl Sensor {
                 ebpf,
                 ring,
                 levels: std::collections::BTreeMap::new(),
+                enforced: std::collections::HashMap::new(),
+                connect_unavailable,
             },
             report,
         ))
@@ -199,7 +265,164 @@ impl Sensor {
         a.set(0, mask, 0).map_err(map_err)
     }
 
+    /// Enforce `rules` for a registered session cgroup (`dir` is its
+    /// directory): attach the connect programs once, then replace the
+    /// session's prefixes and ports.
+    pub fn enforce(
+        &mut self,
+        cgroup_id: u64,
+        dir: &std::path::Path,
+        rules: &EgressRules,
+    ) -> Result<()> {
+        if let Some(why) = &self.connect_unavailable {
+            return Err(SensorError::Load(format!(
+                "egress enforcement unavailable: {why}"
+            )));
+        }
+        let mut state = self.enforced.remove(&cgroup_id).unwrap_or_default();
+        if state.links.is_empty() {
+            let cgroup = std::fs::File::open(dir)?;
+            for name in CONNECT_PROGRAMS {
+                let p: &mut CgroupSockAddr = self
+                    .ebpf
+                    .program_mut(name)
+                    .ok_or_else(|| SensorError::Load(format!("{name} missing")))?
+                    .try_into()
+                    .map_err(|e| SensorError::Load(format!("{name}: {e}")))?;
+                // On 5.7+ this creates a bpf_link, which always coexists
+                // with other programs on the cgroup; the kernel rejects
+                // BPF_F_ALLOW_MULTI on link creation.
+                let link = p
+                    .attach(cgroup.as_fd(), CgroupAttachMode::Single)
+                    .map_err(|e| {
+                        let cause = std::error::Error::source(&e)
+                            .map(|s| format!(": {s}"))
+                            .unwrap_or_default();
+                        SensorError::Load(format!("attach {name}: {e}{cause}"))
+                    })?;
+                state.links.push((name, link));
+            }
+        }
+        let r = self.replace_rules(cgroup_id, &mut state, rules);
+        self.enforced.insert(cgroup_id, state);
+        r
+    }
+
+    fn replace_rules(&mut self, cg: u64, state: &mut Enforced, rules: &EgressRules) -> Result<()> {
+        let mut v4: Vec<(u32, wyrd_common::Egress4)> = Vec::new();
+        let mut v6: Vec<(u32, wyrd_common::Egress6)> = Vec::new();
+        for c in &rules.cidrs {
+            let (addr, prefix) =
+                parse_prefix(c).ok_or_else(|| map_err(format!("{c} is not a prefix")))?;
+            match addr {
+                std::net::IpAddr::V4(a) => {
+                    let mut d = [0u8; 12];
+                    d[..8].copy_from_slice(&cg.to_be_bytes());
+                    d[8..].copy_from_slice(&a.octets());
+                    v4.push((64 + prefix, d));
+                }
+                std::net::IpAddr::V6(a) => {
+                    let mut d = [0u8; 24];
+                    d[..8].copy_from_slice(&cg.to_be_bytes());
+                    d[8..].copy_from_slice(&a.octets());
+                    v6.push((64 + prefix, d));
+                }
+            }
+        }
+        let ports: Vec<wyrd_common::PortKey> = rules
+            .ports
+            .iter()
+            .map(|p| wyrd_common::PortKey {
+                cgroup_id: cg,
+                port: *p,
+                _pad: [0; 6],
+            })
+            .collect();
+        {
+            let mut t4: LpmTrie<_, wyrd_common::Egress4, u8> = LpmTrie::try_from(
+                self.ebpf
+                    .map_mut("EGRESS4")
+                    .ok_or_else(|| map_err("EGRESS4 missing"))?,
+            )
+            .map_err(map_err)?;
+            for (p, d) in &v4 {
+                t4.insert(&Key::new(*p, *d), 1, 0).map_err(map_err)?;
+            }
+            for (p, d) in state.v4.iter().filter(|k| !v4.contains(k)) {
+                let _ = t4.remove(&Key::new(*p, *d));
+            }
+        }
+        {
+            let mut t6: LpmTrie<_, wyrd_common::Egress6, u8> = LpmTrie::try_from(
+                self.ebpf
+                    .map_mut("EGRESS6")
+                    .ok_or_else(|| map_err("EGRESS6 missing"))?,
+            )
+            .map_err(map_err)?;
+            for (p, d) in &v6 {
+                t6.insert(&Key::new(*p, *d), 1, 0).map_err(map_err)?;
+            }
+            for (p, d) in state.v6.iter().filter(|k| !v6.contains(k)) {
+                let _ = t6.remove(&Key::new(*p, *d));
+            }
+        }
+        {
+            let mut pm: HashMap<_, wyrd_common::PortKey, u8> = HashMap::try_from(
+                self.ebpf
+                    .map_mut("PORTS")
+                    .ok_or_else(|| map_err("PORTS missing"))?,
+            )
+            .map_err(map_err)?;
+            for k in &ports {
+                pm.insert(k, 1, 0).map_err(map_err)?;
+            }
+            for k in state.ports.iter().filter(|k| !ports.contains(k)) {
+                let _ = pm.remove(k);
+            }
+        }
+        let flags = if rules.restrict_hosts {
+            wyrd_common::enforce::EGRESS
+        } else {
+            0
+        } | if rules.ports.is_empty() {
+            0
+        } else {
+            wyrd_common::enforce::PORTS
+        };
+        let mut en: HashMap<_, u64, u32> = HashMap::try_from(
+            self.ebpf
+                .map_mut("ENFORCE")
+                .ok_or_else(|| map_err("ENFORCE missing"))?,
+        )
+        .map_err(map_err)?;
+        en.insert(cg, flags, 0).map_err(map_err)?;
+        state.v4 = v4;
+        state.v6 = v6;
+        state.ports = ports;
+        Ok(())
+    }
+
+    fn release_enforcement(&mut self, cg: u64) {
+        let Some(mut state) = self.enforced.remove(&cg) else {
+            return;
+        };
+        let _ = self.replace_rules(cg, &mut state, &EgressRules::default());
+        if let Some(m) = self.ebpf.map_mut("ENFORCE")
+            && let Ok(mut en) = HashMap::<_, u64, u32>::try_from(m)
+        {
+            let _ = en.remove(&cg);
+        }
+        for (name, link) in state.links {
+            if let Some(p) = self.ebpf.program_mut(name)
+                && let Ok(p) = <&mut CgroupSockAddr>::try_from(p)
+            {
+                let _ = p.detach(link);
+            }
+        }
+    }
+
     pub fn unregister(&mut self, cgroup_id: u64) -> Result<()> {
+        self.release_enforcement(cgroup_id);
         let mut m: HashMap<_, u64, u32> = HashMap::try_from(
             self.ebpf
                 .map_mut("SESSIONS")

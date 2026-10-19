@@ -46,17 +46,34 @@ never opens agent-supplied paths). The transcript may lag behind, so
 
 ## Decisions
 
-`PreToolUse` is answered with a decision. Until Wasm policies arrive
-(Phase 9) the policy is static: `wyrd run --deny-tool Bash --deny-tool
-'mcp__github__*'`. `allow` prints nothing, so the agent's own permission
-rules still apply — Wyrdline only ever narrows what the agent may do;
-`deny` returns `permissionDecision: deny` with a reason.
+`PreToolUse` (and the gateway's `tools/call`) is answered with a decision:
+
+1. the static deny list, `wyrd run --deny-tool Bash --deny-tool
+   'mcp__github__*'`;
+2. then the Wasm policy of `wyrd run --policy policies/default.wasm`
+   (`on-tool-call`, see [ADR-007](../adr/007-wasm-policy-host.md)), which
+   sees the redacted arguments, the adapter, the workspace, and how many
+   calls were denied before;
+3. `ask` waits for a human: `wyrd ask <session>` lists pending asks and
+   answers them (interactively, or `--allow ID` / `--deny ID`). With no
+   answer within `--ask-timeout` (30 s), the call is denied.
+
+Every step writes a `guard.decision` (an ask writes two: the `ask` and
+the final answer, with who answered and how long it took). `allow` prints
+nothing, so the agent's own permission rules still apply — Wyrdline only
+ever narrows what the agent may do; `deny` returns
+`permissionDecision: deny` with a reason.
+
+Asks are answered over the intent socket, which the agent can reach too,
+so an answer must carry the session's control token: 32 random bytes in
+`control.token` (0600) in the session directory, removed when the run
+ends. The Cell cannot read the session directory.
 
 Failure handling:
 
 | Situation | Cell mode | Observe mode |
 |---|---|---|
-| socket unreachable / timed out (20 s) | deny pre-checks ("wyrdline unavailable") | allow |
+| socket unreachable / timed out (45 s) | deny pre-checks ("wyrdline unavailable") | allow |
 | malformed payload | recorded as `guard.decision` (policy `wyrdline.ingest`), deny | recorded, allow |
 | ledger append fails | deny pre-checks | allow |
 | not under `wyrd run` (no socket variable) | no-op | no-op |

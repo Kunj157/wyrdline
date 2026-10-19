@@ -2,10 +2,14 @@ use aya_ebpf::helpers::{
     bpf_get_current_ancestor_cgroup_id, bpf_get_current_comm, bpf_get_current_pid_tgid,
     bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
 };
-use aya_ebpf::macros::{map, tracepoint};
-use aya_ebpf::maps::{Array, HashMap, PerCpuArray, RingBuf};
-use aya_ebpf::programs::TracePointContext;
-use wyrd_common::{ARG_LEN, MAX_ARGS, MAX_CGROUP_DEPTH, Offsets, RawEvent, flag, kind};
+use aya_ebpf::macros::{cgroup_sock_addr, map, tracepoint};
+use aya_ebpf::maps::lpm_trie::Key;
+use aya_ebpf::maps::{Array, HashMap, LpmTrie, PerCpuArray, RingBuf};
+use aya_ebpf::programs::{SockAddrContext, TracePointContext};
+use wyrd_common::{
+    ARG_LEN, Egress4, Egress6, MAX_ARGS, MAX_CGROUP_DEPTH, Offsets, PortKey, RawEvent, enforce,
+    flag, kind, verdict,
+};
 
 /// Ring buffer to userspace (size overridden by the loader).
 #[map]
@@ -33,6 +37,23 @@ static PENDING: HashMap<u32, RawEvent> = HashMap::with_max_entries(8_192, 0);
 #[map]
 static SCRATCH: PerCpuArray<RawEvent> = PerCpuArray::with_max_entries(1, 0);
 
+/// Session cgroup id → `enforce::*` bits, for sessions whose egress is
+/// enforced by the cgroup connect programs.
+#[map]
+static ENFORCE: HashMap<u64, u32> = HashMap::with_max_entries(1024, 0);
+
+/// Allowed IPv4 prefixes per session (see `wyrd_common::Egress4`).
+#[map]
+static EGRESS4: LpmTrie<Egress4, u8> = LpmTrie::with_max_entries(65_536, 0);
+
+/// Allowed IPv6 prefixes per session.
+#[map]
+static EGRESS6: LpmTrie<Egress6, u8> = LpmTrie::with_max_entries(65_536, 0);
+
+/// Allowed destination ports per session.
+#[map]
+static PORTS: HashMap<PortKey, u8> = HashMap::with_max_entries(65_536, 0);
+
 /// Per-CPU count of events lost because the ring buffer was full.
 #[map]
 static DROPS: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
@@ -47,6 +68,8 @@ static OFFSETS: Offsets = Offsets {
 };
 
 const CLONE_THREAD: u64 = 0x0001_0000;
+const EPERM: i64 = 1;
+const EACCES: i64 = 13;
 const AF_INET: u16 = 2;
 const AF_INET6: u16 = 10;
 
@@ -267,7 +290,25 @@ pub fn sys_exit_generic(ctx: TracePointContext) -> u32 {
     };
     // SAFETY: sys_exit_* has `long ret` at offset 16.
     let ret = unsafe { ctx.read_at::<i64>(16) }.unwrap_or(-1);
-    if ret >= 0 {
+    // SAFETY: map value owned by this tid.
+    let connect = unsafe { (*p).kind } == kind::CONNECT;
+    if connect {
+        // Every attempt is reported, with its result. In an enforced
+        // session EPERM comes from the cgroup program and EACCES from
+        // Landlock's port rules (which run first).
+        // SAFETY: as above.
+        let ev = unsafe { &mut *p };
+        ev.ret = ret;
+        if unsafe { ENFORCE.get(&ev.cgroup_id) }.is_some() {
+            ev.a2 = if ret == -EPERM || ret == -EACCES {
+                verdict::DENIED
+            } else {
+                verdict::ALLOWED
+            };
+        }
+        ev.ts_ns = unsafe { bpf_ktime_get_ns() };
+        emit(ev);
+    } else if ret >= 0 {
         // SAFETY: map value owned by this tid.
         let ev = unsafe { &mut *p };
         ev.ret = ret;
@@ -555,8 +596,92 @@ pub fn sys_enter_connect(ctx: TracePointContext) -> u32 {
         ev.s0[..16].copy_from_slice(&a);
         ev.len0 = 16;
     }
-    emit(ev);
+    ev.a2 = verdict::ATTEMPT;
+    pend(ev);
     0
+}
+
+// ---------------------------------------------------------------- egress
+
+#[inline(always)]
+fn allowed4(cg: u64, a: [u8; 4]) -> bool {
+    let mut d: Egress4 = [0; 12];
+    d[..8].copy_from_slice(&cg.to_be_bytes());
+    d[8..].copy_from_slice(&a);
+    EGRESS4.get(&Key::new(96, d)).is_some()
+}
+
+#[inline(always)]
+fn allowed6(cg: u64, a: [u8; 16]) -> bool {
+    let mut d: Egress6 = [0; 24];
+    d[..8].copy_from_slice(&cg.to_be_bytes());
+    d[8..].copy_from_slice(&a);
+    EGRESS6.get(&Key::new(192, d)).is_some()
+}
+
+/// 1 lets the connect proceed, 0 fails it with `EPERM`. Only registered
+/// sessions with enforcement are checked; the outcome is reported by the
+/// `connect` syscall tracepoints, which know the process.
+#[inline(always)]
+fn egress(family: u16, a4: [u8; 4], a6: [u8; 16], port: u16) -> i32 {
+    let Some(cg) = session_cgroup() else {
+        return 1;
+    };
+    // SAFETY: map lookup.
+    let Some(flags) = (unsafe { ENFORCE.get(&cg) }).copied() else {
+        return 1;
+    };
+    if flags & enforce::EGRESS != 0 {
+        let mapped =
+            family == AF_INET6 && a6[..10] == [0u8; 10] && a6[10] == 0xff && a6[11] == 0xff;
+        let ok = if family == AF_INET {
+            allowed4(cg, a4)
+        } else if mapped {
+            allowed4(cg, [a6[12], a6[13], a6[14], a6[15]])
+        } else {
+            allowed6(cg, a6)
+        };
+        if !ok {
+            return 0;
+        }
+    }
+    if flags & enforce::PORTS != 0 {
+        let key = PortKey {
+            cgroup_id: cg,
+            port,
+            _pad: [0; 6],
+        };
+        // SAFETY: map lookup.
+        if unsafe { PORTS.get(&key) }.is_none() {
+            return 0;
+        }
+    }
+    1
+}
+
+#[cgroup_sock_addr(connect4)]
+pub fn connect4(ctx: SockAddrContext) -> i32 {
+    // SAFETY: the kernel passes a valid `bpf_sock_addr`.
+    let (ip, port) = unsafe { ((*ctx.sock_addr).user_ip4, (*ctx.sock_addr).user_port) };
+    // Both are in network byte order; the port in the low 16 bits.
+    egress(
+        AF_INET,
+        ip.to_ne_bytes(),
+        [0; 16],
+        u16::from_be(port as u16),
+    )
+}
+
+#[cgroup_sock_addr(connect6)]
+pub fn connect6(ctx: SockAddrContext) -> i32 {
+    // SAFETY: as above.
+    let (w, port) = unsafe { ((*ctx.sock_addr).user_ip6, (*ctx.sock_addr).user_port) };
+    let mut a = [0u8; 16];
+    a[..4].copy_from_slice(&w[0].to_ne_bytes());
+    a[4..8].copy_from_slice(&w[1].to_ne_bytes());
+    a[8..12].copy_from_slice(&w[2].to_ne_bytes());
+    a[12..].copy_from_slice(&w[3].to_ne_bytes());
+    egress(AF_INET6, [0; 4], a, u16::from_be(port as u16))
 }
 
 // ---------------------------------------------------------------- cwd

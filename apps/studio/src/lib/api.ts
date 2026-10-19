@@ -47,6 +47,8 @@ export const keys = {
   graph: (sid: string) => ["graph", sid] as const,
   verify: (sid: string) => ["verify", sid] as const,
   checkpoints: (sid: string) => ["checkpoints", sid] as const,
+  asks: (sid: string) => ["asks", sid] as const,
+  policies: ["policies"] as const,
   diff: (sid: string, a: string, b: string) => ["diff", sid, a, b] as const,
   diffFile: (sid: string, a: string, b: string, path: string) =>
     ["diff-file", sid, a, b, path] as const,
@@ -146,4 +148,37 @@ export function useSessionActions(sid: string) {
     }),
     checkpoint: useMutation({ mutationFn: () => c.checkpoint(sid, newKey()), onSuccess: refresh }),
   };
+}
+
+/** Questions the running session's policy is waiting on (polled while live). */
+export function useAsks(sid: string, live: boolean) {
+  return useQuery({
+    queryKey: keys.asks(sid),
+    queryFn: () => apiClient().asks(sid),
+    enabled: live,
+    refetchInterval: live ? 1000 : false,
+  });
+}
+
+export function useAnswerAsk(sid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; allow: boolean }) => apiClient().answerAsk(sid, v.id, v.allow),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.asks(sid) }),
+  });
+}
+
+export function usePolicies(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.policies,
+    queryFn: () => apiClient().policies(),
+    enabled,
+  });
+}
+
+/** Replay this session against an uploaded policy. */
+export function useBacktest(sid: string) {
+  return useMutation({
+    mutationFn: (policyId: string) => apiClient().backtest(policyId, sid),
+  });
 }

@@ -114,6 +114,7 @@ export function sessionFromEvents(events: Event[], fallbackName: string): api.Se
     runs: 1,
     agent,
     deny_tools: [],
+    policy: null,
   };
 }
 
@@ -161,6 +162,7 @@ export function createOfflineClient(
     runs: detail.runs,
     agent: detail.agent,
     deny_tools: [],
+    policy: null,
   } as api.SessionRecord;
   const client = {
     health: async () => ({ status: "offline" }) as unknown as api.Health,

@@ -29,7 +29,7 @@ use wyrd_schema::{CaptureMode, Decision};
 pub const DENIED_CODE: i64 = -32001;
 
 /// How long to wait for a decision on `tools/call`.
-pub const DECISION_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DECISION_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Where gateway reports go.
 pub trait Reporter: Send + Sync {

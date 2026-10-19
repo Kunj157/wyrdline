@@ -32,6 +32,11 @@ impl DataDir {
         self.root.join("sessions")
     }
 
+    /// Uploaded policy components (`<id>.wasm`).
+    pub fn policies(&self) -> PathBuf {
+        self.root.join("policies")
+    }
+
     pub fn cas(&self) -> PathBuf {
         self.root.join("cas")
     }
@@ -45,6 +50,15 @@ impl DataDir {
             root: self.sessions().join(id),
         }
     }
+}
+
+/// `$XDG_STATE_HOME/wyrdline`, else `~/.local/state/wyrdline` (the daemon
+/// token lives here).
+pub fn state_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("XDG_STATE_HOME") {
+        return Some(PathBuf::from(d).join("wyrdline"));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state/wyrdline"))
 }
 
 /// Files of one session.

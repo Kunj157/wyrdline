@@ -29,6 +29,8 @@ pub struct CreateOptions {
     pub name: Option<String>,
     pub agent_kind: String,
     pub deny_tools: Vec<String>,
+    /// Wasm policy component and its version (`b3:…`).
+    pub policy: Option<(PathBuf, String)>,
     pub kernel_release: String,
     pub capabilities: BTreeMap<String, bool>,
 }
@@ -48,6 +50,10 @@ pub struct RunOptions<'a> {
     /// Called once the agent's cgroup exists and before the agent may run
     /// (it is held at the start gate), e.g. to register with the sensor.
     pub on_started: Option<OnStarted<'a>>,
+    /// Policy additions to the Cell's Landlock rules: extra writable paths,
+    /// paths the agent may not read, TCP ports it may connect to. Wyrdline's
+    /// own data and state directories are always unreadable in a Cell.
+    pub confine: confine::Confinement,
 }
 
 /// Callback run when a Cell is launched and held at its start gate.
@@ -191,6 +197,7 @@ impl Session {
             runs: 0,
             agent: opts.agent_kind.clone(),
             deny_tools: opts.deny_tools,
+            policy: opts.policy.as_ref().map(|(p, _)| p.clone()),
         };
         state::save(&dir, &rec)?;
         let mut ledger = Ledger::create(dir.ledger(), &id)?;
@@ -203,7 +210,7 @@ impl Session {
             mode,
             kernel_release: opts.kernel_release,
             capabilities: opts.capabilities,
-            policy_set_hash: None,
+            policy_set_hash: opts.policy.map(|(_, v)| v),
         }))])?;
         let cas = Cas::open(data.cas())?;
         Ok(Session {
@@ -320,6 +327,7 @@ impl Session {
         probe_userns: impl FnOnce() -> std::result::Result<(), String>,
         command: Option<Vec<String>>,
         extra_env: Vec<(String, String)>,
+        extra: confine::Confinement,
     ) -> Result<launch::Running> {
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
@@ -343,7 +351,7 @@ impl Session {
             upper: self.dir.upper(&branch),
             work: self.dir.work(&branch),
             cgroup_procs: None,
-            write_allow: confine::default_write_allow(&workspace, launch::home_dir().as_deref()),
+            confine: self.confinement(&workspace, extra),
             cwd: workspace,
             command: command.unwrap_or_else(|| self.rec.command.clone()),
             env: launch::agent_env(&self.rec.id)
@@ -407,6 +415,51 @@ impl Session {
 
     /// Run the agent in the current branch and wait for it to exit. Returns
     /// its exit code. A final checkpoint is taken in Cell mode.
+    /// The Cell's Landlock rules: the default write allow-list plus the
+    /// policy's, the policy's read denials plus Wyrdline's own directories
+    /// (ledgers, checkpoints, control tokens, the daemon token), and the
+    /// policy's TCP ports.
+    fn confinement(&self, workspace: &Path, extra: confine::Confinement) -> confine::Confinement {
+        let mut write_allow =
+            confine::default_write_allow(workspace, launch::home_dir().as_deref());
+        write_allow.extend(extra.write_allow);
+        let mut read_deny = extra.read_deny;
+        // Wyrdline's own data: other sessions, the CAS, the host key, and of
+        // this session everything but the files the agent is handed (hook
+        // settings, MCP config).
+        let data = self.data.root();
+        read_deny.extend([data.join("cas"), data.join("keys")]);
+        if let Ok(dir) = fs::read_dir(self.data.sessions()) {
+            read_deny.extend(
+                dir.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p != self.dir.root()),
+            );
+        }
+        for name in [
+            "control.token",
+            "ledger.wyrdledger",
+            "ledger.wyrdledger-wal",
+            "ledger.wyrdledger-shm",
+            "baseline.cbor",
+            "branches",
+        ] {
+            read_deny.push(self.dir.root().join(name));
+        }
+        if let Some(state) = crate::paths::state_dir() {
+            read_deny.push(state);
+        }
+        // Never deny what the agent must read: its own workspace.
+        read_deny.retain(|d| !workspace.starts_with(d));
+        read_deny.sort();
+        read_deny.dedup();
+        confine::Confinement {
+            write_allow,
+            read_deny,
+            tcp_connect_ports: extra.tcp_connect_ports,
+        }
+    }
+
     pub fn run(
         &mut self,
         helper: &Path,
@@ -418,8 +471,9 @@ impl Session {
             command,
             before_final,
             on_started,
+            confine: extra_confine,
         } = opts;
-        let mut running = self.start(helper, probe_userns, command, extra_env)?;
+        let mut running = self.start(helper, probe_userns, command, extra_env, extra_confine)?;
         // Register (callback) only once stage two has finished its setup and
         // waits at the gate, so its own syscalls are not recorded as the agent's.
         let at_gate = running.wait_at_gate()?;

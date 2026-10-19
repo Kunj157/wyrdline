@@ -23,6 +23,9 @@ wyrd run (stage one, as the user)
         ├─ (root mode) setgroups/setgid/setuid to the caller
         ├─ Landlock: writes only beneath the workspace, /tmp, /var/tmp, /dev,
         │    /proc/self and agent state dirs (~/.claude, ~/.codex, ~/.gemini, ~/.config, ~/.cache, ~/.npm)
+        ├─ Landlock: no reads of Wyrdline's data (other sessions, CAS, keys, this
+        │    session's ledger and control token) or state dirs, nor of the policy's fs-read-deny;
+        │    TCP connects only to the policy's ports, if it lists any
         ├─ wait at the start gate (FIFO in the session dir)
         └─ exec the agent
 ```
@@ -45,6 +48,43 @@ The overlay exists only inside the agent's mount namespace: the rest of the
 system, including the user's editor, keeps seeing the real workspace. The
 session data directory is outside the Landlock write set, so the agent
 cannot edit its own ledger or checkpoints.
+
+## Policy kernel rules
+
+With `wyrd run --policy`, the policy's `kernel-rules` are compiled by
+`wyrd-policy::kernel` and recorded as a kernel-stage `guard.decision`:
+
+- `fs-write-allow` joins the write allow-list above;
+- `fs-read-deny` (`~` expanded, relative paths under the workspace) is
+  enforced as a complement, because Landlock only grants: every sibling
+  along the path to a denied entry gets read rights, the ancestors only
+  directory listing. Names inside a denied directory can still be listed;
+  entries created later inside an ancestor are not readable;
+- `egress-allow-ports` become Landlock TCP connect rules (ABI ≥ 4);
+- patterns such as `**/.env*` cannot be expressed and are left to
+  tool-call and effect-time checks (listed in the decision's reason).
+
+A policy whose `kernel-rules` fails cannot start a session. When the
+kernel's Landlock ABI cannot enforce a requested right (or in observe
+mode), the session is marked Degraded with the reason.
+
+## Effect-time guard
+
+While the agent runs, every kernel effect is also checked:
+
+- the exec deny list (`exec-deny`): an exec whose program name is on the
+  list, or whose binary has the same size and BLAKE3 hash as a listed
+  program found on `PATH` at session start (a renamed copy), is denied;
+- the policy's `on-effect` for execs, sensitive reads, writes, unlinks,
+  renames, and connects (`ask` counts as deny: an effect cannot wait).
+
+A deny is recorded as an effect-stage `guard.decision` citing the
+effect's `seq`, and in Cell mode the agent is stopped (cgroup frozen and
+killed). This is **detect-and-stop**: the effect has already happened
+and cannot be undone; the forbidden program may run briefly. Network and
+filesystem access are enforced before the fact by the cgroup connect
+programs and Landlock. Observe mode records the decision without
+stopping.
 
 ## Checkpoints
 

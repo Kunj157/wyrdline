@@ -34,6 +34,8 @@ pub struct Operation {
     pub summary: &'static str,
     pub auth: Auth,
     pub request: Option<Value>,
+    /// Media type of the request body.
+    pub request_type: &'static str,
     /// Success status, description, body.
     pub ok: (u16, &'static str, Body),
     /// Extra success answers (e.g. 202 for relaunch).
@@ -84,6 +86,7 @@ fn op(
         summary,
         auth: Auth::Daemon,
         request: None,
+        request_type: "application/json",
         ok,
         also: Vec::new(),
         problems: SESSION,
@@ -212,6 +215,51 @@ fn operations(s: &mut Schemas) -> Vec<Operation> {
             "Stop the running agent",
             (200, "Stopped", s.out::<api::Stopped>()),
         ),
+        op(
+            "get",
+            "/v1/policies",
+            "Uploaded policy components",
+            (200, "Policies", s.out::<api::PolicyList>()),
+        ),
+        Operation {
+            request: Some(
+                json!({ "type": "string", "contentMediaType": "application/wasm", "description": "A wyrdline:policy component" }),
+            ),
+            request_type: "application/wasm",
+            problems: &[400, 413, 422],
+            ..op(
+                "post",
+                "/v1/policies",
+                "Upload a policy component (?name=)",
+                (201, "Stored", s.out::<api::PolicyInfo>()),
+            )
+        },
+        Operation {
+            request: Some(s.inp::<api::BacktestBody>()),
+            problems: ACTION,
+            ..op(
+                "post",
+                "/v1/policies/{pid}/backtest",
+                "Replay a recorded session against a policy",
+                (200, "Findings", s.out::<api::BacktestReport>()),
+            )
+        },
+        op(
+            "get",
+            "/v1/sessions/{sid}/asks",
+            "Questions the session's policy is waiting on",
+            (200, "Pending asks", s.out::<api::PendingAsks>()),
+        ),
+        Operation {
+            request: Some(s.inp::<api::AnswerBody>()),
+            problems: ACTION,
+            ..op(
+                "post",
+                "/v1/sessions/{sid}/asks/{id}",
+                "Allow or deny a pending ask",
+                (200, "Answered", s.out::<api::Answered>()),
+            )
+        },
         Operation {
             request: Some(s.inp::<api::RewindBody>()),
             also: relaunch(s),
@@ -434,7 +482,7 @@ pub fn document() -> Value {
         if let Some(req) = &o.request {
             operation["requestBody"] = json!({
                 "required": false,
-                "content": { "application/json": { "schema": req } }
+                "content": { o.request_type: { "schema": req } }
             });
         }
         let entry = paths.entry(o.path.to_string()).or_insert_with(|| json!({}));

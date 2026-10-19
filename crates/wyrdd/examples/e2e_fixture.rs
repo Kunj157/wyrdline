@@ -45,6 +45,93 @@ fn append(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::err
 }
 
 /// A session that looks like a running agent: Recording, a few events.
+/// Asks about every tool call; answered from Studio in the e2e suite.
+#[derive(Debug)]
+struct AlwaysAsk;
+
+impl wyrd_adapters::ToolPolicy for AlwaysAsk {
+    fn id(&self) -> &'static str {
+        "e2e-ask"
+    }
+    fn version(&self) -> &'static str {
+        "b3:e2e"
+    }
+    fn on_tool_call(
+        &self,
+        _: &str,
+        _: &serde_json::Value,
+        _: &str,
+        _: u32,
+    ) -> (wyrd_schema::Decision, String) {
+        (
+            wyrd_schema::Decision::Ask,
+            "curl to a host outside the allow-list".into(),
+        )
+    }
+}
+
+struct Ledger(std::sync::Mutex<wyrd_ledger::Ledger>);
+
+impl wyrd_adapters::Sink for Ledger {
+    fn append(&self, bodies: Vec<EventBody>) -> Result<(), String> {
+        let events = bodies
+            .into_iter()
+            .map(|body| Event {
+                seq: 0,
+                ts_mono_ns: 11_000_000_000,
+                ts_wall_ms: 1_760_000_002_000,
+                process: None,
+                drops_since_last: 0,
+                body,
+            })
+            .collect();
+        self.0
+            .lock()
+            .map_err(|e| e.to_string())?
+            .append(events)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Serve the live session's intent socket like `wyrd run`, make one tool
+/// call that the policy asks about, and print the final decision.
+fn ask(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    use wyrd_adapters::asks::{Asks, CONTROL_TOKEN_FILE};
+    let data = DataDir::new(PathBuf::from(args.next().ok_or("data dir")?));
+    let sid = args.next().ok_or("session")?;
+    let s = Session::open(&data, &sid)?;
+    let token = wyrd_adapters::asks::new_token()?;
+    std::fs::write(s.dir().root().join(CONTROL_TOKEN_FILE), &token)?;
+    let socket = wyrd_adapters::server::socket_path(s.dir().root(), &sid);
+    let listener = wyrd_adapters::server::bind(&socket)?;
+    let ingest = std::sync::Arc::new(
+        wyrd_adapters::Ingest::new(
+            Ledger(std::sync::Mutex::new(wyrd_ledger::Ledger::open(
+                s.dir().ledger(),
+            )?)),
+            wyrd_schema::CaptureMode::Observe,
+            wyrd_adapters::StaticPolicy::default(),
+            1,
+        )
+        .with_policy(std::sync::Arc::new(AlwaysAsk))
+        .with_asks(std::sync::Arc::new(Asks::new(
+            token,
+            std::time::Duration::from_secs(60),
+        ))),
+    );
+    let served = ingest.clone();
+    std::thread::spawn(move || wyrd_adapters::server::serve(&listener, &served));
+    let r = ingest.handle(wyrd_adapters::Request::Hook {
+        adapter: "claude-code".into(),
+        payload: serde_json::json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": "ask-1", "tool_input": {"command": "curl https://diag.example/upload"}}),
+    });
+    let _ = std::fs::remove_file(s.dir().root().join(CONTROL_TOKEN_FILE));
+    let _ = std::fs::remove_file(&socket);
+    writeln!(std::io::stdout(), "{}", serde_json::to_string(&r)?)?;
+    Ok(())
+}
+
 fn live_session(
     data: &DataDir,
     ws: &std::path::Path,
@@ -60,6 +147,7 @@ fn live_session(
             name: Some("e2e live session".into()),
             agent_kind: "fakeagent".into(),
             deny_tools: Vec::new(),
+            policy: None,
             kernel_release: "e2e".into(),
             capabilities: BTreeMap::new(),
         },
@@ -75,6 +163,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.peek().is_some_and(|a| a == "append") {
         args.next();
         return append(args);
+    }
+    if args.peek().is_some_and(|a| a == "ask") {
+        args.next();
+        return ask(args);
     }
     let data = DataDir::new(PathBuf::from(args.next().ok_or("data dir")?));
     let ws = PathBuf::from(args.next().ok_or("workspace dir")?);
@@ -92,6 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: Some("e2e greeting fix".into()),
             agent_kind: "fakeagent".into(),
             deny_tools: Vec::new(),
+            policy: None,
             kernel_release: "e2e".into(),
             capabilities: BTreeMap::new(),
         },

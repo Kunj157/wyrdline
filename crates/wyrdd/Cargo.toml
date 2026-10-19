@@ -28,6 +28,7 @@ tracing-subscriber.workspace = true
 ts-rs.workspace = true
 ulid.workspace = true
 wyrd-adapters = { path = "../wyrd-adapters" }
+wyrd-policy = { path = "../wyrd-policy" }
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-doctor = { path = "../wyrd-doctor" }

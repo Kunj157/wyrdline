@@ -459,3 +459,100 @@ fn codex_and_gemini_are_labelled_but_not_injected() {
         assert_eq!(s.agent_kind, adapter);
     }
 }
+
+#[test]
+fn policy_decides_and_asks_are_answered_from_the_cli() {
+    let e = env();
+    let policy = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../policies/fixtures/hostile.wasm")
+        .canonicalize()
+        .unwrap();
+    let asked = e.tmp.path().join("asked.json");
+    let denied = e.tmp.path().join("denied.json");
+    let script = agent(
+        &e,
+        "agent.sh",
+        &format!(
+            r#"hook '{{"hook_event_name":"PreToolUse","tool_name":"ask","tool_use_id":"t1","tool_input":{{"command":"curl x"}}}}' > {}
+hook '{{"hook_event_name":"PreToolUse","tool_name":"deny","tool_use_id":"t2","tool_input":{{}}}}' > {}"#,
+            asked.display(),
+            denied.display()
+        ),
+    );
+    let mut run = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+        .args(["run", "--observe", "--agent", "claude-code", "--policy"])
+        .arg(&policy)
+        .args(["--", &script])
+        .current_dir(&e.ws)
+        .env("WYRD_DATA_DIR", &e.data)
+        .env("WYRD_SENSORD_SOCKET", "/nonexistent/wyrd-sensord.sock")
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Wait for the pending ask, then allow it from the CLI.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let (sid, id) = loop {
+        assert!(std::time::Instant::now() < deadline, "no pending ask");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let Some(sid) = fs::read_dir(e.data.join("sessions"))
+            .ok()
+            .and_then(|mut d| d.next())
+            .and_then(Result::ok)
+            .map(|d| d.file_name().to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        let out = wyrd(&e, &["ask", &sid, "--json"]);
+        if !out.status.success() {
+            continue;
+        }
+        let asks: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        if let Some(a) = asks.as_array().and_then(|a| a.first()) {
+            assert_eq!(a["tool"], "ask");
+            assert_eq!(a["policy_id"], "hostile");
+            break (sid, a["id"].as_u64().unwrap());
+        }
+    };
+    let out = wyrd(&e, &["ask", &sid, "--allow", &id.to_string()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(run.wait().unwrap().code(), Some(0));
+
+    let read = |p: &std::path::Path| -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap_or_default()
+    };
+    // An allow prints nothing; the policy's deny reaches the agent.
+    assert_eq!(read(&asked), serde_json::Value::Null);
+    let d = read(&denied);
+    assert_eq!(d["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        d["hookSpecificOutput"]["permissionDecisionReason"],
+        format!("denied in {}", e.ws.canonicalize().unwrap().display())
+    );
+
+    let guards: Vec<(Decision, String)> = session_events(&e)
+        .into_iter()
+        .filter_map(|ev| match ev {
+            EventBody::GuardDecision(g) if g.stage != wyrd_schema::GuardStage::Kernel => {
+                Some((g.decision, g.policy_id))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        guards,
+        [
+            (Decision::Ask, "hostile".to_string()),
+            (Decision::Allow, "hostile".to_string()),
+            (Decision::Deny, "hostile".to_string()),
+        ]
+    );
+    // The control token is removed with the run.
+    assert!(
+        !e.data
+            .join("sessions")
+            .join(&sid)
+            .join("control.token")
+            .exists()
+    );
+    assert_ne!(wyrd(&e, &["ask", &sid]).status.code(), Some(0));
+}

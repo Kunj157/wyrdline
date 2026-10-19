@@ -29,6 +29,13 @@ pub struct RunArgs {
     /// Deny a tool before it runs (exact name, or a prefix ending in `*`).
     #[arg(long = "deny-tool", value_name = "TOOL")]
     deny_tools: Vec<String>,
+    /// Wasm policy component deciding tool calls (`policies/default.wasm`).
+    #[arg(long, value_name = "FILE")]
+    policy: Option<PathBuf>,
+    /// Seconds a tool call waits for an answer when the policy asks
+    /// (`wyrd ask`, Studio) before it is denied.
+    #[arg(long, value_name = "SECS", default_value_t = 30)]
+    ask_timeout: u64,
     /// Agent command, after `--`.
     #[arg(last = true, required = true)]
     command: Vec<String>,
@@ -136,9 +143,169 @@ fn read_userns_reason() -> String {
     }
 }
 
-fn run_session(s: &mut Session) -> anyhow::Result<u8> {
+fn load_policy(path: &Path) -> anyhow::Result<std::sync::Arc<wyrd_policy::Policy>> {
+    let p = wyrd_policy::Policy::load_file(path)
+        .with_context(|| format!("loading the policy {}", path.display()))?;
+    Ok(std::sync::Arc::new(p))
+}
+
+/// The policy's kernel rules for this session: what the Cell enforces,
+/// recorded as a kernel-stage decision. A policy whose `kernel-rules` fails
+/// cannot start a session.
+fn kernel_plan(
+    s: &Session,
+    policy: &wyrd_policy::Policy,
+) -> anyhow::Result<(
+    wyrd_policy::kernel::Compiled,
+    wyrd_cell::confine::Confinement,
+)> {
+    let rec = s.record();
+    let ctx = wyrd_policy::SessionCtx {
+        repo_root: rec.workspace.display().to_string(),
+        scope_globs: Vec::new(),
+        prior_denials: 0,
+    };
+    let out = policy.kernel_rules(&ctx);
+    let Some(rules) = out.value else {
+        anyhow::bail!(
+            "the policy {} failed to produce kernel rules ({}); not starting an unenforced session",
+            policy.id,
+            out.error.unwrap_or_default()
+        );
+    };
+    let home = wyrd_cell::launch::home_dir();
+    let compiled = wyrd_policy::kernel::compile(&rules, home.as_deref(), &rec.workspace);
+    let confine = wyrd_cell::confine::Confinement {
+        write_allow: compiled.write_allow.clone(),
+        read_deny: compiled.read_deny.clone(),
+        tcp_connect_ports: compiled.tcp_connect_ports.clone(),
+    };
+    let list = |v: &[std::path::PathBuf]| {
+        v.iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let expressible_elsewhere = if compiled.not_expressible.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; left to tool-call and effect-time checks: {}",
+            compiled.not_expressible.join("; ")
+        )
+    };
+    let reason = format!(
+        "kernel rules: no reads of [{}]; extra writes to [{}]; TCP ports {}{expressible_elsewhere}",
+        list(&compiled.read_deny),
+        list(&compiled.write_allow),
+        compiled
+            .tcp_connect_ports
+            .as_ref()
+            .map_or_else(|| "any".to_string(), |p| format!("{p:?}")),
+    );
+    let mut ledger = wyrd_ledger::Ledger::open(s.dir().ledger())?;
+    ledger.append(vec![wyrd_schema::Event {
+        seq: 0,
+        ts_mono_ns: wyrd_cell::mono_ns(),
+        ts_wall_ms: wyrd_cell::now_ms(),
+        process: None,
+        drops_since_last: 0,
+        body: wyrd_schema::EventBody::GuardDecision(wyrd_schema::GuardDecision {
+            stage: wyrd_schema::GuardStage::Kernel,
+            decision: wyrd_schema::Decision::Allow,
+            policy_id: policy.id.clone(),
+            policy_version: policy.version.clone(),
+            reason,
+            call_id: None,
+            subject_seq: None,
+        }),
+    }])?;
+    Ok((compiled, confine))
+}
+
+/// What the cgroup connect programs enforce for this session, if anything.
+fn egress_plan(
+    k: &wyrd_policy::kernel::Compiled,
+    policy: &wyrd_policy::Policy,
+) -> Option<super::effects::EgressPlan> {
+    if k.egress_cidrs.is_none() && k.tcp_connect_ports.is_none() {
+        return None;
+    }
+    Some(super::effects::EgressPlan {
+        cidrs: k
+            .egress_cidrs
+            .iter()
+            .flatten()
+            .map(ToString::to_string)
+            .collect(),
+        hosts: k.egress_hosts.clone(),
+        ports: k.tcp_connect_ports.clone().unwrap_or_default(),
+        restrict_hosts: k.egress_cidrs.is_some(),
+        policy_id: policy.id.clone(),
+        policy_version: policy.version.clone(),
+    })
+}
+
+/// Why the Cell cannot enforce everything the policy asked for.
+fn unenforced(s: &Session, confine: &wyrd_cell::confine::Confinement) -> Vec<String> {
+    if s.record().mode == wyrd_schema::CaptureMode::Observe {
+        return vec!["observe mode: the policy's kernel rules are not enforced".into()];
+    }
+    let abi = super::doctor::landlock_abi_from_child().and_then(|a| u32::try_from(a).ok());
+    wyrd_cell::confine::unenforced(confine, abi)
+}
+
+fn run_session(
+    s: &mut Session,
+    policy: Option<std::sync::Arc<wyrd_policy::Policy>>,
+    ask_timeout: Option<std::time::Duration>,
+) -> anyhow::Result<u8> {
     let helper = helper()?;
-    let capture = intent::start(&data(), s, &helper)?;
+    let policy = match (policy, &s.record().policy) {
+        (Some(p), _) => Some(p),
+        (None, Some(path)) => Some(load_policy(path)?),
+        (None, None) => None,
+    };
+    let kernel = policy.as_deref().map(|p| kernel_plan(s, p)).transpose()?;
+    let degraded = kernel
+        .as_ref()
+        .map(|(_, c)| unenforced(s, c))
+        .unwrap_or_default();
+    let observe = s.record().mode == wyrd_schema::CaptureMode::Observe;
+    let egress = match (&kernel, &policy) {
+        (Some((k, _)), Some(p)) if !observe => egress_plan(k, p),
+        _ => None,
+    };
+    let effect_guard = match (&kernel, &policy) {
+        (Some((k, _)), Some(p)) => Some(super::effects::EffectGuard {
+            policy: Some(p.clone()),
+            ctx: wyrd_policy::SessionCtx {
+                repo_root: s.record().workspace.display().to_string(),
+                scope_globs: Vec::new(),
+                prior_denials: 0,
+            },
+            exec_deny: wyrd_policy::effects::ExecDeny::resolve(
+                &k.exec_deny,
+                &std::env::var("PATH").unwrap_or_default(),
+            ),
+            enforce: !observe,
+            workspace: s.record().workspace.clone(),
+            upper: s.dir().upper(&s.record().current_branch),
+            policy_id: p.id.clone(),
+            policy_version: p.version.clone(),
+        }),
+        _ => None,
+    };
+    let confine = kernel.map(|(_, c)| c).unwrap_or_default();
+    let capture = intent::start(
+        &data(),
+        s,
+        &helper,
+        intent::GuardOptions {
+            policy,
+            ask_timeout,
+        },
+    )?;
     let checkpoints = capture.checkpoints.clone();
     let data_dir = data();
     let ledger = s.dir().ledger();
@@ -155,8 +322,16 @@ fn run_session(s: &mut Session) -> anyhow::Result<u8> {
                 ledger.clone(),
                 st.cgroup.as_deref(),
                 &st.workspace,
+                egress,
+                effect_guard,
             ));
+            if !degraded.is_empty() {
+                let reason = degraded.join("; ");
+                let _ = writeln!(std::io::stderr(), "wyrd: warning: {reason}");
+                let _ = Session::mark_degraded(&data_dir, &st.session_id, &reason);
+            }
         })),
+        confine,
     };
     let code = s.run(&helper, probe_userns(&helper), opts);
     if let Some(e) = effects {
@@ -191,6 +366,15 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
             uid: rustix::process::getuid().as_raw(),
         },
     ));
+    let policy_path = a
+        .policy
+        .as_ref()
+        .map(|p| {
+            p.canonicalize()
+                .with_context(|| format!("policy {}", p.display()))
+        })
+        .transpose()?;
+    let loaded = policy_path.as_deref().map(load_policy).transpose()?;
     let mut s = Session::create(
         &data(),
         CreateOptions {
@@ -203,12 +387,20 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
                 .clone()
                 .unwrap_or_else(|| intent::detect_agent(&a.command)),
             deny_tools: a.deny_tools.clone(),
+            policy: policy_path.zip(loaded.as_ref().map(|l| l.version.clone())),
             kernel_release: doctor.kernel_release.clone(),
             capabilities: doctor.capabilities(),
         },
     )?;
     writeln!(out(), "wyrd: session {} started", s.record().id)?;
-    run_session(&mut s)
+    if let Some(p) = &loaded {
+        writeln!(out(), "wyrd: policy {} {}", p.id, p.version)?;
+    }
+    run_session(
+        &mut s,
+        loaded,
+        Some(std::time::Duration::from_secs(a.ask_timeout)),
+    )
 }
 
 pub fn list(a: &ListArgs) -> anyhow::Result<u8> {
@@ -299,7 +491,7 @@ fn rewind_or_fork(
         b.forked_from.as_deref().unwrap_or("-")
     )?;
     if relaunch {
-        run_session(&mut s)
+        run_session(&mut s, None, None)
     } else {
         Ok(exit::OK)
     }

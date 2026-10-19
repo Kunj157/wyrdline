@@ -45,8 +45,16 @@ enum Cmd {
         cgroup_id: u64,
         level: u32,
         workspace: PathBuf,
+        /// The cgroup directory and the rules to enforce in it.
+        egress: Option<(PathBuf, wyrd_sensor::EgressRules)>,
         tx: SyncSender<ServerMsg>,
-        ack: SyncSender<Result<(), String>>,
+        /// `Ok(Some(why))`: registered, but the egress rules are not enforced.
+        ack: SyncSender<Result<Option<String>, String>>,
+    },
+    Egress {
+        cgroup_id: u64,
+        dir: PathBuf,
+        rules: wyrd_sensor::EgressRules,
     },
     Unregister {
         conn: u64,
@@ -169,8 +177,21 @@ fn serve(
     if read.is_err() || line.is_empty() {
         return;
     }
-    let (cgroup, workspace) = match serde_json::from_str::<ClientMsg>(&line) {
-        Ok(ClientMsg::Register { cgroup, workspace }) => (cgroup, workspace),
+    let (cgroup, workspace, egress) = match serde_json::from_str::<ClientMsg>(&line) {
+        Ok(ClientMsg::Register {
+            cgroup,
+            workspace,
+            egress,
+        }) => (cgroup, workspace, egress),
+        Ok(ClientMsg::Egress { .. }) => {
+            let _ = send(
+                &mut stream,
+                &ServerMsg::Error {
+                    message: "register first".into(),
+                },
+            );
+            return;
+        }
         Err(e) => {
             let _ = send(
                 &mut stream,
@@ -197,6 +218,7 @@ fn serve(
             cgroup_id,
             level: wyrd_sensor::loader::cgroup_level(&canon),
             workspace,
+            egress: egress.map(|r| (canon.clone(), r)),
             tx,
             ack: ack_tx,
         })
@@ -204,8 +226,8 @@ fn serve(
     {
         return;
     }
-    match ack_rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(())) => {}
+    let egress_error = match ack_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(why)) => why,
         Ok(Err(message)) => {
             let _ = send(&mut stream, &ServerMsg::Error { message });
             return;
@@ -219,7 +241,7 @@ fn serve(
             );
             return;
         }
-    }
+    };
     tracing::info!(peer_uid, cgroup = %canon.display(), cgroup_id, conn, "registered");
     if send(
         &mut stream,
@@ -227,14 +249,51 @@ fn serve(
             cgroup_id,
             attached,
             skipped,
+            egress_error,
         },
     )
     .is_ok()
     {
+        updates(&stream, cmd_tx, cgroup_id, &canon);
         forward(&mut stream, &rx);
     }
     let _ = cmd_tx.send(Cmd::Unregister { conn, cgroup_id });
     tracing::info!(cgroup_id, conn, "unregistered");
+}
+
+/// Egress rule updates from the client, on their own thread; they can
+/// only ever address the cgroup this connection registered.
+fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, cgroup_id: u64, dir: &Path) {
+    let Ok(read) = stream.try_clone() else {
+        return;
+    };
+    let _ = read.set_read_timeout(None);
+    let cmd_tx = cmd_tx.clone();
+    let dir = dir.to_path_buf();
+    let _ = std::thread::Builder::new()
+        .name("sensord-updates".into())
+        .spawn(move || {
+            let mut reader = BufReader::new(read);
+            loop {
+                let mut line = String::new();
+                match (&mut reader).take(MAX_REQUEST as u64).read_line(&mut line) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                match serde_json::from_str::<ClientMsg>(&line) {
+                    Ok(ClientMsg::Egress { rules }) => {
+                        let _ = cmd_tx.send(Cmd::Egress {
+                            cgroup_id,
+                            dir: dir.clone(),
+                            rules,
+                        });
+                    }
+                    Ok(ClientMsg::Register { .. }) | Err(_) => {
+                        tracing::warn!(cgroup_id, "ignored an invalid update");
+                    }
+                }
+            }
+        });
 }
 
 /// Write queued messages until the client goes away. Periodic `drops`
@@ -267,6 +326,7 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                     cgroup_id,
                     level,
                     workspace,
+                    egress,
                     tx,
                     ack,
                 } => {
@@ -274,9 +334,26 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                         let _ = ack.try_send(Err(e.to_string()));
                         continue;
                     }
+                    let not_enforced = egress.and_then(|(dir, rules)| {
+                        sensor.enforce(cgroup_id, &dir, &rules).err().map(|e| {
+                            tracing::error!(cgroup_id, error = %e, "egress not enforced");
+                            e.to_string()
+                        })
+                    });
                     decoder.set_workspace(cgroup_id, workspace);
                     subs.entry(cgroup_id).or_default().push((conn, tx));
-                    let _ = ack.try_send(Ok(()));
+                    let _ = ack.try_send(Ok(not_enforced));
+                }
+                Cmd::Egress {
+                    cgroup_id,
+                    dir,
+                    rules,
+                } => {
+                    if subs.contains_key(&cgroup_id)
+                        && let Err(e) = sensor.enforce(cgroup_id, &dir, &rules)
+                    {
+                        tracing::error!(cgroup_id, error = %e, "egress update failed");
+                    }
                 }
                 Cmd::Unregister { conn, cgroup_id } => {
                     remove(&mut sensor, &mut decoder, &mut subs, cgroup_id, conn);

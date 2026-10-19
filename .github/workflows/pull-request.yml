@@ -39,6 +39,8 @@ jobs:
         run: make lint-rust
       - name: Tests
         run: make test-rust
+      - name: Policies build and pass their conformance cases
+        run: make test-policies
       - name: Generated schemas are current
         run: make schemas-check
       - name: Native and WebAssembly correlator agree

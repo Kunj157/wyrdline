@@ -30,7 +30,16 @@ pub const MAX_REQUEST: usize = 64 * 1024;
 pub enum ClientMsg {
     /// Stream the events of `cgroup` (a directory under /sys/fs/cgroup the
     /// caller owns); paths under `workspace` are marked as inside the Cell.
-    Register { cgroup: PathBuf, workspace: PathBuf },
+    /// With `egress`, the cgroup connect programs enforce it too.
+    Register {
+        cgroup: PathBuf,
+        workspace: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        egress: Option<crate::loader::EgressRules>,
+    },
+    /// Replace the session's egress rules (after registration, on the same
+    /// connection), e.g. when allowed host names resolve differently.
+    Egress { rules: crate::loader::EgressRules },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +49,9 @@ pub enum ServerMsg {
         cgroup_id: u64,
         attached: usize,
         skipped: Vec<String>,
+        /// Why requested egress rules are not enforced, if they are not.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        egress_error: Option<String>,
     },
     Event {
         ts_mono_ns: u64,
@@ -80,10 +92,21 @@ pub struct SensorClient {
     pub cgroup_id: u64,
     pub attached: usize,
     pub skipped: Vec<String>,
+    pub egress_error: Option<String>,
 }
 
 impl SensorClient {
     pub fn connect(socket: &Path, cgroup: &Path, workspace: &Path) -> Result<Self, ClientError> {
+        Self::connect_with(socket, cgroup, workspace, None)
+    }
+
+    /// As [`SensorClient::connect`], asking the daemon to enforce `egress`.
+    pub fn connect_with(
+        socket: &Path,
+        cgroup: &Path,
+        workspace: &Path,
+        egress: Option<crate::loader::EgressRules>,
+    ) -> Result<Self, ClientError> {
         let mut stream = UnixStream::connect(socket).map_err(|source| ClientError::Connect {
             path: socket.to_path_buf(),
             source,
@@ -92,6 +115,7 @@ impl SensorClient {
         let mut line = serde_json::to_vec(&ClientMsg::Register {
             cgroup: cgroup.to_path_buf(),
             workspace: workspace.to_path_buf(),
+            egress,
         })?;
         line.push(b'\n');
         stream.write_all(&line)?;
@@ -101,6 +125,7 @@ impl SensorClient {
                 cgroup_id,
                 attached,
                 skipped,
+                egress_error,
             }) => {
                 reader.get_ref().set_read_timeout(None)?;
                 Ok(SensorClient {
@@ -108,6 +133,7 @@ impl SensorClient {
                     cgroup_id,
                     attached,
                     skipped,
+                    egress_error,
                 })
             }
             Some(ServerMsg::Error { message }) => Err(ClientError::Refused(message)),
@@ -119,6 +145,17 @@ impl SensorClient {
     /// Next message; `None` when the daemon closed the connection.
     pub fn recv(&mut self) -> Result<Option<ServerMsg>, ClientError> {
         read_msg(&mut self.reader)
+    }
+
+    /// Replace the session's egress rules.
+    pub fn send_egress(&self, rules: &crate::loader::EgressRules) -> Result<(), ClientError> {
+        let mut line = serde_json::to_vec(&ClientMsg::Egress {
+            rules: rules.clone(),
+        })?;
+        line.push(b'\n');
+        let mut s: &UnixStream = self.reader.get_ref();
+        s.write_all(&line)?;
+        Ok(())
     }
 
     /// Bound how long `recv` may block (`None` = forever).

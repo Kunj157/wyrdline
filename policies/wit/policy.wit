@@ -1,0 +1,70 @@
+// Wyrdline policy world, v0.1 (DEVELOPMENT_PLAN §17.3, docs/policies).
+//
+// A policy is a WebAssembly component. The host calls it with a fresh
+// instance per call, a fuel budget, and a 32 MiB memory cap; every import
+// other than `log` traps, so a policy has no filesystem, network, clock,
+// or entropy. A trap is a `deny`.
+package wyrdline:policy@0.1.0;
+
+interface types {
+  /// A tool call the agent is about to make.
+  record tool-call {
+    /// Tool name as the agent reports it (`Bash`, `Edit`, `mcp__github__create_issue`).
+    tool: string,
+    /// Tool input as JSON, redacted.
+    args-json: string,
+    /// Adapter that reported the call (`claude-code`, `mcp`, `fakeagent`).
+    adapter: string,
+    cwd: string,
+  }
+
+  /// A kernel effect observed in the session.
+  record effect {
+    /// `exec`, `file.open_write`, `file.read_sensitive`, `file.unlink`,
+    /// `file.rename`, `net.connect`, …
+    kind: string,
+    path: option<string>,
+    /// Destination address or name for network effects.
+    host: option<string>,
+    port: option<u16>,
+    /// Executable of the process that caused the effect.
+    exe: option<string>,
+  }
+
+  record session-ctx {
+    repo-root: string,
+    scope-globs: list<string>,
+    prior-denials: u32,
+  }
+
+  variant decision {
+    allow,
+    deny(string),
+    ask(string),
+  }
+
+  /// Rules compiled into the kernel for the whole session.
+  record kernel-rules {
+    /// Paths (`~` allowed) the agent may not read.
+    fs-read-deny: list<string>,
+    /// Paths the agent may write besides the workspace.
+    fs-write-allow: list<string>,
+    /// Program names whose execution stops the session.
+    exec-deny: list<string>,
+    egress-allow-cidrs: list<string>,
+    egress-allow-hosts: list<string>,
+    /// Empty means every port.
+    egress-allow-ports: list<u16>,
+  }
+}
+
+world policy {
+  use types.{tool-call, effect, session-ctx, decision, kernel-rules};
+
+  /// Bounded: the host keeps a few lines per call.
+  import log: func(msg: string);
+
+  export kernel-rules: func(ctx: session-ctx) -> kernel-rules;
+  export on-tool-call: func(call: tool-call, ctx: session-ctx) -> decision;
+  export on-effect: func(effect: effect, ctx: session-ctx) -> decision;
+}

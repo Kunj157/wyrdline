@@ -253,7 +253,7 @@ pub fn settings(wyrd: &Path) -> Value {
     let plain = |timeout: u32| json!([{ "hooks": handler(timeout) }]);
     json!({
         "hooks": {
-            "PreToolUse": tools(30),
+            "PreToolUse": tools(60),
             "PostToolUse": tools(30),
             "PostToolUseFailure": tools(30),
             "UserPromptSubmit": plain(10),

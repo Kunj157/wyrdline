@@ -125,6 +125,7 @@ export async function serveSynthetic(page: Page, n: number) {
     runs: 1,
     agent: "synthetic",
     deny_tools: [],
+    policy: null,
   };
   const json = (route: Route, body: unknown) =>
     route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });

@@ -1,0 +1,10 @@
+[package]
+name = "policy-common"
+description = "Rules shared by the default and strict policies (pure, natively testable)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true

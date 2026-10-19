@@ -283,7 +283,13 @@ impl Decoder {
                     addr,
                     port: u16::try_from(ev.a1).unwrap_or(0),
                     dns_name: None,
-                    verdict: NetVerdict::Allowed,
+                    // ATTEMPT (no enforcement) and ALLOWED both mean the
+                    // policy let it through; the result is not recorded.
+                    verdict: if ev.a2 == wyrd_common::verdict::DENIED {
+                        NetVerdict::Denied
+                    } else {
+                        NetVerdict::Allowed
+                    },
                 })
             }
             _ => return None,

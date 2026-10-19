@@ -8,7 +8,7 @@ PNPM ?= pnpm
 .PHONY: help install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
-	schemas schemas-check test-perf test-integration test-scenarios apparmor-install \
+	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
 	test-e2e test-e2e-webgpu e2e-build site test-site
 
 help: ## List targets
@@ -19,17 +19,20 @@ install: ## Install JavaScript dependencies
 
 fmt: ## Format all code
 	$(CARGO) fmt --all
+	$(CARGO) fmt --all --manifest-path policies/Cargo.toml
 	$(PNPM) format
 
 fmt-check: fmt-check-rust fmt-check-web ## Fail if formatting would change anything
 fmt-check-rust:
 	$(CARGO) fmt --all -- --check
+	$(CARGO) fmt --all --manifest-path policies/Cargo.toml -- --check
 fmt-check-web:
 	$(PNPM) format:check
 
 lint: lint-rust lint-web ## Clippy and ESLint with warnings as errors
 lint-rust:
 	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
+	$(CARGO) clippy --workspace --locked --manifest-path policies/Cargo.toml --target wasm32-wasip2 -- -D warnings
 lint-web:
 	$(PNPM) lint
 
@@ -85,6 +88,9 @@ test-integration: ## Privileged Cell, scenario, and sensor tests (through passwo
 		--features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests,wyrdd/privileged-tests \
 		-E 'test(/^privileged_/)'
 
+test-escape: ## The escape suite: an agent in a Cell tries to get around every enforcement layer (sudo)
+	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test escape
+
 test-scenarios: ## Fakeagent-driven full-pipeline scenarios (unprivileged; Cell ones run in test-integration)
 	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent
 	$(CARGO) nextest run --locked -p wyrd-fakeagent --test scenarios
@@ -100,6 +106,19 @@ sensord-install: ## Build and install wyrd-sensord as a systemd service (needs s
 	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
+
+policies: ## Build the shipped policies (policies/default.wasm, policies/strict.wasm)
+	$(CARGO) build --quiet --locked -p wyrd-cli
+	target/debug/wyrd policy build policies/default
+	target/debug/wyrd policy build policies/strict
+
+test-policies: policies ## Policy unit tests (native) and conformance cases against the built components
+	$(CARGO) test --quiet --locked --manifest-path policies/Cargo.toml -p policy-common
+	target/debug/wyrd policy test policies/default.wasm policies/default/cases.toml
+	target/debug/wyrd policy test policies/strict.wasm policies/strict/cases.toml
+
+policy-fixtures: ## Rebuild the committed test policy components in policies/fixtures/
+	scripts/build-policy-fixtures.sh
 
 studio-wasm: ## Build the WebAssembly correlator into the Studio (offline mode)
 	scripts/build-studio-wasm.sh

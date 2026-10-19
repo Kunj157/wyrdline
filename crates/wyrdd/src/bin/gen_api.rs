@@ -36,6 +36,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     api::VerifyReport::export_all(&cfg)?;
     api::Checkpoints::export_all(&cfg)?;
     api::Stopped::export_all(&cfg)?;
+    api::PendingAsks::export_all(&cfg)?;
+    api::PolicyList::export_all(&cfg)?;
+    api::BacktestBody::export_all(&cfg)?;
+    api::BacktestReport::export_all(&cfg)?;
+    api::AnswerBody::export_all(&cfg)?;
+    api::Answered::export_all(&cfg)?;
     api::BranchCreated::export_all(&cfg)?;
     api::Relaunching::export_all(&cfg)?;
     api::Changes::export_all(&cfg)?;

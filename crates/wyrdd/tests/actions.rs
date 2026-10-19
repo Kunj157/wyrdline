@@ -40,6 +40,7 @@ fn env() -> Env {
             name: None,
             agent_kind: "fakeagent".into(),
             deny_tools: Vec::new(),
+            policy: None,
             kernel_release: "test".into(),
             capabilities: BTreeMap::new(),
         },

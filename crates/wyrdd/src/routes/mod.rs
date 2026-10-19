@@ -1,7 +1,9 @@
 //! Route table.
 
 mod actions;
+mod asks;
 mod ingest;
+mod policies;
 mod sessions;
 mod stream;
 mod system;
@@ -43,6 +45,15 @@ pub fn api() -> Router<Arc<AppState>> {
             get(sessions::checkpoints).post(actions::checkpoint),
         )
         .route("/v1/sessions/{sid}/stop", post(actions::stop))
+        .route(
+            "/v1/policies",
+            get(policies::list)
+                .post(policies::upload)
+                .layer(DefaultBodyLimit::max(wyrd_policy::MAX_COMPONENT_BYTES)),
+        )
+        .route("/v1/policies/{pid}/backtest", post(policies::backtest))
+        .route("/v1/sessions/{sid}/asks", get(asks::list))
+        .route("/v1/sessions/{sid}/asks/{id}", post(asks::answer))
         .route(
             "/v1/sessions/{sid}/checkpoints/{target}/rewind",
             post(actions::rewind),
