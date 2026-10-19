@@ -28,6 +28,41 @@ pub mod kind {
     pub const FCHDIR: u32 = 13;
 }
 
+/// Verdict carried in `a2` of a CONNECT event.
+pub mod verdict {
+    /// Seen at syscall entry, no enforcement for this session.
+    pub const ATTEMPT: i64 = 0;
+    /// Checked by the cgroup connect program and allowed.
+    pub const ALLOWED: i64 = 1;
+    /// Checked by the cgroup connect program and refused (`EPERM`).
+    pub const DENIED: i64 = 2;
+}
+
+/// Bits in the `ENFORCE` map value of a session cgroup.
+pub mod enforce {
+    /// Destinations must match the session's prefixes.
+    pub const EGRESS: u32 = 1;
+    /// Ports must be in the session's port set.
+    pub const PORTS: u32 = 2;
+}
+
+/// LPM-trie key data for an IPv4 prefix of a session: the session cgroup
+/// id (big endian, always matched in full) followed by the address.
+/// The trie's prefix length is `64 + prefix`.
+pub type Egress4 = [u8; 12];
+/// As [`Egress4`] for IPv6 (16-byte address).
+pub type Egress6 = [u8; 24];
+
+/// Key of the per-session allowed-port set.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PortKey {
+    pub cgroup_id: u64,
+    /// Host byte order.
+    pub port: u16,
+    pub _pad: [u8; 6],
+}
+
 /// Flag bits in [`RawEvent::flags`].
 pub mod flag {
     /// `s0` was cut at `PATH_LEN`.
@@ -57,7 +92,7 @@ pub const AT_FDCWD: i64 = -100;
 /// | MKDIR | dfd | mode | | path | |
 /// | CHMOD | dfd | mode | | path | |
 /// | TRUNCATE | length | | | path | |
-/// | CONNECT | family | port (host order) | | address bytes (4 or 16) | |
+/// | CONNECT | family | port (host order) | verdict (see [`verdict`]) | address bytes (4 or 16) | |
 /// | CHDIR | | | | path | |
 /// | FCHDIR | fd | | | | |
 ///
@@ -138,4 +173,6 @@ mod user {
     unsafe impl aya::Pod for super::RawEvent {}
     // SAFETY: as above.
     unsafe impl aya::Pod for super::Offsets {}
+    // SAFETY: plain data; the padding is explicit and always zeroed.
+    unsafe impl aya::Pod for super::PortKey {}
 }
