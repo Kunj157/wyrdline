@@ -16,6 +16,10 @@ serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 wasmtime.workspace = true
+wyrd-schema = { path = "../wyrd-schema" }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

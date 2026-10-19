@@ -3,7 +3,7 @@
 # from the host crates under crates/.
 [workspace]
 resolver = "3"
-members = ["common", "default", "strict", "examples/hostile"]
+members = ["common", "default", "strict", "examples/hostile", "examples/escape"]
 
 [workspace.package]
 version = "0.1.0"
