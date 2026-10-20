@@ -11,6 +11,9 @@ pub mod exit {
     pub const OK: u8 = 0;
     pub const USAGE: u8 = 1;
     pub const CAPABILITY_MISSING: u8 = 2;
+    /// The named session does not exist (shares 2 with a missing capability:
+    /// what the command needs is not there).
+    pub const NOT_FOUND: u8 = 2;
     pub const VERIFICATION_FAILED: u8 = 3;
     pub const CONFLICT: u8 = 4;
     pub const DAEMON_UNAVAILABLE: u8 = 5;
@@ -65,6 +68,8 @@ enum Command {
     Stop(cmd::session::SessionArg),
     /// Close a session and seal its ledger.
     Close(cmd::session::SessionArg),
+    /// Export a session as a signed, redacted `.wyrd` bundle.
+    Export(cmd::bundle::ExportArgs),
     /// Open Studio in a browser (served by the running daemon).
     Studio(cmd::studio::Args),
     /// Manage the daemon token.
@@ -122,6 +127,7 @@ fn main() -> ExitCode {
         Command::Triage(a) => cmd::verdict::triage(&a),
         Command::Stop(a) => cmd::session::stop(&a),
         Command::Close(a) => cmd::session::close(&a),
+        Command::Export(a) => cmd::bundle::export(&a),
         Command::Hook(a) => cmd::hook::run(&a),
         Command::McpProxy(a) => cmd::mcp_proxy::run(&a),
         Command::Policy(c) => cmd::policy::run(&c),
