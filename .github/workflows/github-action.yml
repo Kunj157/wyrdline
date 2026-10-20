@@ -66,11 +66,13 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: bpf-linker
+      # Release builds, as the action installs them: a debug sensor and
+      # capture loop lag behind the agent on a runner.
       - name: Build wyrd, wyrd-sensord, the scripted agent, and the default policy
         run: |
-          cargo build --locked -p wyrd-cli -p wyrd-sensord -p wyrd-fakeagent
-          target/debug/wyrd policy build policies/default
-          echo "$PWD/target/debug" >> "$GITHUB_PATH"
+          cargo build --release --locked -p wyrd-cli -p wyrd-sensord -p wyrd-fakeagent
+          target/release/wyrd policy build policies/default
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
       - name: The demo shop as the agent's workspace, with a throwaway .env
         run: |
           mkdir -p "$RUNNER_TEMP/shop"
@@ -87,7 +89,7 @@ jobs:
           policy: policies/default.wasm
           workspace: ${{ runner.temp }}/shop
           ask-timeout: "1"
-          wyrd-path: target/debug
+          wyrd-path: target/release
           comment-key: e2e
           artifact-name: wyrdline-e2e
       # Same comment key again, now gated on D006: the comment is updated,
@@ -101,7 +103,7 @@ jobs:
           policy: policies/default.wasm
           workspace: ${{ runner.temp }}/shop
           ask-timeout: "1"
-          wyrd-path: target/debug
+          wyrd-path: target/release
           comment-key: e2e
           artifact-name: wyrdline-e2e-gated
           fail-on: D006
