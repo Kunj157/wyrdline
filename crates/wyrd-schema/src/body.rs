@@ -22,6 +22,12 @@ pub enum EventBody {
     SensorLost(SensorLost),
     #[serde(rename = "meta.sensor.resumed")]
     SensorResumed(SensorResumed),
+    #[serde(rename = "meta.rewind.requested")]
+    RewindRequested(RewindRequested),
+    #[serde(rename = "meta.rewind.confirmed")]
+    RewindConfirmed(RewindConfirmed),
+    #[serde(rename = "meta.rewind.rejected")]
+    RewindRejected(RewindRejected),
 
     // ---- intent ----
     #[serde(rename = "intent.tool_call.started")]
@@ -113,6 +119,9 @@ kinds! {
     SessionStateChanged => Meta, "meta.session.state_changed";
     SensorLost => Meta, "meta.sensor.lost";
     SensorResumed => Meta, "meta.sensor.resumed";
+    RewindRequested => Meta, "meta.rewind.requested";
+    RewindConfirmed => Meta, "meta.rewind.confirmed";
+    RewindRejected => Meta, "meta.rewind.rejected";
     ToolCallStarted => Intent, "intent.tool_call.started";
     ToolCallFinished => Intent, "intent.tool_call.finished";
     ToolCallDenied => Intent, "intent.tool_call.denied";
@@ -210,6 +219,42 @@ pub struct SensorResumed {
     /// Events known to be lost while the sensor was unavailable.
     #[ts(type = "number")]
     pub dropped: u64,
+}
+
+/// The agent asked to be rewound to a checkpoint (through `wyrd mcp`).
+/// Nothing changes until a human confirms; the request is identified by
+/// the `seq` of this event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct RewindRequested {
+    pub checkpoint_id: String,
+    /// Why, in the agent's words (redacted, at most 2000 characters).
+    pub reason: String,
+    /// Surface the request came through, e.g. `mcp`.
+    pub source: String,
+}
+
+/// A human confirmed a rewind request; the rewind follows in the ledger.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct RewindConfirmed {
+    /// `seq` of the `meta.rewind.requested` event.
+    #[ts(type = "number")]
+    pub request_seq: u64,
+    pub checkpoint_id: String,
+    /// Surface the human answered in: `cli` or `studio`.
+    pub by: String,
+}
+
+/// A human rejected a rewind request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct RewindRejected {
+    /// `seq` of the `meta.rewind.requested` event.
+    #[ts(type = "number")]
+    pub request_seq: u64,
+    pub by: String,
+    pub note: Option<String>,
 }
 
 // ---------------------------------------------------------------- intent
