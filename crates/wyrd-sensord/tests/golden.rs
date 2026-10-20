@@ -178,7 +178,8 @@ fn privileged_golden_effect_sequence_for_a_scripted_tree() {
         ),
     );
     let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
-    assert!(client.attached >= 40, "attached {}", client.attached);
+    // task_newtask, sched_process_exit, raw sys_enter/sys_exit (+ connect4/6).
+    assert!(client.attached >= 4, "attached {}", client.attached);
     g.release();
     let events = collect(&mut client, g.child.id());
     let got = summary(&events, &ws);
