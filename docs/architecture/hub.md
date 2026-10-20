@@ -29,6 +29,7 @@ browser / wyrd CLI ──HTTPS──▶ wyrd-hub (Axum)
 | `WYRD_HUB_MAX_UPLOAD_BYTES` | 256 MiB | largest bundle accepted |
 | `WYRD_HUB_QUOTA_BYTES`, `WYRD_HUB_QUOTA_BUNDLES` | 10 GiB, 10 000 | quota of new organisations |
 | `WYRD_HUB_RETENTION_INTERVAL_SECS` | `3600` | retention sweep interval (0 disables) |
+| `WYRD_HUB_STUDIO_DIR` | unset | a Studio build (`apps/studio/dist`) served at `/` for Hub mode |
 | `WYRD_LOG` | `info` | log filter; logs are JSON lines on stderr |
 
 Secrets are wrapped so they never appear in `Debug` output or logs.
@@ -209,6 +210,20 @@ matching sessions and the matching events (`bundle`, `seq`, `kind`,
 `position` and a `reason`. User text reaches SQL only as bound
 parameters, and results are always scoped to the caller's organisation.
 Latency: `wyrd_hub_query_seconds{query}`.
+
+### Hub mode in Studio
+
+With `WYRD_HUB_STUDIO_DIR` set, the Hub serves the Studio build (with a
+Studio Content-Security-Policy; single-page routes fall back to
+`index.html`), so `/hub` and `/hub/search` talk to the same origin with
+the session cookie. **Dashboard** (`/hub`): sessions, denied actions,
+event loss, and judge cost tiles; divergence rate per rule, sessions per
+repository, and denied actions by kind as labelled bar tables; capture
+overhead and agents. **Search** (`/hub/search`): the query box, the
+matching sessions, and the matching events; a malformed query is
+highlighted from the position the Hub reports. Signed out, both pages
+link to the login. Playwright specs (`tests/e2e/hub.spec.ts`) drive both
+against a stand-in Hub API.
 
 ## API (`/api/v1`)
 

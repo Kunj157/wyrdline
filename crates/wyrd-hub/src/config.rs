@@ -60,6 +60,8 @@ pub struct Config {
     /// Local scratch: upload spooling and analytics projections.
     pub data_dir: PathBuf,
     pub limits: Limits,
+    /// A built Studio to serve at `/` (Hub mode pages), when set.
+    pub studio_dir: Option<PathBuf>,
 }
 
 /// Upload size, the quota new organisations get, and the retention sweep.
@@ -198,6 +200,7 @@ impl Config {
             data_dir: var("WYRD_HUB_DATA_DIR")
                 .map_or_else(|| "wyrd-hub-data".into(), PathBuf::from),
             limits,
+            studio_dir: var("WYRD_HUB_STUDIO_DIR").map(PathBuf::from),
         })
     }
 }

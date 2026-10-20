@@ -115,6 +115,7 @@ pub fn config(database_url: &str, s3: S3Config) -> Config {
         oidc: None,
         data_dir: std::env::temp_dir().join("wyrd-hub-tests"),
         limits: wyrd_hub::config::Limits::default(),
+        studio_dir: None,
     }
 }
 
