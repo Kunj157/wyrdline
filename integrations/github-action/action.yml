@@ -154,7 +154,8 @@ runs:
     - name: Upload the bundle to the Hub
       if: always() && inputs.hub-url != '' && steps.run.outputs.bundle-path != ''
       shell: bash
-      run: echo "::warning::wyrdline: hub-url is set, but Hub upload (GitHub OIDC token exchange) is not available in this version of the action; the bundle is only a workflow artifact"
+      run: |
+        echo "::warning::wyrdline: hub-url is set, but Hub upload (GitHub OIDC token exchange) is not available in this version of the action; the bundle is only a workflow artifact"
 
     - name: Divergence summary and PR comment
       if: always() && steps.run.outputs.session-id != ''
