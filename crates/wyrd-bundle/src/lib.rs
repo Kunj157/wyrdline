@@ -8,9 +8,11 @@
 pub mod archive;
 pub mod export;
 pub mod format;
+pub mod read;
 pub mod redact;
 
 pub use export::{
     DivergenceProjection, ExportError, ExportInput, Exported, Signer, Summary, export,
 };
 pub use format::{Manifest, Redaction, SessionMeta};
+pub use read::{Bundle, Limits, Options, ReadError, Stage, Verification, read, verify};
