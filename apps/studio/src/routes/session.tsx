@@ -4,6 +4,7 @@ import { ShieldCheck, ShieldX, ZoomIn, ZoomOut } from "lucide-react";
 import type { BacktestReport } from "@wyrdline/schemas/generated-api";
 import { useMemo, useState } from "react";
 
+import { AnnotationsPanel } from "../components/AnnotationsPanel";
 import { AskDialog } from "../components/AskDialog";
 import { BacktestPanel } from "../components/BacktestPanel";
 import { CheckpointPanel } from "../components/CheckpointPanel";
@@ -209,6 +210,19 @@ export function SessionPage() {
                 id: "divergences",
                 label: `Divergences (${divergences.data?.divergences.length ?? 0})`,
                 panel: <DivergencePanel sid={sid} onSelect={setSelected} />,
+              },
+              {
+                id: "annotations",
+                label: "Annotations",
+                panel: (
+                  <AnnotationsPanel
+                    sid={sid}
+                    selected={selected}
+                    onSelect={setSelected}
+                    divergences={divergences.data?.divergences ?? []}
+                    checkpoints={checkpoints.data?.checkpoints ?? []}
+                  />
+                ),
               },
               {
                 id: "transcript",
