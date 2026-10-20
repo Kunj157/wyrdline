@@ -13,6 +13,7 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1.0.104"
+automerge = "0.12.0"
 aya = "0.14.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "tracing"] }
 aya-build = "0.2.0"
