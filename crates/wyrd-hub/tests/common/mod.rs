@@ -366,3 +366,16 @@ pub async fn upload(
     )
     .await
 }
+
+/// Percent-encode a query value.
+pub fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                char::from(b).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}

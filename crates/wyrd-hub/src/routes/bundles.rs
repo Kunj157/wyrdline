@@ -241,12 +241,16 @@ async fn upload(
         }
     };
     let summary = ingest::summarize(&bundle);
+    #[cfg(feature = "analytics")]
+    let rows = crate::projection::rows(&bundle);
     drop(bundle);
     let (id, duplicate) = store(&st, &caller, &a, &spool, size, repo, &summary).await?;
     let (row, _) = bundle_for(&st, &caller, &id).await?;
     let status = if duplicate {
         StatusCode::OK
     } else {
+        #[cfg(feature = "analytics")]
+        super::analytics::project_upload(&st, &a.org_id, &id, rows).await;
         upload_outcome(&st, "accepted");
         tracing::info!(bundle = id, org = a.slug, size, "bundle uploaded");
         StatusCode::CREATED

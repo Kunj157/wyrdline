@@ -24,6 +24,12 @@ fn ev(seq: u64, body: EventBody) -> Event {
 
 /// A closed session `name` that raised the divergence `rules`.
 pub fn bundle(name: &str, rules: &[&str]) -> Vec<u8> {
+    bundle_with(name, rules, Vec::new(), 0)
+}
+
+/// The same with `extra` events (the first one reporting `drops` lost
+/// events) before the divergences.
+pub fn bundle_with(name: &str, rules: &[&str], extra: Vec<EventBody>, drops: u32) -> Vec<u8> {
     let session = format!("01j{name}");
     let mut bodies = vec![
         EventBody::SessionStarted(SessionStarted {
@@ -51,6 +57,8 @@ pub fn bundle(name: &str, rules: &[&str]) -> Vec<u8> {
             text: "All tests pass.".into(),
         }),
     ];
+    let first_extra = bodies.len();
+    bodies.extend(extra);
     for (i, r) in rules.iter().enumerate() {
         bodies.push(EventBody::DivergenceRaised(DivergenceRaised {
             divergence_id: format!("d{i}"),
@@ -62,11 +70,14 @@ pub fn bundle(name: &str, rules: &[&str]) -> Vec<u8> {
             summary: format!("{r} raised"),
         }));
     }
-    let events: Vec<Event> = bodies
+    let mut events: Vec<Event> = bodies
         .into_iter()
         .enumerate()
         .map(|(i, b)| ev(i as u64 + 1, b))
         .collect();
+    if let Some(e) = events.get_mut(first_extra) {
+        e.drops_since_last = drops;
+    }
     let meta = SessionMeta {
         id: session,
         name: Some(name.into()),

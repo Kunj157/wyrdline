@@ -4,6 +4,8 @@
 //! `docs/architecture/hub.md` describes the API and the deployment.
 
 pub mod access;
+#[cfg(feature = "analytics")]
+pub mod analytics;
 pub mod audit;
 pub mod auth;
 pub mod config;
@@ -13,6 +15,7 @@ pub mod jwt;
 pub mod metrics;
 pub mod oidc;
 pub mod problem;
+pub mod projection;
 pub mod retention;
 mod routes;
 pub mod storage;

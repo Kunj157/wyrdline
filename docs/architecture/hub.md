@@ -164,6 +164,43 @@ Metrics: `wyrd_hub_uploads_total{outcome}` (`accepted`, `duplicate`,
 `rejected`, `too_large`, `over_quota`, `storage_error`, `error`),
 `wyrd_hub_bundle_verify_seconds`, `wyrd_hub_retention_sweeps_total`.
 
+## Analytics and search
+
+Built with the `analytics` feature (on in the Hub image, `make test-hub`,
+and CI; it compiles DuckDB from source, so plain workspace builds leave it
+out and the two endpoints answer 501 there).
+
+On upload the Hub writes a Parquet **projection** of the bundle to
+`WYRD_HUB_DATA_DIR/projections/<org>/<bundle>/`: `events.parquet` (seq,
+plane, kind, time, pid, path, target, detail, outcome, dropped events),
+`divergences.parquet`, and `guard.parquet`. Queries run in an embedded,
+in-memory DuckDB over the projections of the organisation's 500 most
+recent matching bundles. A missing projection (a new replica, a wiped
+volume) is rebuilt from the stored bundle, verified again, on first use
+(`wyrd_hub_projection_rebuilds_total`).
+
+`GET /api/v1/orgs/{org}/stats?since=` (viewer) returns sessions in total,
+per repo and per agent; per divergence rule the sessions that raised it,
+how often, and the rate over the sessions considered; denied actions by
+kind (refused connects, denied tool calls, deny decisions); captured
+events, dropped events, and sensor losses. Capture overhead and judge
+token usage and cost are not in bundle format v1 (judge runs stay next
+to the local ledger), so they are reported as `null` and
+`"recorded": false`.
+
+`GET /api/v1/orgs/{org}/search?q=&limit=` (viewer) takes filters
+`path:` `rule:` `repo:` `agent:` `session:` `kind:` `host:` `exe:` `tool:`
+and plain words (matched against path, target, and detail), with `"…"`
+for values containing spaces, e.g. `path:~/.ssh rule:D003 repo:shop`.
+Filters are ANDed; repeated `repo:`, `agent:`, or `session:` match any of
+the values. `rule:`, `repo:`, `agent:`, and `session:` select bundles in
+Postgres; the others match events in DuckDB. The answer lists the
+matching sessions and the matching events (`bundle`, `seq`, `kind`,
+`path`, `target`, `detail`). A malformed query is 400 with the character
+`position` and a `reason`. User text reaches SQL only as bound
+parameters, and results are always scoped to the caller's organisation.
+Latency: `wyrd_hub_query_seconds{query}`.
+
 ## API (`/api/v1`)
 
 Roles: `viewer` (read), `member` (+ upload, annotate), `admin` (+ delete,

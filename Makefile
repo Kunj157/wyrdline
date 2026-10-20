@@ -91,8 +91,9 @@ test-integration: ## Privileged Cell, scenario, and sensor tests (through passwo
 test-escape: ## The escape suite: an agent in a Cell tries to get around every enforcement layer (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test escape
 
-test-hub: ## Hub tests, including Postgres 17 and MinIO in containers (needs Docker)
-	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests
+test-hub: ## Hub lint and tests with analytics (DuckDB), Postgres 17 and MinIO in containers (needs Docker)
+	$(CARGO) clippy --locked -p wyrd-hub --all-targets --features wyrd-hub/container-tests,wyrd-hub/analytics -- -D warnings
+	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests,wyrd-hub/analytics
 
 demo: ## The plan §2 demo with the scripted agent: victim shop, Cell, sensor, default policy (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test demo --no-capture

@@ -13,6 +13,7 @@ publish.workspace = true
 anyhow.workspace = true
 futures-util.workspace = true
 base64 = "0.22.1"
+duckdb = { version = "1.10506.1", features = ["bundled", "parquet"], optional = true }
 axum = { workspace = true, features = ["form", "matched-path", "multipart", "ws"] }
 hex.workspace = true
 ring = "0.17.14"
@@ -44,6 +45,9 @@ testcontainers = "0.28.0"
 tokio-tungstenite = "0.29.0"
 
 [features]
+# Analytics over Parquet projections with embedded DuckDB (compiles DuckDB
+# from source; on in the Hub image, `make test-hub`, and the hub CI job).
+analytics = ["dep:duckdb"]
 # Integration tests that start Postgres and MinIO with Testcontainers
 # (needs Docker; run by `make test-hub`).
 container-tests = []
