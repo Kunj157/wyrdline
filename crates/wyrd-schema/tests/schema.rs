@@ -166,6 +166,27 @@ fn body() -> impl Strategy<Value = EventBody> {
                     summary,
                 })
             }),
+        (s(), s()).prop_map(|(checkpoint_id, reason)| EventBody::RewindRequested(
+            RewindRequested {
+                checkpoint_id,
+                reason,
+                source: "mcp".into(),
+            }
+        )),
+        (any::<u64>(), s()).prop_map(|(request_seq, checkpoint_id)| {
+            EventBody::RewindConfirmed(RewindConfirmed {
+                request_seq,
+                checkpoint_id,
+                by: "cli".into(),
+            })
+        }),
+        (any::<u64>(), any::<Option<String>>()).prop_map(|(request_seq, note)| {
+            EventBody::RewindRejected(RewindRejected {
+                request_seq,
+                by: "studio".into(),
+                note,
+            })
+        }),
     ]
 }
 
@@ -250,6 +271,43 @@ fn kind_names_match_serialised_tags_and_planes() {
     unique.sort_unstable();
     unique.dedup();
     assert_eq!(unique.len(), KINDS.len());
+}
+
+#[test]
+fn rewind_requests_are_meta_events() {
+    let body = EventBody::RewindRequested(RewindRequested {
+        checkpoint_id: "c2".into(),
+        reason: "the last edit broke the build".into(),
+        source: "mcp".into(),
+    });
+    assert_eq!(body.kind(), "meta.rewind.requested");
+    assert_eq!(body.plane(), Plane::Meta);
+    let v = serde_json::to_value(&body).unwrap();
+    assert_eq!(v["kind"], "meta.rewind.requested");
+    assert_eq!(v["payload"]["checkpoint_id"], "c2");
+    let confirmed = EventBody::RewindConfirmed(RewindConfirmed {
+        request_seq: 7,
+        checkpoint_id: "c2".into(),
+        by: "cli".into(),
+    });
+    assert_eq!(confirmed.kind(), "meta.rewind.confirmed");
+    let rejected = EventBody::RewindRejected(RewindRejected {
+        request_seq: 7,
+        by: "studio".into(),
+        note: None,
+    });
+    assert_eq!(rejected.kind(), "meta.rewind.rejected");
+    for k in [
+        "meta.rewind.requested",
+        "meta.rewind.confirmed",
+        "meta.rewind.rejected",
+    ] {
+        assert!(
+            KINDS
+                .iter()
+                .any(|(kind, p)| *kind == k && *p == Plane::Meta)
+        );
+    }
 }
 
 #[test]
