@@ -1193,6 +1193,54 @@
           {
             "properties": {
               "kind": {
+                "const": "meta.rewind.requested",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/RewindRequested"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.rewind.confirmed",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/RewindConfirmed"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "meta.rewind.rejected",
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/RewindRejected"
+              }
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
                 "const": "intent.tool_call.started",
                 "type": "string"
               },
@@ -2663,6 +2711,81 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "RewindConfirmed": {
+        "additionalProperties": false,
+        "description": "A human confirmed a rewind request; the rewind follows in the ledger.",
+        "properties": {
+          "by": {
+            "description": "Surface the human answered in: `cli` or `studio`.",
+            "type": "string"
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "request_seq": {
+            "description": "`seq` of the `meta.rewind.requested` event.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_seq",
+          "checkpoint_id",
+          "by"
+        ],
+        "type": "object"
+      },
+      "RewindRejected": {
+        "additionalProperties": false,
+        "description": "A human rejected a rewind request.",
+        "properties": {
+          "by": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_seq": {
+            "description": "`seq` of the `meta.rewind.requested` event.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_seq",
+          "by",
+          "note"
+        ],
+        "type": "object"
+      },
+      "RewindRequested": {
+        "additionalProperties": false,
+        "description": "The agent asked to be rewound to a checkpoint (through `wyrd mcp`).\nNothing changes until a human confirms; the request is identified by\nthe `seq` of this event.",
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why, in the agent's words (redacted, at most 2000 characters).",
+            "type": "string"
+          },
+          "source": {
+            "description": "Surface the request came through, e.g. `mcp`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkpoint_id",
+          "reason",
+          "source"
+        ],
         "type": "object"
       },
       "Role": {
