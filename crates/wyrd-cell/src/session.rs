@@ -9,7 +9,8 @@ use wyrd_cas::{Cas, ChunkHash, Manifest};
 use wyrd_ledger::{HostKey, Ledger, Seal};
 use wyrd_schema::{
     CaptureMode, CheckpointApplied, CheckpointCreated, CheckpointForked, CheckpointRewound, Event,
-    EventBody, SessionClosed, SessionStarted, SessionState, SessionStateChanged,
+    EventBody, RewindConfirmed, RewindRejected, RewindRequested, SessionClosed, SessionStarted,
+    SessionState, SessionStateChanged,
 };
 
 use crate::apply::{self, ApplyReport};
@@ -17,6 +18,7 @@ use crate::baseline::Baseline;
 use crate::cgroup::Cgroup;
 use crate::diff::{self, Change};
 use crate::exec::{LaunchMode, LaunchSpec};
+use crate::requests::{self, RequestStatus, RewindRequest};
 use crate::state::{self, Branch, CheckpointRecord, SessionRecord};
 use crate::{CellError, DataDir, Result, SessionDir, confine, io_err, launch, mono_ns, now_ms};
 
@@ -664,6 +666,11 @@ impl Session {
         self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
+        self.rewind_locked(target, fork_name)
+    }
+
+    /// [`Session::rewind`] with the session lock already held.
+    fn rewind_locked(&mut self, target: &str, fork_name: Option<&str>) -> Result<Branch> {
         let cp = self.resolve(target)?;
         if self.stop()? {
             self.set_status(SessionState::Rewinding, Some("stopped the agent to rewind"))?;
@@ -718,6 +725,143 @@ impl Session {
         }])?;
         self.set_status(SessionState::Paused, Some("rewound"))?;
         Ok(branch)
+    }
+
+    /// Every event of the ledger, in order.
+    fn events(&self) -> Result<Vec<Event>> {
+        let l = Ledger::open_read_only(self.dir.ledger())?;
+        let mut all: Vec<Event> = Vec::new();
+        loop {
+            let batch = l.events_after(all.last().map_or(0, |e| e.seq), 5_000)?;
+            if batch.is_empty() {
+                return Ok(all);
+            }
+            all.extend(batch);
+        }
+    }
+
+    /// The session's rewind requests with their decisions, oldest first.
+    pub fn rewind_requests(&self) -> Result<Vec<RewindRequest>> {
+        Ok(requests::project(&self.events()?))
+    }
+
+    fn pending_request(&self, id: u64) -> Result<RewindRequest> {
+        let r = self
+            .rewind_requests()?
+            .into_iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| CellError::NotFound(format!("rewind request {id}")))?;
+        if r.status != RequestStatus::Pending {
+            return Err(CellError::Busy(format!(
+                "rewind request {id} is already {}",
+                match r.status {
+                    RequestStatus::Confirmed => "confirmed",
+                    _ => "rejected",
+                }
+            )));
+        }
+        Ok(r)
+    }
+
+    /// Append under the lock; a sealed ledger is a state error.
+    fn append_decision(&self, body: EventBody) -> Result<u64> {
+        match self.append(vec![body]) {
+            Err(CellError::Ledger(wyrd_ledger::LedgerError::Sealed)) => Err(CellError::Busy(
+                "the session is closed and its ledger sealed".into(),
+            )),
+            r => r,
+        }
+    }
+
+    /// Record that the agent asks to be rewound to checkpoint
+    /// `checkpoint_id` (an id such as `c2`; branch names are not
+    /// accepted). Nothing else changes: the agent keeps running until a
+    /// human confirms. The caller redacts `reason`.
+    pub fn request_rewind(
+        &mut self,
+        checkpoint_id: &str,
+        reason: &str,
+        source: &str,
+    ) -> Result<RewindRequest> {
+        let reason = reason.trim();
+        if reason.is_empty() || reason.chars().count() > requests::MAX_REASON {
+            return Err(CellError::Invalid(format!(
+                "a reason of 1 to {} characters is required",
+                requests::MAX_REASON
+            )));
+        }
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        if self.rec.checkpoint(checkpoint_id).is_none() {
+            return Err(CellError::NotFound(format!("checkpoint {checkpoint_id}")));
+        }
+        let pending = self
+            .rewind_requests()?
+            .iter()
+            .filter(|r| r.status == RequestStatus::Pending)
+            .count();
+        if pending >= requests::MAX_PENDING {
+            return Err(CellError::Busy(format!(
+                "{pending} rewind requests are already waiting for a human"
+            )));
+        }
+        let id = self.append_decision(EventBody::RewindRequested(RewindRequested {
+            checkpoint_id: checkpoint_id.into(),
+            reason: reason.into(),
+            source: source.into(),
+        }))?;
+        self.pending_request(id)
+    }
+
+    /// A human confirms rewind request `id`: the decision is recorded, then
+    /// the session is rewound to the requested checkpoint (stopping the
+    /// agent if it runs). `by` names the surface (`cli`, `studio`).
+    pub fn confirm_rewind(&mut self, id: u64, by: &str) -> Result<Branch> {
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        let r = self.pending_request(id)?;
+        if self.rec.checkpoint(&r.checkpoint_id).is_none() {
+            return Err(CellError::NotFound(format!(
+                "checkpoint {}",
+                r.checkpoint_id
+            )));
+        }
+        self.append_decision(EventBody::RewindConfirmed(RewindConfirmed {
+            request_seq: id,
+            checkpoint_id: r.checkpoint_id.clone(),
+            by: by.into(),
+        }))?;
+        self.rewind_locked(&r.checkpoint_id, None)
+    }
+
+    /// A human rejects rewind request `id`; nothing else changes.
+    pub fn reject_rewind(
+        &mut self,
+        id: u64,
+        by: &str,
+        note: Option<String>,
+    ) -> Result<RewindRequest> {
+        if note
+            .as_ref()
+            .is_some_and(|n| n.chars().count() > requests::MAX_NOTE)
+        {
+            return Err(CellError::Invalid(format!(
+                "the note is longer than {} characters",
+                requests::MAX_NOTE
+            )));
+        }
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        self.pending_request(id)?;
+        self.append_decision(EventBody::RewindRejected(RewindRejected {
+            request_seq: id,
+            by: by.into(),
+            note,
+        }))?;
+        self.rewind_requests()?
+            .into_iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| CellError::NotFound(format!("rewind request {id}")))
     }
 
     /// Changes from checkpoint/branch `a` to `b`.
