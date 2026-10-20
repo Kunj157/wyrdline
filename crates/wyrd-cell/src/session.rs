@@ -783,6 +783,7 @@ impl Session {
         reason: &str,
         source: &str,
     ) -> Result<RewindRequest> {
+        self.writable()?;
         let reason = reason.trim();
         if reason.is_empty() || reason.chars().count() > requests::MAX_REASON {
             return Err(CellError::Invalid(format!(
@@ -817,6 +818,7 @@ impl Session {
     /// the session is rewound to the requested checkpoint (stopping the
     /// agent if it runs). `by` names the surface (`cli`, `studio`).
     pub fn confirm_rewind(&mut self, id: u64, by: &str) -> Result<Branch> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         let r = self.pending_request(id)?;
@@ -841,6 +843,7 @@ impl Session {
         by: &str,
         note: Option<String>,
     ) -> Result<RewindRequest> {
+        self.writable()?;
         if note
             .as_ref()
             .is_some_and(|n| n.chars().count() > requests::MAX_NOTE)

@@ -396,4 +396,7 @@ fn import_adds_a_read_only_session_with_the_same_chain() {
     let mut s = Session::open(&e.data, &id).unwrap();
     assert!(s.apply("c2", true, false).is_err());
     assert!(s.record_verdicts(Vec::new()).is_err());
+    assert!(s.request_rewind("c1", "agent asks", "mcp").is_err());
+    assert!(s.reject_rewind(1, "cli", None).is_err());
+    assert!(s.confirm_rewind(1, "cli").is_err());
 }
