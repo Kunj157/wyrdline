@@ -11,6 +11,7 @@
 //! lose precision in the browser; ordering always uses `seq`.
 
 mod body;
+pub mod chain;
 mod codec;
 
 pub use body::*;
