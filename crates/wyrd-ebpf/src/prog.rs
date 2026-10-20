@@ -1,14 +1,15 @@
 use aya_ebpf::helpers::{
     bpf_get_current_ancestor_cgroup_id, bpf_get_current_comm, bpf_get_current_pid_tgid,
-    bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
+    bpf_get_current_task, bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_user,
+    bpf_probe_read_user_str_bytes,
 };
-use aya_ebpf::macros::{cgroup_sock_addr, map, tracepoint};
+use aya_ebpf::macros::{cgroup_sock_addr, map, raw_tracepoint, tracepoint};
 use aya_ebpf::maps::lpm_trie::Key;
 use aya_ebpf::maps::{Array, HashMap, LpmTrie, PerCpuArray, RingBuf};
-use aya_ebpf::programs::{SockAddrContext, TracePointContext};
+use aya_ebpf::programs::{RawTracePointContext, SockAddrContext, TracePointContext};
 use wyrd_common::{
-    ARG_LEN, Egress4, Egress6, MAX_ARGS, MAX_CGROUP_DEPTH, Offsets, PortKey, RawEvent, enforce,
-    flag, kind, verdict,
+    ARG_LEN, Egress4, Egress6, MAX_ARGS, MAX_CGROUP_DEPTH, MAX_SYSCALL_NR, Offsets, PortKey,
+    RawEvent, enforce, flag, kind, sys, verdict,
 };
 
 /// Ring buffer to userspace (size overridden by the loader).
@@ -29,7 +30,7 @@ static SESSIONS: HashMap<u64, u32> = HashMap::with_max_entries(1024, 0);
 #[map]
 static STARTS: HashMap<u32, u64> = HashMap::with_max_entries(65_536, 0);
 
-/// tid → syscall in progress, emitted by `sys_exit_generic` when it succeeded.
+/// tid → syscall in progress, emitted by `sys_exit` when it succeeded.
 #[map]
 static PENDING: HashMap<u32, RawEvent> = HashMap::with_max_entries(8_192, 0);
 
@@ -54,7 +55,13 @@ static EGRESS6: LpmTrie<Egress6, u8> = LpmTrie::with_max_entries(65_536, 0);
 #[map]
 static PORTS: HashMap<PortKey, u8> = HashMap::with_max_entries(65_536, 0);
 
-/// Per-CPU count of events lost because the ring buffer was full.
+/// Syscall number → `wyrd_common::sys` code (0 = not handled), filled by
+/// userspace for the host architecture.
+#[map]
+static SYSCALLS: Array<u32> = Array::with_max_entries(MAX_SYSCALL_NR, 0);
+
+/// Per-CPU count of events lost in the kernel: the ring buffer was full, or
+/// a syscall could not be parked until its exit.
 #[map]
 static DROPS: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
 
@@ -65,6 +72,9 @@ static OFFSETS: Offsets = Offsets {
     newtask_clone_flags: 32,
     exit_pid: 24,
     exit_group_dead: 32,
+    regs_args: [112, 104, 96, 56, 72, 64],
+    compat_offset: u32::MAX,
+    compat_mask: 0,
 };
 
 const CLONE_THREAD: u64 = 0x0001_0000;
@@ -79,11 +89,18 @@ fn offsets() -> Offsets {
     unsafe { core::ptr::read_volatile(&OFFSETS) }
 }
 
-/// Syscall argument `i` of a `sys_enter_*` tracepoint.
+/// Whether any session is registered (cheapest possible check).
 #[inline(always)]
-fn arg(ctx: &TracePointContext, i: usize) -> u64 {
-    // SAFETY: syscall tracepoints place args[6] at offset 16.
-    unsafe { ctx.read_at::<u64>(16 + 8 * i) }.unwrap_or(0)
+fn active() -> bool {
+    LEVELS.get(0).copied().unwrap_or(0) != 0
+}
+
+#[inline(always)]
+fn count_drop() {
+    if let Some(d) = DROPS.get_ptr_mut(0) {
+        // SAFETY: per-CPU counter.
+        unsafe { *d += 1 };
+    }
 }
 
 #[inline(always)]
@@ -112,7 +129,12 @@ fn session_cgroup() -> Option<u64> {
 /// not part of a session.
 #[inline(always)]
 fn begin(k: u32) -> Option<&'static mut RawEvent> {
-    let cg = session_cgroup()?;
+    begin_in(k, session_cgroup()?)
+}
+
+/// [`begin`] for a task already known to be in session cgroup `cg`.
+#[inline(always)]
+fn begin_in(k: u32, cg: u64) -> Option<&'static mut RawEvent> {
     let ptr = SCRATCH.get_ptr_mut(0)?;
     // SAFETY: per-CPU slot, not shared with other CPUs; programs do not nest.
     let ev = unsafe { &mut *ptr };
@@ -188,11 +210,8 @@ fn emit(ev: &RawEvent) {
         }
         _ => EVENTS.output::<[u8; ONE_PATH]>(unsafe { &*(p as *const [u8; ONE_PATH]) }, NO_WAKEUP),
     };
-    if r.is_err()
-        && let Some(d) = DROPS.get_ptr_mut(0)
-    {
-        // SAFETY: per-CPU counter.
-        unsafe { *d += 1 };
+    if r.is_err() {
+        count_drop();
     }
 }
 
@@ -239,8 +258,8 @@ fn keep_read_open(ev: &RawEvent, flags: i64) -> bool {
 
 // ---------------------------------------------------------------- processes
 
-fn exec_enter(file: u64, argv: u64) -> u32 {
-    let Some(ev) = begin(kind::EXEC) else {
+fn exec_enter(cg: u64, file: u64, argv: u64) -> u32 {
+    let Some(ev) = begin_in(kind::EXEC, cg) else {
         return 0;
     };
     read_s0(ev, file);
@@ -277,27 +296,25 @@ fn exec_enter(file: u64, argv: u64) -> u32 {
 #[inline(always)]
 fn pend(ev: &mut RawEvent) {
     let tid = ev.tid;
-    let _ = PENDING.insert(&tid, ev, 0);
+    if PENDING.insert(&tid, ev, 0).is_err() {
+        count_drop();
+    }
 }
 
-/// Attached to the `sys_exit_*` tracepoint of every parked syscall:
-/// emit the parked event when the call succeeded.
-#[tracepoint]
-pub fn sys_exit_generic(ctx: TracePointContext) -> u32 {
+/// Emit the event parked by this thread's syscall entry once the call
+/// returned `ret`: successful calls only, except connects (every attempt is
+/// reported with its result).
+#[inline(always)]
+fn exit_parked(ret: i64) {
     let tid = bpf_get_current_pid_tgid() as u32;
     let Some(p) = PENDING.get_ptr_mut(&tid) else {
-        return 0;
+        return;
     };
-    // SAFETY: sys_exit_* has `long ret` at offset 16.
-    let ret = unsafe { ctx.read_at::<i64>(16) }.unwrap_or(-1);
     // SAFETY: map value owned by this tid.
-    let connect = unsafe { (*p).kind } == kind::CONNECT;
-    if connect {
-        // Every attempt is reported, with its result. In an enforced
-        // session EPERM comes from the cgroup program and EACCES from
-        // Landlock's port rules (which run first).
-        // SAFETY: as above.
-        let ev = unsafe { &mut *p };
+    let ev = unsafe { &mut *p };
+    if ev.kind == kind::CONNECT {
+        // In an enforced session EPERM comes from the cgroup program and
+        // EACCES from Landlock's port rules (which run first).
         ev.ret = ret;
         if unsafe { ENFORCE.get(&ev.cgroup_id) }.is_some() {
             ev.a2 = if ret == -EPERM || ret == -EACCES {
@@ -309,8 +326,6 @@ pub fn sys_exit_generic(ctx: TracePointContext) -> u32 {
         ev.ts_ns = unsafe { bpf_ktime_get_ns() };
         emit(ev);
     } else if ret >= 0 {
-        // SAFETY: map value owned by this tid.
-        let ev = unsafe { &mut *p };
         ev.ret = ret;
         ev.ts_ns = unsafe { bpf_ktime_get_ns() };
         if ev.kind == kind::EXEC {
@@ -320,17 +335,105 @@ pub fn sys_exit_generic(ctx: TracePointContext) -> u32 {
         emit(ev);
     }
     let _ = PENDING.remove(&tid);
+}
+
+/// `raw_tp/sys_exit(struct pt_regs *regs, long ret)`.
+#[raw_tracepoint(tracepoint = "sys_exit")]
+pub fn sys_exit(ctx: RawTracePointContext) -> u32 {
+    if active() {
+        exit_parked(ctx.arg::<i64>(1));
+    }
     0
 }
 
-#[tracepoint]
-pub fn sys_enter_execve(ctx: TracePointContext) -> u32 {
-    exec_enter(arg(&ctx, 0), arg(&ctx, 1))
+/// Whether the current syscall is a compat (32-bit) one, numbered from
+/// another table.
+#[inline(always)]
+fn compat_syscall(o: &Offsets) -> bool {
+    if o.compat_offset == u32::MAX {
+        return false;
+    }
+    // SAFETY: helper returns the current task; bounded kernel read.
+    let task = unsafe { bpf_get_current_task() };
+    let word = unsafe { bpf_probe_read_kernel((task + u64::from(o.compat_offset)) as *const u32) }
+        .unwrap_or(0);
+    word & o.compat_mask != 0
 }
 
-#[tracepoint]
-pub fn sys_enter_execveat(ctx: TracePointContext) -> u32 {
-    exec_enter(arg(&ctx, 1), arg(&ctx, 2))
+/// `raw_tp/sys_enter(struct pt_regs *regs, long id)`: one program for every
+/// handled syscall, dispatched by the `SYSCALLS` table.
+#[raw_tracepoint(tracepoint = "sys_enter")]
+pub fn sys_enter(ctx: RawTracePointContext) -> u32 {
+    if !active() {
+        return 0;
+    }
+    let id: i64 = ctx.arg(1);
+    if id < 0 || id >= i64::from(MAX_SYSCALL_NR) {
+        return 0;
+    }
+    let code = SYSCALLS.get(id as u32).copied().unwrap_or(0);
+    if code == 0 {
+        return 0;
+    }
+    let Some(cg) = session_cgroup() else {
+        return 0;
+    };
+    let o = offsets();
+    if compat_syscall(&o) {
+        return 0;
+    }
+    let regs: u64 = ctx.arg(0);
+    // SAFETY: bounded kernel reads of the syscall's saved registers.
+    let a = |i: usize| {
+        unsafe { bpf_probe_read_kernel((regs + u64::from(o.regs_args[i])) as *const u64) }
+            .unwrap_or(0)
+    };
+    let fd = |i: usize| a(i) as i32 as i64;
+    // Path operations: (kind, dfd, path, a1, a2).
+    let path_op = match code {
+        sys::EXECVE => return exec_enter(cg, a(0), a(1)),
+        sys::EXECVEAT => return exec_enter(cg, a(1), a(2)),
+        sys::EXIT_GROUP => {
+            if let Some(ev) = begin_in(kind::EXIT_GROUP, cg) {
+                ev.a0 = fd(0);
+                emit(ev);
+            }
+            return 0;
+        }
+        sys::RENAMEAT2 => return rename_event(cg, [fd(0), fd(2), a(4) as i64], a(1), a(3)),
+        sys::RENAMEAT => return rename_event(cg, [fd(0), fd(2), 0], a(1), a(3)),
+        sys::RENAME => return rename_event(cg, [FDCWD, FDCWD, 0], a(0), a(1)),
+        sys::CONNECT => return connect_enter(cg, a(1)),
+        sys::FCHDIR => {
+            if let Some(ev) = begin_in(kind::FCHDIR, cg) {
+                ev.a0 = fd(0);
+                pend(ev);
+            }
+            return 0;
+        }
+        sys::OPENAT => (kind::OPEN, fd(0), a(1), a(2) as i64, a(3) as i64),
+        sys::OPENAT2 => {
+            let (flags, mode) = open_how(a(2));
+            (kind::OPEN, fd(0), a(1), flags, mode)
+        }
+        sys::OPEN => (kind::OPEN, FDCWD, a(0), a(1) as i64, a(2) as i64),
+        // creat(path, mode) == open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)
+        sys::CREAT => (kind::OPEN, FDCWD, a(0), 0o1101, a(1) as i64),
+        sys::UNLINKAT => (kind::UNLINK, fd(0), a(1), a(2) as i64, 0),
+        sys::UNLINK => (kind::UNLINK, FDCWD, a(0), 0, 0),
+        // AT_REMOVEDIR
+        sys::RMDIR => (kind::UNLINK, FDCWD, a(0), 0x200, 0),
+        sys::MKDIRAT => (kind::MKDIR, fd(0), a(1), a(2) as i64, 0),
+        sys::MKDIR => (kind::MKDIR, FDCWD, a(0), a(1) as i64, 0),
+        sys::FCHMODAT | sys::FCHMODAT2 => (kind::CHMOD, fd(0), a(1), a(2) as i64, 0),
+        sys::CHMOD => (kind::CHMOD, FDCWD, a(0), a(1) as i64, 0),
+        // a0 carries the length for TRUNCATE (no dfd: path is cwd-relative).
+        sys::TRUNCATE => (kind::TRUNCATE, a(1) as i64, a(0), 0, 0),
+        sys::CHDIR => (kind::CHDIR, FDCWD, a(0), 0, 0),
+        _ => return 0,
+    };
+    let (k, dfd, path, a1, a2) = path_op;
+    path_event(k, cg, dfd, path, [a1, a2])
 }
 
 /// `task:task_newtask` runs in the parent; `clone_flags` tells threads
@@ -366,6 +469,8 @@ pub fn sched_process_exit(ctx: TracePointContext) -> u32 {
     } else {
         unsafe { ctx.read_at::<u8>(o.exit_group_dead as usize) }.unwrap_or(0) != 0
     };
+    // A thread that dies inside a parked syscall never reaches its exit.
+    let _ = PENDING.remove(&(bpf_get_current_pid_tgid() as u32));
     if !group_dead {
         return 0;
     }
@@ -378,19 +483,11 @@ pub fn sched_process_exit(ctx: TracePointContext) -> u32 {
     0
 }
 
-#[tracepoint]
-pub fn sys_enter_exit_group(ctx: TracePointContext) -> u32 {
-    if let Some(ev) = begin(kind::EXIT_GROUP) {
-        ev.a0 = arg(&ctx, 0) as i32 as i64;
-        emit(ev);
-    }
-    0
-}
-
 // ---------------------------------------------------------------- files
 
-fn path_event(k: u32, dfd: i64, path: u64, a1: i64, a2: i64) -> u32 {
-    if let Some(ev) = begin(k) {
+#[inline(always)]
+fn path_event(k: u32, cg: u64, dfd: i64, path: u64, [a1, a2]: [i64; 2]) -> u32 {
+    if let Some(ev) = begin_in(k, cg) {
         ev.a0 = dfd;
         ev.a1 = a1;
         ev.a2 = a2;
@@ -406,82 +503,25 @@ fn path_event(k: u32, dfd: i64, path: u64, a1: i64, a2: i64) -> u32 {
 
 const FDCWD: i64 = wyrd_common::AT_FDCWD;
 
-#[tracepoint]
-pub fn sys_enter_openat(ctx: TracePointContext) -> u32 {
-    path_event(
-        kind::OPEN,
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i64,
-        arg(&ctx, 3) as i64,
-    )
+/// `flags` and `mode` of a user `struct open_how { u64 flags; u64 mode; u64 resolve; }`.
+#[inline(always)]
+fn open_how(how: u64) -> (i64, i64) {
+    let how = how as *const u64;
+    if how.is_null() {
+        return (0, 0);
+    }
+    // SAFETY: user pointer reads.
+    unsafe {
+        (
+            bpf_probe_read_user(how).unwrap_or(0) as i64,
+            bpf_probe_read_user(how.add(1)).unwrap_or(0) as i64,
+        )
+    }
 }
 
-#[tracepoint]
-pub fn sys_enter_openat2(ctx: TracePointContext) -> u32 {
-    // struct open_how { u64 flags; u64 mode; u64 resolve; }
-    let how = arg(&ctx, 2) as *const u64;
-    // SAFETY: user pointer read.
-    let flags = if how.is_null() {
-        0
-    } else {
-        unsafe { bpf_probe_read_user(how) }.unwrap_or(0)
-    };
-    let mode = if how.is_null() {
-        0
-    } else {
-        unsafe { bpf_probe_read_user(how.add(1)) }.unwrap_or(0)
-    };
-    path_event(
-        kind::OPEN,
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        flags as i64,
-        mode as i64,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_open(ctx: TracePointContext) -> u32 {
-    path_event(
-        kind::OPEN,
-        FDCWD,
-        arg(&ctx, 0),
-        arg(&ctx, 1) as i64,
-        arg(&ctx, 2) as i64,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_creat(ctx: TracePointContext) -> u32 {
-    // creat(path, mode) == open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)
-    path_event(kind::OPEN, FDCWD, arg(&ctx, 0), 0o1101, arg(&ctx, 1) as i64)
-}
-
-#[tracepoint]
-pub fn sys_enter_unlinkat(ctx: TracePointContext) -> u32 {
-    path_event(
-        kind::UNLINK,
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i64,
-        0,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_unlink(ctx: TracePointContext) -> u32 {
-    path_event(kind::UNLINK, FDCWD, arg(&ctx, 0), 0, 0)
-}
-
-#[tracepoint]
-pub fn sys_enter_rmdir(ctx: TracePointContext) -> u32 {
-    // AT_REMOVEDIR
-    path_event(kind::UNLINK, FDCWD, arg(&ctx, 0), 0x200, 0)
-}
-
-fn rename_event(olddfd: i64, old: u64, newdfd: i64, new: u64, flags: i64) -> u32 {
-    if let Some(ev) = begin(kind::RENAME) {
+/// `dfds_flags` = [old dfd, new dfd, flags].
+fn rename_event(cg: u64, [olddfd, newdfd, flags]: [i64; 3], old: u64, new: u64) -> u32 {
+    if let Some(ev) = begin_in(kind::RENAME, cg) {
         ev.a0 = olddfd;
         ev.a1 = newdfd;
         ev.a2 = flags;
@@ -492,87 +532,10 @@ fn rename_event(olddfd: i64, old: u64, newdfd: i64, new: u64, flags: i64) -> u32
     0
 }
 
-#[tracepoint]
-pub fn sys_enter_renameat2(ctx: TracePointContext) -> u32 {
-    rename_event(
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i32 as i64,
-        arg(&ctx, 3),
-        arg(&ctx, 4) as i64,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_renameat(ctx: TracePointContext) -> u32 {
-    rename_event(
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i32 as i64,
-        arg(&ctx, 3),
-        0,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_rename(ctx: TracePointContext) -> u32 {
-    rename_event(FDCWD, arg(&ctx, 0), FDCWD, arg(&ctx, 1), 0)
-}
-
-#[tracepoint]
-pub fn sys_enter_mkdirat(ctx: TracePointContext) -> u32 {
-    path_event(
-        kind::MKDIR,
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i64,
-        0,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_mkdir(ctx: TracePointContext) -> u32 {
-    path_event(kind::MKDIR, FDCWD, arg(&ctx, 0), arg(&ctx, 1) as i64, 0)
-}
-
-#[tracepoint]
-pub fn sys_enter_fchmodat(ctx: TracePointContext) -> u32 {
-    path_event(
-        kind::CHMOD,
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i64,
-        0,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_fchmodat2(ctx: TracePointContext) -> u32 {
-    path_event(
-        kind::CHMOD,
-        arg(&ctx, 0) as i32 as i64,
-        arg(&ctx, 1),
-        arg(&ctx, 2) as i64,
-        0,
-    )
-}
-
-#[tracepoint]
-pub fn sys_enter_chmod(ctx: TracePointContext) -> u32 {
-    path_event(kind::CHMOD, FDCWD, arg(&ctx, 0), arg(&ctx, 1) as i64, 0)
-}
-
-#[tracepoint]
-pub fn sys_enter_truncate(ctx: TracePointContext) -> u32 {
-    // a0 carries the length for TRUNCATE (no dfd: path is cwd-relative).
-    path_event(kind::TRUNCATE, arg(&ctx, 1) as i64, arg(&ctx, 0), 0, 0)
-}
-
 // ---------------------------------------------------------------- network
 
-#[tracepoint]
-pub fn sys_enter_connect(ctx: TracePointContext) -> u32 {
-    let sa = arg(&ctx, 1) as *const u8;
+fn connect_enter(cg: u64, sa: u64) -> u32 {
+    let sa = sa as *const u8;
     if sa.is_null() {
         return 0;
     }
@@ -581,7 +544,7 @@ pub fn sys_enter_connect(ctx: TracePointContext) -> u32 {
     if family != AF_INET && family != AF_INET6 {
         return 0;
     }
-    let Some(ev) = begin(kind::CONNECT) else {
+    let Some(ev) = begin_in(kind::CONNECT, cg) else {
         return 0;
     };
     let port_be = unsafe { bpf_probe_read_user(sa.add(2) as *const u16) }.unwrap_or(0);
@@ -682,20 +645,4 @@ pub fn connect6(ctx: SockAddrContext) -> i32 {
     a[8..12].copy_from_slice(&w[2].to_ne_bytes());
     a[12..].copy_from_slice(&w[3].to_ne_bytes());
     egress(AF_INET6, [0; 4], a, u16::from_be(port as u16))
-}
-
-// ---------------------------------------------------------------- cwd
-
-#[tracepoint]
-pub fn sys_enter_chdir(ctx: TracePointContext) -> u32 {
-    path_event(kind::CHDIR, FDCWD, arg(&ctx, 0), 0, 0)
-}
-
-#[tracepoint]
-pub fn sys_enter_fchdir(ctx: TracePointContext) -> u32 {
-    if let Some(ev) = begin(kind::FCHDIR) {
-        ev.a0 = arg(&ctx, 0) as i32 as i64;
-        pend(ev);
-    }
-    0
 }
