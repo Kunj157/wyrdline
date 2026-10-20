@@ -15,6 +15,7 @@ import { type Renderer, RiverCanvas } from "../river/RiverCanvas";
 import { RIVER_HEIGHT } from "../river/theme";
 import { Transcript } from "../components/Transcript";
 import {
+  offlineBundle,
   offlineSource,
   useCheckpoints,
   useDivergences,
@@ -87,7 +88,7 @@ export function SessionPage() {
             {s.workspace}
           </span>
         )}
-        {offlineSource() !== null && (
+        {offlineSource() !== null && offlineBundle() === null && (
           <span className="text-sm text-text-muted">replay · chain not verifiable offline</span>
         )}
         {verify.data &&

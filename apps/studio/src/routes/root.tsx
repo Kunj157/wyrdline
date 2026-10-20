@@ -1,6 +1,6 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
-import { offlineSource } from "../lib/api";
+import { useOffline } from "../lib/api";
 import { Activity, LayoutGrid, TriangleAlert } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -15,6 +15,8 @@ const nav: NavItem[] = [
 ];
 
 export function RootLayout() {
+  const offline = useOffline();
+  const bundle = offline?.bundle ?? null;
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 shrink-0 flex-col gap-1 border-r border-border bg-surface-1 p-3 md:flex">
@@ -57,13 +59,24 @@ export function RootLayout() {
             </Link>
           ))}
         </nav>
-        {offlineSource() !== null && (
+        {offline && (
           <div
             role="status"
             className="border-b border-border bg-accent-subtle px-4 py-2 text-sm text-text-primary"
           >
-            Offline replay of <span className="font-mono">{offlineSource()}</span> — read-only. The
-            causal graph is computed in your browser by Wyrdline's correlator, compiled to
+            {bundle ? (
+              <>
+                Bundle <span className="font-mono">{offline.name}</span> — verified in your browser
+                (signature by <span className="font-mono">{bundle.signer_fingerprint}</span>, every
+                file hash, the ledger chain), {bundle.redaction} redaction
+                {bundle.content.included ? "" : ", no checkpoint content"}; read-only.
+              </>
+            ) : (
+              <>
+                Offline replay of <span className="font-mono">{offline.name}</span> — read-only.
+              </>
+            )}{" "}
+            The causal graph is computed in your browser by Wyrdline's correlator, compiled to
             WebAssembly.
           </div>
         )}
