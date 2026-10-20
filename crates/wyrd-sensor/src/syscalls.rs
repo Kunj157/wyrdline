@@ -24,7 +24,7 @@ pub struct Arch {
     pub compat_mask: u32,
 }
 
-/// x86_64: `arch/x86/entry/syscalls/syscall_64.tbl`.
+/// `x86_64`: `arch/x86/entry/syscalls/syscall_64.tbl`.
 pub const X86_64: Arch = Arch {
     name: "x86_64",
     table: &[
