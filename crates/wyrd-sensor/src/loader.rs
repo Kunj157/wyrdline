@@ -461,26 +461,6 @@ impl Sensor {
             .collect()
     }
 
-    /// Per-program counters from the kernel (`/proc/self/fdinfo`): runs
-    /// (counted only while BPF stats are enabled) and recursion misses —
-    /// invocations the kernel skipped because a BPF program was already
-    /// running on that CPU.
-    pub fn program_stats(&self) -> Vec<ProgramStats> {
-        use std::os::fd::AsRawFd as _;
-        self.ebpf
-            .programs()
-            .filter_map(|(name, p)| {
-                let fd = p.fd().ok()?.as_fd().as_raw_fd();
-                let info = std::fs::read_to_string(format!("/proc/self/fdinfo/{fd}")).ok()?;
-                Some(ProgramStats {
-                    name: name.to_string(),
-                    run_cnt: fdinfo_field(&info, "run_cnt"),
-                    misses: fdinfo_field(&info, "recursion_misses"),
-                })
-            })
-            .collect()
-    }
-
     /// Return everything available, waiting up to `timeout` when the buffer
     /// is empty. Programs emit without wakeups, so callers should poll with
     /// short timeouts (the daemon uses 10 ms).
