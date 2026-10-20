@@ -9,7 +9,7 @@ PNPM ?= pnpm
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
-	test-e2e test-e2e-webgpu e2e-build site test-site
+	test-e2e test-e2e-webgpu e2e-build site test-site test-hub
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -90,6 +90,9 @@ test-integration: ## Privileged Cell, scenario, and sensor tests (through passwo
 
 test-escape: ## The escape suite: an agent in a Cell tries to get around every enforcement layer (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test escape
+
+test-hub: ## Hub tests, including Postgres 17 and MinIO in containers (needs Docker)
+	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests
 
 demo: ## The plan §2 demo with the scripted agent: victim shop, Cell, sensor, default policy (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test demo --no-capture
