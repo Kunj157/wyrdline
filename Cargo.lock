@@ -3354,8 +3354,14 @@ dependencies = [
 name = "wyrd-wasm"
 version = "0.0.0"
 dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "serde_bytes",
  "serde_json",
  "wasm-bindgen",
+ "wyrd-bundle",
+ "wyrd-cas",
+ "wyrd-cell",
  "wyrd-correlator",
  "wyrd-schema",
 ]
