@@ -67,7 +67,8 @@ jobs:
           sudo env TMPDIR=/dev/shm bins/old/matrix_check 2>&1 | grep -v '^[0-9]*: \|^;' || true
           sudo dmesg | tail -40
       - name: new matrix_check
-        run: sudo env TMPDIR=/dev/shm bins/new/matrix_check 2>&1 | grep -v '^[0-9]*: \|^;'
+        run: |
+          sudo env TMPDIR=/dev/shm bins/new/matrix_check 2>&1 | grep -v '^[0-9]*: \|^;'
       - name: new kernel_diag
         run: sudo env TMPDIR=/dev/shm bins/new/kernel_diag
       - name: Install toolchains
@@ -129,6 +130,7 @@ jobs:
           chmod +x bins/*/*
           ./vmtest --kernel vmlinuz -- "env TMPDIR=/dev/shm $PWD/bins/old/matrix_check" 2>&1 | grep -v '^[0-9]*: \|^;' | tail -8 || true
       - name: new in VM
-        run: ./vmtest --kernel vmlinuz -- "env TMPDIR=/dev/shm $PWD/bins/new/matrix_check" 2>&1 | grep -v '^[0-9]*: \|^;' | tail -8
+        run: |
+          ./vmtest --kernel vmlinuz -- "env TMPDIR=/dev/shm $PWD/bins/new/matrix_check" 2>&1 | grep -v '^[0-9]*: \|^;' | tail -8
       - name: new diag in VM
         run: ./vmtest --kernel vmlinuz -- "env TMPDIR=/dev/shm $PWD/bins/new/kernel_diag" 2>&1 | tail -80
