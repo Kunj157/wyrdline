@@ -24,8 +24,8 @@ pub enum PolicyCmd {
 pub struct BacktestArgs {
     /// Policy component (`.wasm`).
     policy: PathBuf,
-    /// Session id (or unique prefix), or an events file
-    /// (`wyrd events <session> --json`).
+    /// Session id (or unique prefix), a `.wyrd` bundle (verified first),
+    /// or an events file (`wyrd events <session> --json`).
     session: String,
     #[arg(long)]
     json: bool,
@@ -147,9 +147,18 @@ fn test(a: &TestArgs) -> anyhow::Result<u8> {
 
 /// The events of a session, from its ledger or from an events file, and
 /// its workspace.
-pub fn recorded(session: &str) -> anyhow::Result<(Vec<wyrd_schema::Event>, PathBuf)> {
+/// The events of a session, a bundle, or an events file, and the
+/// session's workspace. A bundle that does not verify is
+/// [`Recorded::Unverified`].
+pub fn recorded(session: &str) -> anyhow::Result<Recorded> {
     let path = Path::new(session);
-    let events: Vec<wyrd_schema::Event> = if path.is_file() {
+    let events: Vec<wyrd_schema::Event> = if path.is_file() && crate::cmd::bundle::is_bundle(path) {
+        let f = std::fs::File::open(path).with_context(|| format!("opening {session}"))?;
+        match wyrd_bundle::read(std::io::BufReader::new(f), &wyrd_bundle::Options::default()) {
+            Ok(b) => b.events,
+            Err(e) => return Ok(Recorded::Unverified(e)),
+        }
+    } else if path.is_file() {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {session}"))?;
         text.lines()
             .filter(|l| !l.trim().is_empty())
@@ -170,12 +179,31 @@ pub fn recorded(session: &str) -> anyhow::Result<(Vec<wyrd_schema::Event>, PathB
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("{session}: no session start event"))?;
-    Ok((events, workspace))
+    Ok(Recorded::Events(events, workspace))
+}
+
+/// What [`recorded`] found.
+#[derive(Debug)]
+pub enum Recorded {
+    Events(Vec<wyrd_schema::Event>, PathBuf),
+    Unverified(wyrd_bundle::ReadError),
 }
 
 fn backtest(a: &BacktestArgs) -> anyhow::Result<u8> {
     let policy = Policy::load_file(&a.policy)?;
-    let (events, workspace) = recorded(&a.session)?;
+    let (events, workspace) = match recorded(&a.session)? {
+        Recorded::Events(events, workspace) => (events, workspace),
+        Recorded::Unverified(e) => {
+            writeln!(
+                std::io::stderr(),
+                "wyrd: {} does not verify ({}: {e}); run `wyrd verify {}`",
+                a.session,
+                e.stage().describe(),
+                a.session
+            )?;
+            return Ok(exit::VERIFICATION_FAILED);
+        }
+    };
     let home = wyrd_cell::launch::home_dir();
     let report = wyrd_policy::backtest::backtest(&policy, &events, &workspace, home.as_deref());
     let mut o = std::io::stdout().lock();
