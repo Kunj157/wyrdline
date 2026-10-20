@@ -51,10 +51,13 @@ macro_rules! migration {
 #[allow(clippy::unreadable_literal)] // versions are timestamps
 pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {
     Migrator::with_migrations(
-        [migration!(20261020000001, "core")]
-            .into_iter()
-            .flatten()
-            .collect(),
+        [
+            migration!(20261020000001, "core"),
+            migration!(20261020000002, "auth"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
     )
 });
 

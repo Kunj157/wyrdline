@@ -3,9 +3,13 @@
 //! organisations, users, and the audit log in PostgreSQL.
 //! `docs/architecture/hub.md` describes the API and the deployment.
 
+pub mod audit;
+pub mod auth;
 pub mod config;
 pub mod db;
+pub mod jwt;
 pub mod metrics;
+pub mod oidc;
 pub mod problem;
 mod routes;
 pub mod storage;
@@ -33,16 +37,20 @@ pub struct AppState {
     pub config: Config,
     db: OnceLock<PgPool>,
     pub storage: Storage,
+    /// `None` when no OIDC provider is configured (login disabled).
+    pub oidc: Option<oidc::Provider>,
     pub metrics: metrics::Metrics,
 }
 
 impl AppState {
     /// A Hub whose database is not connected yet (see [`AppState::set_db`]).
     pub fn new(config: Config, storage: Storage) -> Self {
+        let oidc = config.oidc.clone().map(oidc::Provider::new);
         AppState {
             config,
             db: OnceLock::new(),
             storage,
+            oidc,
             metrics: metrics::Metrics::default(),
         }
     }
