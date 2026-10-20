@@ -60,7 +60,8 @@ export function AnnotationsPanel({
   readOnly = false,
 }: AnnotationsPanelProps) {
   const id = useId();
-  const { replica, view, error } = useAnnotations(sid);
+  const { replica, snapshot, error } = useAnnotations(sid);
+  const view = snapshot?.view;
   const [name, setName] = useState(storedName);
   const initial = selected === null ? "" : String(selected);
   const [from, setFrom] = useState(initial);
@@ -113,8 +114,11 @@ export function AnnotationsPanel({
   };
 
   return (
-    <div className="flex flex-col gap-4 text-sm">
-      {status}
+    <section aria-label="Annotations" className="flex flex-col gap-4 text-sm">
+      <p role="status" className="text-xs text-text-muted">
+        {snapshot?.saved ? "Saved on this device" : "Saving…"}
+        {status}
+      </p>
       {problem && (
         <p role="alert" className="text-verdict-denied">
           {problem}
@@ -293,6 +297,6 @@ export function AnnotationsPanel({
           </ul>
         </section>
       )}
-    </div>
+    </section>
   );
 }

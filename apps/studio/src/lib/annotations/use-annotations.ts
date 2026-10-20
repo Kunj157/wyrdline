@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import { loadAutomerge } from "./automerge";
-import type { AnnotationView } from "./doc";
-import { AnnotationReplica } from "./replica";
+import { AnnotationReplica, type AnnotationSnapshot } from "./replica";
 import { type AnnotationStore, indexedDbStore, memoryStore } from "./store";
 
 let store: AnnotationStore | undefined;
@@ -14,7 +13,7 @@ function defaultStore(): AnnotationStore {
 /** The session's annotation replica, opened from the local store. */
 export function useAnnotations(sid: string): {
   replica: AnnotationReplica | null;
-  view: AnnotationView | null;
+  snapshot: AnnotationSnapshot | null;
   error: string | null;
 } {
   const [replica, setReplica] = useState<AnnotationReplica | null>(null);
@@ -41,6 +40,6 @@ export function useAnnotations(sid: string): {
     (l: () => void) => (replica ? replica.subscribe(l) : () => undefined),
     [replica],
   );
-  const view = useSyncExternalStore(subscribe, () => replica?.view() ?? null);
-  return { replica, view, error };
+  const snapshot = useSyncExternalStore(subscribe, () => replica?.snapshot() ?? null);
+  return { replica, snapshot, error };
 }

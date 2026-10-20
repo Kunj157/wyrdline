@@ -3,6 +3,12 @@ import * as A from "@automerge/automerge/slim";
 import { type AnnotationDoc, type AnnotationView, createAnnotations, viewAnnotations } from "./doc";
 import type { AnnotationStore } from "./store";
 
+export interface AnnotationSnapshot {
+  view: AnnotationView;
+  /** Every change is in the local store. */
+  saved: boolean;
+}
+
 /** How long local edits are batched before they are written to the store. */
 const SAVE_DELAY_MS = 150;
 
@@ -14,7 +20,8 @@ const SAVE_DELAY_MS = 150;
 export class AnnotationReplica {
   private listeners = new Set<() => void>();
   private saving: ReturnType<typeof setTimeout> | null = null;
-  private cached: AnnotationView | null = null;
+  private cached: AnnotationSnapshot | null = null;
+  private dirty = false;
   /** Called after local edits only (the sync client sends them). */
   onLocalChange: (() => void) | null = null;
 
@@ -44,7 +51,12 @@ export class AnnotationReplica {
   }
 
   view(): AnnotationView {
-    this.cached ??= viewAnnotations(this.current);
+    return this.snapshot().view;
+  }
+
+  /** What the UI renders; the same object until something changes. */
+  snapshot(): AnnotationSnapshot {
+    this.cached ??= { view: viewAnnotations(this.current), saved: !this.dirty };
     return this.cached;
   }
 
@@ -58,9 +70,9 @@ export class AnnotationReplica {
   replace(doc: AnnotationDoc): void {
     if (doc === this.current) return;
     this.current = doc;
-    this.cached = null;
+    this.dirty = true;
     this.scheduleSave();
-    for (const l of this.listeners) l();
+    this.notify();
   }
 
   subscribe(listener: () => void): () => void {
@@ -72,14 +84,29 @@ export class AnnotationReplica {
   async flush(): Promise<void> {
     if (this.saving) clearTimeout(this.saving);
     this.saving = null;
-    await this.store.save(this.session, A.save(this.current));
+    await this.save();
   }
 
   private scheduleSave() {
     if (this.saving) return;
     this.saving = setTimeout(() => {
       this.saving = null;
-      void this.store.save(this.session, A.save(this.current)).catch(() => undefined);
+      void this.save().catch(() => undefined);
     }, SAVE_DELAY_MS);
+  }
+
+  private async save() {
+    const doc = this.current;
+    await this.store.save(this.session, A.save(doc));
+    // Still saved only if nothing changed while the write was in flight.
+    if (doc === this.current && this.dirty) {
+      this.dirty = false;
+      this.notify();
+    }
+  }
+
+  private notify() {
+    this.cached = null;
+    for (const l of this.listeners) l();
   }
 }
