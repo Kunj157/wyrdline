@@ -145,8 +145,6 @@ fn test(a: &TestArgs) -> anyhow::Result<u8> {
     })
 }
 
-/// The events of a session, from its ledger or from an events file, and
-/// its workspace.
 /// The events of a session, a bundle, or an events file, and the
 /// session's workspace. A bundle that does not verify is
 /// [`Recorded::Unverified`].
@@ -208,7 +206,14 @@ fn backtest(a: &BacktestArgs) -> anyhow::Result<u8> {
     let report = wyrd_policy::backtest::backtest(&policy, &events, &workspace, home.as_deref());
     let mut o = std::io::stdout().lock();
     if a.json {
-        serde_json::to_writer_pretty(&mut o, &report)?;
+        // The daemon's `BacktestReport`: the Studio overlays it in bundle mode.
+        let session_id = events.iter().find_map(|e| match &e.body {
+            wyrd_schema::EventBody::SessionStarted(s) => Some(s.session_id.clone()),
+            _ => None,
+        });
+        let mut v = serde_json::to_value(&report)?;
+        v["session_id"] = serde_json::json!(session_id);
+        serde_json::to_writer_pretty(&mut o, &v)?;
         writeln!(o)?;
         return Ok(exit::OK);
     }

@@ -435,6 +435,7 @@ fn backtest_of_a_bundle_matches_the_session() {
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(of_bundle, of_session);
     let report: serde_json::Value = serde_json::from_str(&of_bundle).unwrap();
+    assert_eq!(report["session_id"], e.id.as_str());
     let findings = report["findings"].as_array().unwrap();
     assert!(findings.len() >= 2, "{report}");
     assert!(of_bundle.contains("curl"), "{of_bundle}");

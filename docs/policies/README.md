@@ -148,12 +148,15 @@ expect = "deny"
 
 ## Backtesting
 
-`wyrd policy backtest <policy.wasm> <session | events.jsonl>` replays a
-recorded session: tool calls through `on-tool-call`, effects through a
+`wyrd policy backtest <policy.wasm> <session | bundle.wyrd | events.jsonl>`
+replays a recorded session (a `.wyrd` bundle is verified first; one that
+does not verify is refused with exit 3): tool calls through `on-tool-call`, effects through a
 simulation of the kernel rules (connects against the egress rules, using
 the recorded DNS name only; sensitive reads; writes that left the Cell;
 execs by name) and then `on-effect`. The output lists every event the
 policy would have denied or asked about, by `seq`. It is deterministic:
 the same policy and session always give the same report. The daemon offers
 the same over `POST /v1/policies` and `POST /v1/policies/{id}/backtest`,
-and Studio's Backtest tab draws the findings on the river.
+and Studio's Backtest tab draws the findings on the river. `--json` prints
+the daemon's report shape (with `session_id`); in bundle mode, where there
+is no policy host in the browser, Studio's Backtest tab loads that file.
