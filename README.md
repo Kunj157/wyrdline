@@ -79,6 +79,7 @@ wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enfor
 wyrd ask <session>                                   # answer what the policy asks
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
+wyrd push session.wyrd --hub https://hub.example --org acme  # share it on a team Hub (token in WYRD_HUB_TOKEN)
 ```
 
 Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).

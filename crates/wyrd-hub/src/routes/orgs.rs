@@ -72,11 +72,14 @@ async fn create_org(
     let mut tx = pool.begin().await?;
     let id = ulid::Ulid::generate().to_string();
     let inserted = db::query(
-        "INSERT INTO orgs (id, slug, name) VALUES ($1, $2, $3) ON CONFLICT (slug) DO NOTHING",
+        "INSERT INTO orgs (id, slug, name, quota_bytes, quota_bundles) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO NOTHING",
     )
     .bind(&id)
     .bind(&body.slug)
     .bind(name)
+    .bind(st.config.limits.quota_bytes)
+    .bind(st.config.limits.quota_bundles)
     .execute(&mut *tx)
     .await?;
     if inserted.rows_affected() == 0 {
