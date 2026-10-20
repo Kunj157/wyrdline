@@ -3,6 +3,7 @@
 //! organisations, users, and the audit log in PostgreSQL.
 //! `docs/architecture/hub.md` describes the API and the deployment.
 
+pub mod access;
 pub mod audit;
 pub mod auth;
 pub mod config;

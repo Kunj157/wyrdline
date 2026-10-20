@@ -65,6 +65,54 @@ migration, undo all of them, and apply them again.
 | `bundles` | verified manifest metadata, uploader-supplied repo, divergence rules, size, object key |
 | `audit_logs` | actor, action, target, request id, details; append-only (a trigger rejects `UPDATE`, `DELETE`, `TRUNCATE`) |
 
+## Authentication
+
+**Browser login** is OpenID Connect, authorization code with PKCE:
+
+1. `GET /api/v1/auth/oidc/login?return_to=/path` stores a pending login
+   (hashed `state`, `nonce`, PKCE verifier; 10 minutes) bound to the
+   browser by an HttpOnly `wyrd_login` cookie, and redirects to the
+   provider.
+2. The provider redirects to `GET /api/v1/auth/oidc/callback?code&state`
+   (a client that handles the redirect itself may `POST` `{code, state}`
+   as JSON). The state is consumed once; the browser binding, expiry, the
+   code exchange (client secret + verifier), and the ID token (signature
+   against the provider's JWKS: RS256, ES256 or EdDSA, refreshed on an
+   unknown `kid` for key rotation; `iss`, `aud`/`azp`, `exp` with 60 s
+   leeway, `nonce`) are checked. Any failure answers 401 "Login failed"
+   without detail and is logged with its reason and counted in
+   `wyrd_hub_logins_total{outcome}`; an unreachable provider is 503.
+3. The user is found or created by `(issuer, subject)`, a **new** session
+   id is issued (no session fixation), and `wyrd_session` is set:
+   HttpOnly, SameSite=Lax, Path=/, 7 days; on HTTPS also `Secure` with the
+   `__Host-` prefix. Only `return_to` paths on the Hub itself are honoured.
+
+GitHub is the production identity provider through Dex's GitHub
+connector (GitHub's own OAuth does not issue ID tokens).
+
+**API tokens** (`Authorization: Bearer wyrdhub_…`) are created from a
+signed-in session with `POST /api/v1/tokens {name, org?, expires_in_days?}`
+(default 90, at most 365 days); the secret is shown once. A token acts as
+its user, optionally only in one organisation; tokens cannot create
+tokens. Removing a membership deletes the user's tokens for that org.
+
+Session ids, tokens, and login state are stored only as SHA-256 hashes.
+**CSRF:** a cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` must carry
+the Hub's own `Origin` (or `Sec-Fetch-Site: same-origin`), else 403;
+bearer-token requests are not subject to this.
+
+**Roles** per organisation: `viewer` < `member` < `admin`. Any signed-in
+user may create an organisation and becomes its admin; admins add,
+change, and remove members (by user id or email; the user must have
+signed in once) and cannot remove or demote the last admin (409).
+
+**Audit log:** every mutation writes an `audit_logs` row in the same
+transaction (actor, action, target, request id, details). Actions so far:
+`auth.login`, `auth.logout`, `org.create`, `org.member.set`,
+`org.member.remove`, `token.create`, `token.revoke`. Admins read their
+organisation's log with `GET /api/v1/audit-logs?org=<slug>&limit=&before=`
+(newest first).
+
 ## API (`/api/v1`)
 
 Roles: `viewer` (read), `member` (+ upload, annotate), `admin` (+ delete,
