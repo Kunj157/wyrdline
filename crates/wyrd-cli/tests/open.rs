@@ -167,7 +167,7 @@ fn open_refuses_a_bundle_that_does_not_verify() {
         .unwrap();
     assert_eq!(out.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&out.stderr).contains("does not verify"));
-    assert!(out.stdout.is_empty());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
 }
 
 #[test]
