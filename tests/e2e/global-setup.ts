@@ -99,6 +99,7 @@ export default async function globalSetup() {
   process.env.WYRD_E2E_DATA = data;
   process.env.WYRD_E2E_FIXTURE = join(bin, "examples/e2e_fixture");
   process.env.WYRD_E2E_STUDIO = studio;
+  process.env.WYRD_E2E_WYRD = join(bin, "wyrd");
   return () => {
     daemon.kill("SIGTERM");
     rmSync(dir, { recursive: true, force: true });
