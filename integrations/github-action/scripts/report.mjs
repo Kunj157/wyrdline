@@ -92,8 +92,11 @@ export function render(ctx) {
     lines.push("| --- | --- | --- | --- |");
     for (const d of open) {
       const rule = `${escapeCell(d.rule_id)} ${escapeCell(d.rule_name ?? "")}`.trim();
-      const seqs = (d.evidence_seqs ?? []).map((s) => `#${Number(s)}`).join(", ");
-      lines.push(`| ${rule} | ${escapeCell(d.severity)} | ${escapeCell(d.summary)} | ${seqs} |`);
+      // "seq 12", never "#12": GitHub would link that to issue 12.
+      const seqs = (d.evidence_seqs ?? []).map(Number).join(", ");
+      lines.push(
+        `| ${rule} | ${escapeCell(d.severity)} | ${escapeCell(d.summary)} | ${seqs ? `seq ${seqs}` : ""} |`,
+      );
     }
     lines.push("");
   }
@@ -102,7 +105,7 @@ export function render(ctx) {
     lines.push("");
   }
   lines.push(
-    "<sub>Open the bundle with `wyrd open` or in Studio; evidence numbers are ledger sequence numbers.</sub>",
+    "<sub>Open the bundle in Wyrdline Studio (bundle mode, works offline); evidence numbers are ledger sequence numbers.</sub>",
   );
   return lines.join("\n") + "\n";
 }

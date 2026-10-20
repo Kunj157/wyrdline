@@ -56,7 +56,8 @@ test("render: table of open divergences with evidence and links", () => {
     failed: [],
   });
   assert.match(md, /^### Wyrdline: 1 divergence$/m);
-  assert.match(md, /\| D001 name \| high \| summary of D001 \| #3, #9 \|/);
+  assert.match(md, /\| D001 name \| high \| summary of D001 \| seq 3, 9 \|/);
+  assert.doesNotMatch(md, /#\d/, "no issue auto-links");
   assert.doesNotMatch(md, /D002/);
   assert.match(md, /\[bundle\]\(https:\/\/github.com\/o\/r\/actions\/runs\/1\/artifacts\/2\)/);
   assert.match(md, /kernel capture on/);
