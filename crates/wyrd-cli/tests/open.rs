@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
 
 use wyrd_cell::session::CreateOptions;
 use wyrd_cell::{DataDir, Session};
@@ -77,7 +77,8 @@ fn env() -> (Env, PathBuf) {
     (e, bundle)
 }
 
-struct Server(Child);
+/// The server and its stdout (kept open while it runs).
+struct Server(Child, #[allow(dead_code)] BufReader<ChildStdout>);
 
 impl Drop for Server {
     fn drop(&mut self) {
@@ -98,10 +99,9 @@ fn open(e: &Env, bundle: &Path) -> (Server, String) {
         .spawn()
         .unwrap();
     let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    (Server(child), line.trim().to_string())
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    stdout.read_line(&mut line).unwrap();
+    (Server(child, stdout), line.trim().to_string())
 }
 
 /// `GET path` against `http://host:port/…`: status line, headers, body.

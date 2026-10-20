@@ -211,13 +211,15 @@ pub fn run(a: &Args) -> anyhow::Result<u8> {
             .stderr(Stdio::null())
             .status()
             .is_ok_and(|s| s.success());
-    if opened {
-        writeln!(o, "wyrd: opened {} in Studio at {url}", a.file.display())?;
+    let first = if opened {
+        format!("wyrd: opened {} in Studio at {url}", a.file.display())
     } else {
-        writeln!(o, "{url}")?;
-    }
-    writeln!(o, "wyrd: serving on {addr} until Ctrl-C")?;
-    o.flush()?;
+        url
+    };
+    // One write: whoever reads the URL may close stdout right after, and
+    // the server keeps serving regardless.
+    let _ = write!(o, "{first}\nwyrd: serving on {addr} until Ctrl-C\n");
+    let _ = o.flush();
     drop(o);
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
