@@ -1,0 +1,65 @@
+name: kernel7-diag
+
+# Temporary diagnostic for the sensor on newer runner kernels. Not for merge.
+on:
+  push:
+    branches: [infra/sensor-kernel-diagnostics]
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: diag ${{ matrix.os }} ${{ matrix.n }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        n: [1, 2, 3, 4, 5, 6]
+        include:
+          - os: ubuntu-26.04
+            n: 1
+          - os: ubuntu-latest
+            n: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Kernel facts
+        run: |
+          uname -a
+          nproc
+          cat /sys/kernel/security/lsm || true
+          grep -E 'CONFIG_PREEMPT|CONFIG_BPF_|CONFIG_HZ=|CONFIG_RCU' "/boot/config-$(uname -r)" || true
+          sudo cat /sys/kernel/debug/sched/preempt || true
+          for e in syscalls/sys_enter_execve syscalls/sys_exit_execve syscalls/sys_enter_mkdir task/task_newtask sched/sched_process_exit; do
+            echo "== $e"; sudo cat "/sys/kernel/tracing/events/$e/format" || true
+          done
+      - name: Install toolchains
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest,bpf-linker
+      - name: Build
+        run: cargo build --locked -p wyrd-sensor --example kernel_diag --example matrix_check
+      - name: matrix_check
+        run: sudo env TMPDIR=/dev/shm target/debug/examples/matrix_check || true
+      - name: kernel_diag
+        run: sudo env TMPDIR=/dev/shm target/debug/examples/kernel_diag
+      - name: Start a systemd user manager (session cgroups)
+        run: |
+          sudo loginctl enable-linger "$USER"
+          uid=$(id -u)
+          for _ in $(seq 1 50); do [ -S "/run/user/$uid/systemd/private" ] && break; sleep 0.2; done
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+      - name: Privileged integration (no fail-fast)
+        run: |
+          WYRD_PRIVILEGED_HELPER=sudo cargo nextest run --locked --no-fail-fast -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord -p wyrdd \
+            --features wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests,wyrdd/privileged-tests \
+            -E 'test(/^privileged_/)' || true
+      - name: kernel_diag after
+        run: sudo env TMPDIR=/dev/shm target/debug/examples/kernel_diag

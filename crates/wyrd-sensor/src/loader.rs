@@ -127,6 +127,25 @@ pub struct LoadReport {
     pub skipped: Vec<(String, String)>,
 }
 
+/// Kernel counters of one loaded program.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProgramStats {
+    pub name: String,
+    pub run_cnt: u64,
+    pub misses: u64,
+}
+
+/// A numeric `key:\tvalue` line of a BPF program's fdinfo (0 when absent:
+/// older kernels do not report every counter).
+pub fn fdinfo_field(info: &str, key: &str) -> u64 {
+    info.lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            (k.trim() == key).then(|| v.trim().parse().ok())?
+        })
+        .unwrap_or(0)
+}
+
 /// A loaded sensor.
 pub struct Sensor {
     ebpf: Ebpf,
@@ -451,6 +470,26 @@ impl Sensor {
         )
         .map_err(map_err)?;
         Ok(a.get(&0, 0).map_err(map_err)?.iter().sum())
+    }
+
+    /// Per-program counters from the kernel (`/proc/self/fdinfo`): runs
+    /// (counted only while BPF stats are enabled) and recursion misses —
+    /// invocations the kernel skipped because a BPF program was already
+    /// running on that CPU.
+    pub fn program_stats(&self) -> Vec<ProgramStats> {
+        use std::os::fd::AsRawFd as _;
+        self.ebpf
+            .programs()
+            .filter_map(|(name, p)| {
+                let fd = p.fd().ok()?.as_fd().as_raw_fd();
+                let info = std::fs::read_to_string(format!("/proc/self/fdinfo/{fd}")).ok()?;
+                Some(ProgramStats {
+                    name: name.to_string(),
+                    run_cnt: fdinfo_field(&info, "run_cnt"),
+                    misses: fdinfo_field(&info, "recursion_misses"),
+                })
+            })
+            .collect()
     }
 
     /// Return everything available, waiting up to `timeout` when the buffer
