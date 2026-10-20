@@ -2,22 +2,86 @@ import type * as api from "@wyrdline/schemas/generated-api";
 import { Badge, Button } from "@wyrdline/ui";
 import { useState } from "react";
 
-import { useBacktest, usePolicies } from "../lib/api";
+import { offlineSource, useBacktest, usePolicies } from "../lib/api";
+import { parseBacktestReport } from "../lib/backtest";
 
-/**
- * Replay this session against an uploaded policy (`POST /v1/policies`):
- * the findings are listed here and shown on the river while the overlay
- * is on.
- */
-export function BacktestPanel({
-  sid,
-  onReport,
-  onSelect,
-}: {
+interface Props {
   sid: string;
+  /** Events in the session (a loaded report must have as many). */
+  events: number;
   onReport: (r: api.BacktestReport | null) => void;
   onSelect: (seq: number) => void;
-}) {
+}
+
+/**
+ * Replay this session against a policy: an uploaded one (`POST
+ * /v1/policies`) with the daemon, or, in bundle and offline mode, a report
+ * from `wyrd policy backtest … --json`. The findings are listed here and
+ * shown on the river while the overlay is on.
+ */
+export function BacktestPanel(props: Props) {
+  return offlineSource() === null ? <LiveBacktest {...props} /> : <LoadedBacktest {...props} />;
+}
+
+/** No policy host in the browser: load the report the CLI wrote. */
+function LoadedBacktest({ sid, events, onReport, onSelect }: Props) {
+  const [report, setReport] = useState<api.BacktestReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function load(file: File) {
+    try {
+      const r = parseBacktestReport(await file.text(), { id: sid, events });
+      setError(null);
+      setReport(r);
+      onReport(r);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-text-secondary">
+        Policies run in the CLI:{" "}
+        <code className="font-mono">
+          wyrd policy backtest &lt;policy.wasm&gt; &lt;bundle.wyrd&gt; --json &gt; report.json
+        </code>
+        , then load the report to see it on the river.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-sm border border-border-strong bg-surface-1 px-3 py-1.5 text-sm font-medium hover:bg-surface-2">
+          Load a backtest report
+          <input
+            type="file"
+            accept=".json,application/json"
+            className="sr-only"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void load(f);
+            }}
+          />
+        </label>
+        {report && (
+          <Button
+            onClick={() => {
+              setReport(null);
+              onReport(null);
+            }}
+          >
+            Clear overlay
+          </Button>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-verdict-denied">
+          {error}
+        </p>
+      )}
+      {report && <Findings report={report} onSelect={onSelect} />}
+    </div>
+  );
+}
+
+function LiveBacktest({ sid, onReport, onSelect }: Props) {
   const policies = usePolicies(true);
   const backtest = useBacktest(sid);
   const [policy, setPolicy] = useState("");
@@ -78,36 +142,47 @@ export function BacktestPanel({
           {backtest.error.message}
         </p>
       )}
-      {report && (
-        <div role="status" className="flex flex-col gap-2 text-sm">
-          <p>
-            {report.policy_id} would have stopped {report.findings.length} of {report.events} events
-            (marked as denied on the river).
-          </p>
-          <ul className="flex flex-col gap-1">
-            {report.findings.map((f) => (
-              <li key={`${f.seq}-${f.stage}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(Number(f.seq))}
-                  className="flex w-full items-start gap-2 rounded-sm px-1 py-0.5 text-left hover:bg-surface-2"
-                >
-                  <span className="font-mono text-text-muted">#{Number(f.seq)}</span>
-                  <Badge
-                    meaning={f.decision === "deny" ? "denied" : "irreversible"}
-                  >{`${f.stage} ${f.decision}`}</Badge>
-                  <span>{f.reason}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {report.notes.map((n) => (
-            <p key={n} className="text-xs text-text-muted">
-              {n}
-            </p>
-          ))}
-        </div>
-      )}
+      {report && <Findings report={report} onSelect={onSelect} />}
+    </div>
+  );
+}
+
+/** What a policy would have stopped, each finding a link to its event. */
+function Findings({
+  report,
+  onSelect,
+}: {
+  report: api.BacktestReport;
+  onSelect: (seq: number) => void;
+}) {
+  return (
+    <div role="status" className="flex flex-col gap-2 text-sm">
+      <p>
+        {report.policy_id} would have stopped {report.findings.length} of {report.events} events
+        (marked as denied on the river).
+      </p>
+      <ul className="flex flex-col gap-1">
+        {report.findings.map((f) => (
+          <li key={`${f.seq}-${f.stage}`}>
+            <button
+              type="button"
+              onClick={() => onSelect(Number(f.seq))}
+              className="flex w-full items-start gap-2 rounded-sm px-1 py-0.5 text-left hover:bg-surface-2"
+            >
+              <span className="font-mono text-text-muted">#{Number(f.seq)}</span>
+              <Badge
+                meaning={f.decision === "deny" ? "denied" : "irreversible"}
+              >{`${f.stage} ${f.decision}`}</Badge>
+              <span>{f.reason}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {report.notes.map((n) => (
+        <p key={n} className="text-xs text-text-muted">
+          {n}
+        </p>
+      ))}
     </div>
   );
 }
