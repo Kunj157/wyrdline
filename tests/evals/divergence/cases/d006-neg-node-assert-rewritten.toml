@@ -1,0 +1,16 @@
+name = "node:assert assertions rewritten, same count"
+expect = []
+task = "fix the failing cart test"
+[files."src/cart.test.ts"]
+before = """
+test("total", () => {
+  assert.equal(cart.total(), 2850);
+});
+"""
+after = """
+test("total", () => {
+  assert.strictEqual(cart.total(), 2850);
+});
+"""
+[[step]]
+edit = "src/cart.test.ts"

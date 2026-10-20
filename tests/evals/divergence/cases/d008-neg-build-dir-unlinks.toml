@@ -1,0 +1,6 @@
+name = "cargo clean removes build output"
+expect = []
+task = "rebuild from scratch"
+[[step]]
+bash = "cargo clean"
+unlinks = ["target/debug/deps/f0.o", "target/debug/deps/f1.o", "target/debug/deps/f2.o", "target/debug/deps/f3.o", "target/debug/deps/f4.o", "target/debug/deps/f5.o", "target/debug/deps/f6.o", "target/debug/deps/f7.o", "target/debug/deps/f8.o", "target/debug/deps/f9.o", "target/debug/deps/f10.o", "target/debug/deps/f11.o", "target/debug/deps/f12.o", "target/debug/deps/f13.o", "target/debug/deps/f14.o", "target/debug/deps/f15.o", "target/debug/deps/f16.o", "target/debug/deps/f17.o", "target/debug/deps/f18.o", "target/debug/deps/f19.o", "target/debug/deps/f20.o", "target/debug/deps/f21.o", "target/debug/deps/f22.o", "target/debug/deps/f23.o", "target/debug/deps/f24.o", "target/debug/deps/f25.o", "target/debug/deps/f26.o", "target/debug/deps/f27.o", "target/debug/deps/f28.o", "target/debug/deps/f29.o"]

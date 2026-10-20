@@ -246,6 +246,26 @@ fn operations(s: &mut Schemas) -> Vec<Operation> {
         },
         op(
             "get",
+            "/v1/sessions/{sid}/divergences",
+            "Divergences raised for the session, with their triage state",
+            (200, "Divergences", s.out::<api::DivergenceList>()),
+        ),
+        Operation {
+            request: Some(s.inp::<api::TriageBody>()),
+            problems: ACTION,
+            ..op(
+                "patch",
+                "/v1/sessions/{sid}/divergences/{did}",
+                "Acknowledge a divergence, mark it a false positive, or reopen it",
+                (
+                    200,
+                    "Divergence",
+                    s.out::<wyrd_divergence::view::DivergenceView>(),
+                ),
+            )
+        },
+        op(
+            "get",
             "/v1/sessions/{sid}/asks",
             "Questions the session's policy is waiting on",
             (200, "Pending asks", s.out::<api::PendingAsks>()),

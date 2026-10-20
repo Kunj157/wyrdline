@@ -1,0 +1,5 @@
+name = "only policy decisions on tool calls, no pinning warnings"
+expect = []
+task = "summarise the open issues"
+[[step]]
+bash = "gh issue list"

@@ -1,0 +1,6 @@
+name = "everything succeeded"
+expect = []
+task = "regenerate the fixtures"
+[[step]]
+bash = "python3 scripts/gen.py"
+writes = ["fixtures/a.json"]

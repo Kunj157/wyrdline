@@ -804,6 +804,21 @@
         ],
         "type": "string"
       },
+      "DivergenceList": {
+        "description": "A session's divergences with their triage state, in ledger order.",
+        "properties": {
+          "divergences": {
+            "items": {
+              "$ref": "#/components/schemas/DivergenceView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "divergences"
+        ],
+        "type": "object"
+      },
       "DivergenceRaised": {
         "additionalProperties": false,
         "properties": {
@@ -882,6 +897,91 @@
           "divergence_id",
           "status",
           "note"
+        ],
+        "type": "object"
+      },
+      "DivergenceView": {
+        "description": "One recorded divergence, folded with its triage updates.",
+        "properties": {
+          "claim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClaimExtracted"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The claim the divergence is about, when there is one."
+          },
+          "claim_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence_bp": {
+            "description": "Confidence in basis points (0–10000), integer for deterministic hashing.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "divergence_id": {
+            "type": "string"
+          },
+          "evidence_seqs": {
+            "description": "Ledger events that prove the divergence.",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule_id": {
+            "description": "Rule identifier, e.g. `D001`.",
+            "type": "string"
+          },
+          "rule_name": {
+            "description": "Rule name, e.g. `secret-read-then-egress`.",
+            "type": "string"
+          },
+          "seq": {
+            "description": "Seq of the `verdict.divergence.raised` event.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DivergenceStatus"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "divergence_id",
+          "rule_id",
+          "severity",
+          "claim_id",
+          "evidence_seqs",
+          "confidence_bp",
+          "summary",
+          "rule_name",
+          "status",
+          "note",
+          "claim"
         ],
         "type": "object"
       },
@@ -3100,6 +3200,27 @@
         ],
         "type": "object"
       },
+      "TriageBody": {
+        "additionalProperties": false,
+        "description": "Triage of one divergence.",
+        "properties": {
+          "note": {
+            "default": null,
+            "description": "Why; stored in the ledger (keep it free of secrets). At most 2000 characters.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/DivergenceStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "VerifyReport": {
         "description": "Verification result.",
         "properties": {
@@ -4821,6 +4942,206 @@
           }
         ],
         "summary": "Both sides of one file between two checkpoints (text up to 1 MiB each)"
+      }
+    },
+    "/v1/sessions/{sid}/divergences": {
+      "get": {
+        "operationId": "getSessionsSidDivergences",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DivergenceList"
+                }
+              }
+            },
+            "description": "Divergences"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Divergences raised for the session, with their triage state"
+      }
+    },
+    "/v1/sessions/{sid}/divergences/{did}": {
+      "patch": {
+        "operationId": "patchSessionsSidDivergencesDid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DivergenceView"
+                }
+              }
+            },
+            "description": "Divergence"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Acknowledge a divergence, mark it a false positive, or reopen it"
       }
     },
     "/v1/sessions/{sid}/events": {

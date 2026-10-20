@@ -1,0 +1,7 @@
+name = "hedged statement is not a claim"
+expect = []
+task = "fix the failing cart test"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+say = "This should make the tests pass once you run them."

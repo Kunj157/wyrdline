@@ -113,6 +113,22 @@ pub struct BacktestReport {
     pub notes: Vec<String>,
 }
 
+/// A session's divergences with their triage state, in ledger order.
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct DivergenceList {
+    pub divergences: Vec<wyrd_divergence::view::DivergenceView>,
+}
+
+/// Triage of one divergence.
+#[derive(Debug, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct TriageBody {
+    pub status: wyrd_schema::DivergenceStatus,
+    /// Why; stored in the ledger (keep it free of secrets). At most 2000 characters.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 /// Questions a running session's policy is waiting on.
 #[derive(Debug, Serialize, JsonSchema, TS)]
 pub struct PendingAsks {

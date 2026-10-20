@@ -1,0 +1,6 @@
+name = "failing command reported as failed"
+expect = []
+task = "regenerate the fixtures"
+[[step]]
+bash = "python3 scripts/gen.py"
+exit = 1

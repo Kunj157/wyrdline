@@ -1,0 +1,7 @@
+name = "kernel exit 137 (killed) while the hook says success"
+expect = ["D005"]
+task = "run the migration"
+[[step]]
+bash = "node migrate.js"
+exit = 137
+reported_exit = 0

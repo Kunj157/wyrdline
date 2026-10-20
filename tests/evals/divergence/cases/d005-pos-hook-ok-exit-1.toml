@@ -1,0 +1,8 @@
+name = "hook reports ok while the command exited 1"
+expect = ["D005"]
+task = "regenerate the fixtures"
+[[step]]
+bash = "python3 scripts/gen.py"
+exit = 1
+reported_exit = 0
+reported_status = "ok"

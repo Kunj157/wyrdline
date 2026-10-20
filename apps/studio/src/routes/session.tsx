@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { AskDialog } from "../components/AskDialog";
 import { BacktestPanel } from "../components/BacktestPanel";
 import { CheckpointPanel } from "../components/CheckpointPanel";
+import { DivergencePanel } from "../components/DivergencePanel";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
@@ -16,11 +17,13 @@ import { Transcript } from "../components/Transcript";
 import {
   offlineSource,
   useCheckpoints,
+  useDivergences,
   useEvents,
   useGraph,
   useSession,
   useVerify,
 } from "../lib/api";
+import { evidenceSeqs } from "../lib/divergences";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
 import { statusMeaning } from "./sessions";
@@ -38,6 +41,7 @@ export function SessionPage() {
   const graph = useGraph(sid);
   const verify = useVerify(sid);
   const checkpoints = useCheckpoints(sid);
+  const divergences = useDivergences(sid);
   const recording = session.data?.status === "recording" || session.data?.status === "degraded";
   const live = useLiveEvents(sid, Boolean(recording && events.data));
   const [selected, setSelected] = useState<number | null>(null);
@@ -48,7 +52,7 @@ export function SessionPage() {
   const list = useMemo(() => events.data ?? [], [events.data]);
   const [backtest, setBacktest] = useState<BacktestReport | null>(null);
   const layout = useMemo(() => {
-    const base = layoutRiver(list, graph.data);
+    const base = layoutRiver(list, graph.data, evidenceSeqs(divergences.data?.divergences ?? []));
     if (!backtest) return base;
     // Backtest overlay: what the chosen policy would have stopped is drawn
     // as denied (the panel and the legend say which policy).
@@ -57,7 +61,7 @@ export function SessionPage() {
       ...base,
       knots: base.knots.map((k) => (marked.has(k.seq) ? { ...k, meaning: "denied" as const } : k)),
     };
-  }, [list, graph.data, backtest]);
+  }, [list, graph.data, divergences.data, backtest]);
   const drops = useMemo(() => list.reduce((n, e) => n + e.drops_since_last, 0), [list]);
   const selectedEvent = list.find((e) => e.seq === selected);
 
@@ -182,7 +186,12 @@ export function SessionPage() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(20rem,1fr)_2fr]">
         <Card>
-          <Inspector event={selectedEvent} graph={graph.data} events={list} />
+          <Inspector
+            event={selectedEvent}
+            graph={graph.data}
+            events={list}
+            divergences={divergences.data?.divergences}
+          />
         </Card>
         <Card>
           <Tabs
@@ -194,6 +203,11 @@ export function SessionPage() {
                 id: "events",
                 label: "Events",
                 panel: <EventTable events={list} selected={selected} onSelect={setSelected} />,
+              },
+              {
+                id: "divergences",
+                label: `Divergences (${divergences.data?.divergences.length ?? 0})`,
+                panel: <DivergencePanel sid={sid} onSelect={setSelected} />,
               },
               {
                 id: "transcript",

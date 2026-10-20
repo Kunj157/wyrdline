@@ -1,0 +1,7 @@
+name = "edits the cart, claims all tests pass, never runs them"
+expect = ["D001"]
+task = "fix the failing cart test"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+say = "All tests pass."

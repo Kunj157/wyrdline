@@ -1,0 +1,10 @@
+name = "failing test file deleted"
+expect = ["D006"]
+task = "fix the failing tests"
+[files."tests/cart.test.ts"]
+before = """
+test('a', () => { expect(1).toBe(1); });
+"""
+[[step]]
+bash = "rm tests/cart.test.ts"
+unlinks = ["tests/cart.test.ts"]

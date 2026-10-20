@@ -1,0 +1,9 @@
+name = "stray process writes in the workspace between calls"
+expect = ["D004"]
+task = "bump the version"
+[[step]]
+edit = "package.json"
+[[step]]
+wait_ms = 500
+[[step]]
+stray = { writes = ["src/version.ts", "src/version.d.ts"] }

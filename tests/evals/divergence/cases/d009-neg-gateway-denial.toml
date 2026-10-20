@@ -1,0 +1,5 @@
+name = "a gateway denial is not a rug pull"
+expect = []
+task = "summarise the open issues"
+[[step]]
+bash = "node mcp-client.js list"

@@ -1,0 +1,11 @@
+name = "writes after the claim are not part of it"
+expect = []
+task = "fix rounding in the cart"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+say = "So far I only changed src/cart.ts."
+[[step]]
+user = "Now also update the docs."
+[[step]]
+edit = "docs/cart.md"

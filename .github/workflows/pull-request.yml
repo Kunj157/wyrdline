@@ -41,6 +41,8 @@ jobs:
         run: make test-rust
       - name: Policies build and pass their conformance cases
         run: make test-policies
+      - name: Divergence and claim evals meet the baseline
+        run: make test-evals
       - name: Generated schemas are current
         run: make schemas-check
       - name: Native and WebAssembly correlator agree

@@ -1,0 +1,10 @@
+name = "test run writes its cache after starting; the claim holds"
+expect = []
+task = "fix the parser"
+[[step]]
+edit = "src/parser.py"
+[[step]]
+bash = "python3 -m pytest -q"
+writes = [".pytest_cache/v/cache/lastfailed", "reports/junit.xml"]
+[[step]]
+say = "All tests pass."

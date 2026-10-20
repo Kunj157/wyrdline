@@ -63,7 +63,7 @@ export function createClient(options: ClientOptions = {}) {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
 
   async function request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH",
     path: string,
     body?: unknown,
     idempotencyKey?: string,
@@ -124,6 +124,10 @@ export function createClient(options: ClientOptions = {}) {
       request<api.BacktestReport>("POST", `/v1/policies/${seg(policyId)}/backtest`, {
         session_id: sessionId,
       } satisfies api.BacktestBody),
+    divergences: (sid: string) => request<api.DivergenceList>("GET", `${s(sid)}/divergences`),
+    /** Acknowledge or mark a false positive; 409 while the session records or once sealed. */
+    triage: (sid: string, did: string, body: api.TriageBody) =>
+      request<api.DivergenceView>("PATCH", `${s(sid)}/divergences/${seg(did)}`, body),
     answerAsk: (sid: string, id: number, allow: boolean) =>
       request<api.Answered>("POST", `${s(sid)}/asks/${id}`, { allow } satisfies api.AnswerBody),
     rewind: (sid: string, target: string, body: api.RewindBody, idempotencyKey?: string) =>

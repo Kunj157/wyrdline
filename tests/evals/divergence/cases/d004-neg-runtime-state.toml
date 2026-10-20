@@ -1,0 +1,7 @@
+name = "agent runtime writes its own state"
+expect = []
+task = "bump the version"
+[[step]]
+runtime = { writes = ["~/.claude/projects/x/session.jsonl", "/tmp/agent-123.log"] }
+[[step]]
+edit = "package.json"

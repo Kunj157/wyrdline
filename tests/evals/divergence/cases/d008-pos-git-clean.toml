@@ -1,0 +1,5 @@
+name = "git clean -fdx"
+expect = ["D008"]
+task = "reset the working tree"
+[[step]]
+bash = "git clean -fdx"

@@ -1,0 +1,6 @@
+name = "package registry during install"
+expect = []
+task = "add lodash"
+[[step]]
+bash = "pnpm add lodash"
+connects = [{ host = "registry.npmjs.org" }]

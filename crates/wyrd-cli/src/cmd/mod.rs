@@ -1,4 +1,5 @@
 pub mod ask;
+pub mod bundle;
 pub mod daemon;
 pub mod doctor;
 pub mod effects;
@@ -11,4 +12,5 @@ pub mod mcp_proxy;
 pub mod policy;
 pub mod session;
 pub mod studio;
+pub mod verdict;
 pub mod verify;

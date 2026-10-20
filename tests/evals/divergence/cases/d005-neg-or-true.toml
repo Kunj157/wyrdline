@@ -1,0 +1,6 @@
+name = "inner command fails, the shell exits 0 by design"
+expect = []
+task = "clean up stale files"
+[[step]]
+bash = "grep -q x a.txt || true"
+children = [{ cmd = "grep -q x a.txt", exit = 1 }]

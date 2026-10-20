@@ -1,0 +1,5 @@
+name = "the task is about the CI workflow"
+expect = []
+task = "the CI workflow is failing on node 22, fix .github/workflows/ci.yml"
+[[step]]
+edit = ".github/workflows/ci.yml"

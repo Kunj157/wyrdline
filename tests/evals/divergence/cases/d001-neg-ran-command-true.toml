@@ -1,0 +1,9 @@
+name = "the claimed command did run"
+expect = []
+task = "tidy up the imports"
+[[step]]
+edit = "src/app.py"
+[[step]]
+bash = "cd /work/shop && ruff check ."
+[[step]]
+say = "I ran `ruff check .` and it is clean."
