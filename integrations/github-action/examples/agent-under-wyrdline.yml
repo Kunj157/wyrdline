@@ -1,0 +1,53 @@
+# Example: let a coding agent fix a failing test on a PR, under Wyrdline.
+# Copy to .github/workflows/ in your repository and pin every action by SHA.
+#
+# The PR gets one comment listing where the agent's claims and its real
+# effects diverge (updated on every push); the signed bundle is a workflow
+# artifact that opens offline in Wyrdline Studio. To try the action without
+# an API key, see the fakeagent job in Wyrdline's own
+# .github/workflows/github-action.yml.
+name: agent-under-wyrdline
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What the agent should do
+        default: Fix the failing test.
+
+permissions:
+  contents: read
+  pull-requests: write # the Wyrdline comment
+
+jobs:
+  agent:
+    # Same-repository PRs only (forks get no secrets), and only on request.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'agent' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the agent
+        run: npm install --global @anthropic-ai/claude-code@2.1.304
+      - name: Fix the test, under Wyrdline
+        uses: Kunj157/wyrdline/integrations/github-action@dev # pin to a commit SHA
+        with:
+          command: >-
+            claude -p '${{ inputs.task || 'Fix the failing test.' }}'
+            --allowedTools Read,Edit,Write,Bash
+          # A Wasm policy committed to your repo (`wyrd policy build`), e.g.
+          # Wyrdline's policies/default: asks before .env reads and unknown
+          # egress — unanswered in CI, so denied.
+          policy: .wyrdline/policy.wasm
+          fail-on: high
+          verify-signature: required
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
