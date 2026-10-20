@@ -45,6 +45,19 @@ describe("daemon client", () => {
     expect(headers.authorization).toBeUndefined();
   });
 
+  it("patches a divergence's triage", async () => {
+    const f = fake(200, {});
+    const c = createClient({ fetch: f.fetch });
+    await c.triage("01abc", "dv-1", { status: "false_positive", note: "a test fixture" });
+    const call = f.calls[0];
+    expect(call?.url).toBe("/v1/sessions/01abc/divergences/dv-1");
+    expect(call?.init.method).toBe("PATCH");
+    expect(JSON.parse(String(call?.init.body))).toEqual({
+      status: "false_positive",
+      note: "a test fixture",
+    });
+  });
+
   it("turns problems into ApiError", async () => {
     const problem = { type: "not-found", title: "Not found", status: 404, detail: "session zz" };
     const c = createClient({ fetch: fake(404, problem).fetch });
@@ -89,6 +102,8 @@ describe("daemon client", () => {
       c.apply("s", "c1", {}),
       c.diff("s", "a", "b"),
       c.diffFile("s", "a", "b", "src/x.ts"),
+      c.divergences("s"),
+      c.triage("s", "d", { status: "acknowledged", note: null }),
     ]);
     // Segment-wise match: `{param}` matches any one segment.
     const matches = (template: string, path: string) => {

@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 
+import { DivergencesPage } from "./routes/divergences";
 import { OverviewPage } from "./routes/overview";
 import { RootLayout } from "./routes/root";
 import { SessionPage } from "./routes/session";
@@ -25,7 +26,18 @@ const sessionRoute = createRoute({
   component: SessionPage,
 });
 
-export const routeTree = rootRoute.addChildren([overviewRoute, sessionsRoute, sessionRoute]);
+const divergencesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/divergences",
+  component: DivergencesPage,
+});
+
+export const routeTree = rootRoute.addChildren([
+  overviewRoute,
+  sessionsRoute,
+  sessionRoute,
+  divergencesRoute,
+]);
 
 export function makeRouter(history?: Parameters<typeof createRouter>[0]["history"]) {
   // Served at the site root by wyrdd, or below a path (GitHub Pages demo).
