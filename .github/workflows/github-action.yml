@@ -117,12 +117,18 @@ jobs:
           GATED: ${{ steps.gated.outcome }}
           GATED_SID: ${{ steps.gated.outputs.session-id }}
         run: |
+          data="$(dirname "$(dirname "$BUNDLE")")/data"
+          echo "::group::diagnostics"
+          WYRD_DATA_DIR=$data wyrd divergences "$SID" || true
+          WYRD_DATA_DIR=$data wyrd events "$SID" --json | jq -r '.body.kind' | sort | uniq -c || true
+          WYRD_DATA_DIR=$data wyrd events "$SID" --plane effect --json | head -n 20 || true
+          sudo journalctl -u wyrd-sensord.service -n 40 --no-pager || true
+          echo "::endgroup::"
           set -x
           test -n "$SID" && test "$CODE" = 0 && test "$SENSOR" = running
           test "$COUNT" = 3
           test -s "$BUNDLE" && test -n "$ARTIFACT"
           test "$GATED" = failure && test -n "$GATED_SID" && test "$GATED_SID" != "$SID"
-          data="$(dirname "$(dirname "$BUNDLE")")/data"
           WYRD_DATA_DIR=$data wyrd divergences "$SID" --json | jq -e '[.[].rule_id] | sort == ["D001","D002","D006"]'
           effects=$(WYRD_DATA_DIR=$data wyrd events "$SID" --plane effect --json | wc -l)
           echo "kernel effect events: $effects"
