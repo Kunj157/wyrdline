@@ -584,7 +584,7 @@ fn allowed6(cg: u64, a: [u8; 16]) -> bool {
 
 /// 1 lets the connect proceed, 0 fails it with `EPERM`. Only registered
 /// sessions with enforcement are checked; the outcome is reported by the
-/// `connect` syscall tracepoints, which know the process.
+/// `connect` syscall programs, which know the process.
 #[inline(always)]
 fn egress(family: u16, a4: [u8; 4], a6: [u8; 16], port: u16) -> i32 {
     let Some(cg) = session_cgroup() else {
