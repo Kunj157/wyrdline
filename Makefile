@@ -137,11 +137,14 @@ wasm-parity: ## Native vs WebAssembly correlator output must be identical
 
 FUZZ_TARGETS := bundle_reader event_cbor manifest
 FUZZ_SECONDS ?= 60
+# The host triple: a prebuilt cargo-fuzz (CI) otherwise defaults to the musl
+# target it was built for, which the sanitizers do not support.
+FUZZ_TRIPLE ?= $(shell rustc -vV | sed -n 's/^host: //p')
 fuzz: ## Fuzz every untrusted-input parser for FUZZ_SECONDS each (nightly + cargo-fuzz)
 	@for t in $(FUZZ_TARGETS); do \
 		mkdir -p fuzz/corpus/$$t && \
 		echo "fuzz $$t for $(FUZZ_SECONDS) s" && \
-		$(CARGO) +nightly fuzz run -O $$t fuzz/corpus/$$t fuzz/seeds/$$t -- \
+		$(CARGO) +nightly fuzz run -O --target $(FUZZ_TRIPLE) $$t fuzz/corpus/$$t fuzz/seeds/$$t -- \
 			-max_total_time=$(FUZZ_SECONDS) -rss_limit_mb=2048 -max_len=65536 -print_final_stats=1 || exit 1; \
 	done
 
