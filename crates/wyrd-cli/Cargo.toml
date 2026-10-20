@@ -30,6 +30,7 @@ serde.workspace = true
 tracing.workspace = true
 wyrd-adapters = { path = "../wyrd-adapters" }
 wyrd-bundle = { path = "../wyrd-bundle" }
+wyrd-cas = { path = "../wyrd-cas" }
 wyrd-cell = { path = "../wyrd-cell" }
 wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-divergence = { path = "../wyrd-divergence" }
@@ -42,6 +43,8 @@ wyrd-sensor = { path = "../wyrd-sensor" }
 
 [dev-dependencies]
 insta.workspace = true
+ruzstd.workspace = true
+tar.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

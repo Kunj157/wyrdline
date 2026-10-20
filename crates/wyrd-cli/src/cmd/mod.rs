@@ -1,4 +1,5 @@
 pub mod ask;
+pub mod bundle;
 pub mod daemon;
 pub mod doctor;
 pub mod effects;
