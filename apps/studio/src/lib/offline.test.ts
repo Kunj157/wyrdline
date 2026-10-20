@@ -50,6 +50,18 @@ const events: Event[] = [
     kind: "state.checkpoint.forked",
     payload: { checkpoint_id: "c1", branch_id: "b", name: "try" },
   }),
+  ev(5, {
+    kind: "verdict.divergence.raised",
+    payload: {
+      divergence_id: "dv-1",
+      rule_id: "D002",
+      severity: "medium",
+      claim_id: null,
+      evidence_seqs: [3],
+      confidence_bp: 8000,
+      summary: "wrote outside the scope",
+    },
+  }),
 ];
 
 describe("offline replay", () => {
@@ -58,8 +70,8 @@ describe("offline replay", () => {
       .reverse()
       .map((e) => JSON.stringify(e))
       .join("\n");
-    expect(parseExport(lines).map((e) => e.seq)).toEqual([1, 2, 3, 4]);
-    expect(parseExport(JSON.stringify(events))).toHaveLength(4);
+    expect(parseExport(lines).map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(parseExport(JSON.stringify(events))).toHaveLength(5);
     expect(() => parseExport("")).toThrow(/empty/);
     expect(() => parseExport('{"hello":1}')).toThrow(/not a Wyrdline event export/);
     expect(() => parseExport('{"seq":1,"body":{"kind":"x"}}\nnot json')).toThrow(/line 2/);
@@ -79,7 +91,7 @@ describe("offline replay", () => {
     let calls = 0;
     const client = createOfflineClient(events, "demo.jsonl", (json) => {
       calls += 1;
-      expect(JSON.parse(json)).toHaveLength(4);
+      expect(JSON.parse(json)).toHaveLength(5);
       return JSON.stringify({ calls: [], processes: [], effects: [], agent_root: null });
     });
     expect((await client.sessions()).sessions[0]?.id).toBe("01demo");
@@ -93,6 +105,12 @@ describe("offline replay", () => {
       ApiError,
     );
     await expect(client.verify("01demo")).rejects.toThrow(/offline/);
+    expect((await client.divergences("01demo")).divergences.map((d) => d.rule_name)).toEqual([
+      "out-of-scope-write",
+    ]);
+    await expect(
+      client.triage("01demo", "dv-1", { status: "acknowledged", note: null }),
+    ).rejects.toThrow(/read-only replay/);
     await expect(client.session("other")).rejects.toThrow(/not in this file/);
   });
 

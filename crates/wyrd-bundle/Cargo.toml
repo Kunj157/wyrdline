@@ -1,6 +1,6 @@
 [package]
 name = "wyrd-bundle"
-description = "Session sharing: secret redaction, and later .wyrd bundle export, import, and signing"
+description = "Session sharing: secret redaction and signed .wyrd bundles"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,12 +11,21 @@ publish.workspace = true
 
 [dependencies]
 blake3.workspace = true
+ciborium.workspace = true
+ed25519-dalek.workspace = true
 hex.workspace = true
 regex.workspace = true
+ruzstd.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+wyrd-schema = { path = "../wyrd-schema" }
 
 [dev-dependencies]
 proptest.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+wyrd-divergence = { path = "../wyrd-divergence" }
 
 [lints]
 workspace = true

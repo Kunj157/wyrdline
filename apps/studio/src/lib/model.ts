@@ -164,9 +164,16 @@ export interface RiverLayout {
 /**
  * Lay the session out left to right in event order: tool calls on the
  * intent lane, checkpoints on the spine, effects below, and a thread from
- * each call to every effect attributed to it.
+ * each call to every effect attributed to it. Events cited as divergence
+ * evidence are divergence knots; one off those lanes (the agent's claim)
+ * joins the intent lane, anything else the spine.
  */
-export function layoutRiver(events: Event[], graph: api.Graph | undefined, step = 14): RiverLayout {
+export function layoutRiver(
+  events: Event[],
+  graph: api.Graph | undefined,
+  evidence: ReadonlySet<number> = new Set(),
+  step = 14,
+): RiverLayout {
   const callOf = new Map<number, string>();
   for (const c of graph?.calls ?? []) callOf.set(c.started_seq, c.call_id);
   const effectOf = new Map<number, api.Effect>();
@@ -192,8 +199,11 @@ export function layoutRiver(events: Event[], graph: api.Graph | undefined, step 
       lane = "effect";
       callId = effectOf.get(e.seq)?.call_id ?? null;
     }
+    const cited = evidence.has(e.seq);
+    if (!lane && cited) lane = planeOf(e) === "intent" ? "intent" : "spine";
     if (!lane) continue;
-    knots.push({ seq: e.seq, lane, x, meaning: meaningOf(e), label: describe(e), callId });
+    const meaning = cited ? "divergence" : meaningOf(e);
+    knots.push({ seq: e.seq, lane, x, meaning, label: describe(e), callId });
     if (lane === "intent" && callId) startX.set(callId, x);
     x += step;
   }
