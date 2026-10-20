@@ -32,5 +32,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-      - name: Summary, comment, and fail-on logic
+      - name: Summary, comment, fail-on, and command parsing
         run: node --test integrations/github-action/tests/*.test.mjs
+      - name: Installer (checksums, signatures) and sensor start-up
+        run: |
+          bash integrations/github-action/tests/install.test.sh
+          bash integrations/github-action/tests/sensord.test.sh
+      - name: shellcheck
+        run: shellcheck integrations/github-action/scripts/*.sh integrations/github-action/tests/*.sh
