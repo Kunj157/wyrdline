@@ -218,6 +218,13 @@ pub fn export(a: &ExportArgs) -> anyhow::Result<u8> {
         status: rec.status,
         created_ms: rec.created_ms,
     };
+    // Annotations synced through Studio (wyrdd keeps them per session).
+    let annotations = match std::fs::read(data.annotations().join(format!("{}.automerge", rec.id)))
+    {
+        Ok(b) => Some(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(anyhow::Error::from(e).context("reading the session's annotations")),
+    };
     let signer = HostSigner(HostKey::load_or_create(&data.host_key())?);
     let out = wyrd_bundle::export(
         &ExportInput {
@@ -228,6 +235,7 @@ pub fn export(a: &ExportArgs) -> anyhow::Result<u8> {
             withheld_files: withheld,
             redaction,
             divergences: wyrd_divergence::view::project_json,
+            annotations: annotations.as_deref(),
         },
         &signer,
     )?;
