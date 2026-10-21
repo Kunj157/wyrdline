@@ -3,6 +3,8 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod idp;
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,7 +16,7 @@ use testcontainers::core::{IntoContainerPort, Mount, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tower::ServiceExt;
-use wyrd_hub::config::{Config, S3Config, Secret};
+use wyrd_hub::config::{Config, OidcConfig, S3Config, Secret};
 use wyrd_hub::db::{self, PgPool};
 use wyrd_hub::{AppState, Storage, app};
 
@@ -123,6 +125,20 @@ pub struct Hub {
 }
 
 pub async fn hub() -> Hub {
+    hub_with(None).await
+}
+
+/// A Hub logging in through `idp`.
+pub async fn hub_with_idp(idp: &idp::Idp) -> Hub {
+    hub_with(Some(OidcConfig {
+        issuer: idp.issuer.clone(),
+        client_id: idp.client_id.clone(),
+        client_secret: Secret::new(idp.client_secret.clone()),
+    }))
+    .await
+}
+
+pub async fn hub_with(oidc: Option<OidcConfig>) -> Hub {
     let (pg, minio) = tokio::join!(postgres(), minio());
     let storage = Storage::new(minio.s3.clone());
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -132,7 +148,9 @@ pub async fn hub() -> Hub {
     }
     let pool = db::connect(&pg.url, 5).await.unwrap();
     db::MIGRATOR.run(&pool).await.unwrap();
-    let state = Arc::new(AppState::new(config(&pg.url, minio.s3.clone()), storage));
+    let mut cfg = config(&pg.url, minio.s3.clone());
+    cfg.oidc = oidc;
+    let state = Arc::new(AppState::new(cfg, storage));
     state.set_db(pool.clone());
     Hub {
         state,
@@ -179,4 +197,94 @@ pub async fn send(app: &Router, req: Request<Body>) -> Reply {
 
 pub async fn get(app: &Router, uri: &str) -> Reply {
     send(app, Request::get(uri).body(Body::empty()).unwrap()).await
+}
+
+/// `name=value` of the `Set-Cookie` header naming `name`.
+pub fn set_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with(&format!("{name}=")))
+        .map(|v| v.split(';').next().unwrap_or_default().to_string())
+}
+
+pub fn location(r: &Reply) -> String {
+    r.headers[axum::http::header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+/// A started login: the provider redirect and the browser-binding cookie.
+pub struct Started {
+    pub authorize: String,
+    pub login_cookie: String,
+}
+
+pub async fn start_login(app: &Router, return_to: &str) -> Started {
+    let r = get(
+        app,
+        &format!("/api/v1/auth/oidc/login?return_to={return_to}"),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    Started {
+        authorize: location(&r),
+        login_cookie: set_cookie(&r.headers, "wyrd_login").unwrap(),
+    }
+}
+
+/// Let the provider approve: returns the hub callback path and query.
+pub async fn approve(idp: &std::sync::Arc<idp::Idp>, authorize: &str) -> String {
+    let path = authorize.strip_prefix(&idp.issuer).unwrap();
+    let r = get(&idp::router(idp), path).await;
+    assert_eq!(r.status, StatusCode::FOUND);
+    location(&r)
+        .strip_prefix("http://hub.test")
+        .unwrap()
+        .to_string()
+}
+
+pub async fn callback(app: &Router, path: &str, cookie: &str) -> Reply {
+    send(
+        app,
+        Request::get(path)
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+}
+
+/// Log in as `subject`; returns the session cookie (`wyrd_session=…`).
+pub async fn login(app: &Router, idp: &std::sync::Arc<idp::Idp>, subject: &str) -> String {
+    *idp.subject.lock().unwrap() = subject.to_string();
+    let s = start_login(app, "/").await;
+    let cb = approve(idp, &s.authorize).await;
+    let r = callback(app, &cb, &s.login_cookie).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    set_cookie(&r.headers, "wyrd_session").unwrap()
+}
+
+/// A request with the session cookie (and the Hub's own Origin, as a
+/// browser sends on mutations).
+pub fn as_user(
+    method: &str,
+    uri: &str,
+    cookie: &str,
+    body: Option<serde_json::Value>,
+) -> Request<Body> {
+    let b = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("cookie", cookie)
+        .header("origin", "http://hub.test");
+    match body {
+        Some(v) => b
+            .header("content-type", "application/json")
+            .body(Body::from(v.to_string()))
+            .unwrap(),
+        None => b.body(Body::empty()).unwrap(),
+    }
 }

@@ -4738,6 +4738,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "hex",
  "http-body-util",
  "ring",

@@ -28,6 +28,11 @@ const FAMILIES: &[(&str, &str, &str)] = &[
         "Database pool connections by state.",
     ),
     (
+        "wyrd_hub_logins_total",
+        "counter",
+        "OIDC logins by outcome.",
+    ),
+    (
         "wyrd_hub_ready",
         "gauge",
         "1 when the database is connected and migrated.",
