@@ -28,6 +28,37 @@ pub mod kind {
     pub const FCHDIR: u32 = 13;
 }
 
+/// Syscalls the `sys_enter` program handles: the values of its `SYSCALLS`
+/// map, indexed by this architecture's syscall number (0 = not handled).
+/// Userspace fills the map, so the object stays architecture-neutral.
+pub mod sys {
+    pub const EXECVE: u32 = 1;
+    pub const EXECVEAT: u32 = 2;
+    pub const EXIT_GROUP: u32 = 3;
+    pub const OPENAT: u32 = 4;
+    pub const OPENAT2: u32 = 5;
+    pub const OPEN: u32 = 6;
+    pub const CREAT: u32 = 7;
+    pub const UNLINKAT: u32 = 8;
+    pub const UNLINK: u32 = 9;
+    pub const RMDIR: u32 = 10;
+    pub const RENAMEAT2: u32 = 11;
+    pub const RENAMEAT: u32 = 12;
+    pub const RENAME: u32 = 13;
+    pub const MKDIRAT: u32 = 14;
+    pub const MKDIR: u32 = 15;
+    pub const FCHMODAT: u32 = 16;
+    pub const FCHMODAT2: u32 = 17;
+    pub const CHMOD: u32 = 18;
+    pub const TRUNCATE: u32 = 19;
+    pub const CONNECT: u32 = 20;
+    pub const CHDIR: u32 = 21;
+    pub const FCHDIR: u32 = 22;
+}
+
+/// Size of the `SYSCALLS` map: syscall numbers at or above it are ignored.
+pub const MAX_SYSCALL_NR: u32 = 1024;
+
 /// Verdict carried in `a2` of a CONNECT event.
 pub mod verdict {
     /// Seen at syscall entry, no enforcement for this session.
@@ -152,8 +183,9 @@ impl RawEvent {
     };
 }
 
-/// Tracepoint field offsets that differ between kernels, read from tracefs
-/// by userspace and written into the program's read-only data.
+/// Layout facts that differ between kernels or architectures, filled by
+/// userspace (tracefs formats, the architecture's `pt_regs`) and written
+/// into the program's read-only data.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Offsets {
@@ -165,6 +197,15 @@ pub struct Offsets {
     pub exit_pid: u32,
     /// `u32::MAX` when the kernel has no `group_dead` field.
     pub exit_group_dead: u32,
+    /// Offsets of the six syscall arguments in the `struct pt_regs` that
+    /// the raw `sys_enter` tracepoint passes.
+    pub regs_args: [u32; 6],
+    /// Offset in `task_struct` of the word that marks a compat (32-bit)
+    /// syscall, whose numbers come from another table; `u32::MAX` when
+    /// the architecture has none.
+    pub compat_offset: u32,
+    /// Bit of that word that is set during a compat syscall.
+    pub compat_mask: u32,
 }
 
 #[cfg(feature = "user")]

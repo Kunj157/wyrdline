@@ -34,7 +34,8 @@ pub fn field_offset(format: &str, field: &str) -> Option<u32> {
     })
 }
 
-/// Parse offsets from the two layout-dependent tracepoints.
+/// Parse offsets from the two layout-dependent tracepoints (the
+/// architecture fields are left neutral; the loader fills them).
 pub fn offsets_from(newtask: &str, exit: &str) -> Result<Offsets> {
     let need = |fmt: &str, f: &str| {
         field_offset(fmt, f).ok_or_else(|| SensorError::Tracefs(format!("field {f} not found")))
@@ -44,6 +45,9 @@ pub fn offsets_from(newtask: &str, exit: &str) -> Result<Offsets> {
         newtask_clone_flags: need(newtask, "clone_flags")?,
         exit_pid: need(exit, "pid")?,
         exit_group_dead: field_offset(exit, "group_dead").unwrap_or(u32::MAX),
+        regs_args: [0; 6],
+        compat_offset: u32::MAX,
+        compat_mask: 0,
     })
 }
 
