@@ -5,6 +5,7 @@
 pub mod client;
 pub mod decode;
 pub mod loader;
+pub mod syscalls;
 pub mod tracefs;
 
 pub use client::{ClientMsg, SensorClient, ServerMsg};
