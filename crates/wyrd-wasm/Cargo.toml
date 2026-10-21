@@ -1,6 +1,6 @@
 [package]
 name = "wyrd-wasm"
-description = "WebAssembly facade of the correlator for the Studio's offline bundle mode"
+description = "WebAssembly facade of the correlator and the bundle reader for the Studio's offline mode"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,8 +15,17 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 serde_json.workspace = true
 wasm-bindgen = "0.2.129"
+wyrd-bundle = { path = "../wyrd-bundle" }
+wyrd-cas = { path = "../wyrd-cas", default-features = false }
 wyrd-correlator = { path = "../wyrd-correlator" }
 wyrd-schema = { path = "../wyrd-schema" }
+
+[dev-dependencies]
+blake3.workspace = true
+ed25519-dalek.workspace = true
+serde_bytes.workspace = true
+wyrd-cas = { path = "../wyrd-cas" }
+wyrd-cell = { path = "../wyrd-cell" }
 
 [lints.rust]
 # `#[wasm_bindgen]` expands to unsafe glue code.
