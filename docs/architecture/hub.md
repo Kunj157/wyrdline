@@ -149,6 +149,11 @@ N}` (1–3650, or `null` for none; audited as `org.update`). Every
 `WYRD_HUB_RETENTION_INTERVAL_SECS` the Hub deletes bundles older than
 that, each audited as `bundle.expire` by `system`.
 
+**Quotas:** every organisation starts with `WYRD_HUB_QUOTA_BYTES` and
+`WYRD_HUB_QUOTA_BUNDLES`. There is no self-service endpoint (an org admin
+would raise their own limit); the operator changes `orgs.quota_bytes` and
+`orgs.quota_bundles` in the database.
+
 **From the CLI:** `wyrd push file.wyrd --hub <url> --org <slug> [--repo
 owner/name]` with an API token in `WYRD_HUB_TOKEN`. It verifies the file
 locally first, then streams it. Exit codes: 0 uploaded (or already
@@ -176,7 +181,7 @@ belong to answers **404**, exactly like one that does not exist.
 | `GET /api/v1/audit-logs?org=` | admin | #156 |
 | `POST /api/v1/orgs/{org}/bundles`, `GET …/bundles?repo=&rule=&since=` | member / viewer | #157 |
 | `GET /api/v1/bundles/{bid}`, `GET …/download`, `DELETE …` | viewer / viewer / admin | #157 |
-| `PATCH /api/v1/orgs/{org}` (quota, retention) | admin | #157 |
+| `PATCH /api/v1/orgs/{org}` (retention) | admin | #157 |
 | `GET /api/v1/orgs/{org}/stats`, `GET …/search?q=` | viewer | #158 |
 | `GET /api/v1/sync?bundle={bid}` (WebSocket) | viewer read-only, member+ write | #159 |
 
