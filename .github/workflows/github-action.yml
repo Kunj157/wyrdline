@@ -1,0 +1,42 @@
+name: github-action
+
+# The Wyrdline GitHub Action (integrations/github-action): its scripts'
+# tests on every change to it.
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - integrations/github-action/**
+      - .github/workflows/github-action.yml
+  push:
+    branches: [dev, main]
+    paths:
+      - integrations/github-action/**
+      - .github/workflows/github-action.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Action · script tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Summary, comment, fail-on, and command parsing
+        run: node --test integrations/github-action/tests/*.test.mjs
+      - name: Installer (checksums, signatures) and sensor start-up
+        run: |
+          bash integrations/github-action/tests/install.test.sh
+          bash integrations/github-action/tests/sensord.test.sh
+      - name: shellcheck
+        run: shellcheck integrations/github-action/scripts/*.sh integrations/github-action/tests/*.sh
