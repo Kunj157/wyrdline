@@ -2,10 +2,11 @@
 //!
 //! Every program first checks that the current task belongs to a registered
 //! session cgroup (or a descendant of one); events from other tasks never
-//! leave the kernel. Syscall tracepoints are used because their argument
-//! layout (`args[i]` at offset 16 + 8·i) is stable across kernels; the two
-//! scheduler tracepoints whose layout differs between kernels read their
-//! field offsets from `OFFSETS`, filled by userspace from tracefs.
+//! leave the kernel. Syscalls are seen through the raw `sys_enter` and
+//! `sys_exit` tracepoints, which call the programs directly on every kernel;
+//! the syscall table and `pt_regs` argument offsets of the host architecture,
+//! and the field offsets of the two scheduler tracepoints whose layout
+//! differs between kernels, are filled by userspace (`SYSCALLS`, `OFFSETS`).
 #![cfg_attr(target_arch = "bpf", no_std)]
 #![cfg_attr(target_arch = "bpf", no_main)]
 
