@@ -1,0 +1,42 @@
+[package]
+name = "wyrd-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Not part of the main workspace: built only by `cargo fuzz` (nightly).
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4.10"
+wyrd-bundle = { path = "../crates/wyrd-bundle" }
+wyrd-schema = { path = "../crates/wyrd-schema" }
+
+[[bin]]
+name = "bundle_reader"
+path = "fuzz_targets/bundle_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "event_cbor"
+path = "fuzz_targets/event_cbor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
