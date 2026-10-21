@@ -87,6 +87,6 @@ async fn readyz(State(st): State<Arc<AppState>>) -> impl IntoResponse {
 async fn metrics(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        st.metrics.render(st.gauges()),
+        st.metrics.render(st.gauges().await),
     )
 }
