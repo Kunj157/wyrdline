@@ -79,6 +79,7 @@ wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enfor
 wyrd ask <session>                                   # answer what the policy asks
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
+wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
 wyrd push session.wyrd --hub https://hub.example --org acme  # share it on a team Hub (token in WYRD_HUB_TOKEN)
 ```
 

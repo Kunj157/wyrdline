@@ -1,0 +1,55 @@
+êJlcâœR
+¾õP{.Åù•Gv®¾¾{’BêiFÒ,{
+  "format": "wyrdline.bundle",
+  "format_version": 1,
+  "event_schema": "wyrdline.event.v1",
+  "session": {
+    "id": "01jseed",
+    "name": "seed",
+    "agent": "fakeagent",
+    "mode": "cell",
+    "status": "closed",
+    "created_ms": 1700000000000
+  },
+  "redaction": "standard",
+  "content": {
+    "included": true,
+    "chunks": 2,
+    "withheld_files": 0
+  },
+  "ledger": {
+    "events": 6,
+    "head_hash": "b3:d0cbee979a1b1fa4f885edb990544aec06bb46dff313b7116b0df24f7cc852ea"
+  },
+  "signer": {
+    "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "fingerprint": "0871f3aabc26e458"
+  },
+  "files": [
+    {
+      "path": "cas/c3a4590c6ac1192102b90c5ab500f38ff1a4362bab8314adb9a4daeb2de4694d",
+      "size": 24,
+      "blake3": "b3:c3a4590c6ac1192102b90c5ab500f38ff1a4362bab8314adb9a4daeb2de4694d"
+    },
+    {
+      "path": "cas/e82faeaf18ae5bec570e5ac14148d8f72bee5d9ed0df51961c036c0d2850f5ef",
+      "size": 700,
+      "blake3": "b3:e82faeaf18ae5bec570e5ac14148d8f72bee5d9ed0df51961c036c0d2850f5ef"
+    },
+    {
+      "path": "claims.json",
+      "size": 3,
+      "blake3": "b3:9fa8dc9570625be2be53d308f958332981ec8fb8137d3dd7ba0ae5da317eaa7d"
+    },
+    {
+      "path": "divergences.json",
+      "size": 3,
+      "blake3": "b3:9fa8dc9570625be2be53d308f958332981ec8fb8137d3dd7ba0ae5da317eaa7d"
+    },
+    {
+      "path": "ledger.cbor-seq",
+      "size": 1438,
+      "blake3": "b3:3aed104c2b1582ad3f477bfa0bd6a50d7203f5896f723d1799ce57dbe3991b49"
+    }
+  ]
+}

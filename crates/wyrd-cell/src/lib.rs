@@ -14,6 +14,7 @@ pub mod diff;
 pub mod exec;
 pub mod launch;
 pub mod paths;
+pub mod requests;
 pub mod session;
 pub mod state;
 

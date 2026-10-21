@@ -1,0 +1,45 @@
+êJlcâœR
+¾õP{.Åù•Gv®¾¾{’BêiFÒ,{
+  "format": "wyrdline.bundle",
+  "format_version": 1,
+  "event_schema": "wyrdline.event.v1",
+  "session": {
+    "id": "01jseed",
+    "name": "seed",
+    "agent": "fakeagent",
+    "mode": "cell",
+    "status": "closed",
+    "created_ms": 1700000000000
+  },
+  "redaction": "strict",
+  "content": {
+    "included": false,
+    "chunks": 0,
+    "withheld_files": 0
+  },
+  "ledger": {
+    "events": 6,
+    "head_hash": "b3:7a407b19abd584f177779b5bb89dde9d3dd9961f21c7787f64b19a53639fe70b"
+  },
+  "signer": {
+    "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "fingerprint": "0871f3aabc26e458"
+  },
+  "files": [
+    {
+      "path": "claims.json",
+      "size": 3,
+      "blake3": "b3:9fa8dc9570625be2be53d308f958332981ec8fb8137d3dd7ba0ae5da317eaa7d"
+    },
+    {
+      "path": "divergences.json",
+      "size": 3,
+      "blake3": "b3:9fa8dc9570625be2be53d308f958332981ec8fb8137d3dd7ba0ae5da317eaa7d"
+    },
+    {
+      "path": "ledger.cbor-seq",
+      "size": 1442,
+      "blake3": "b3:55fec58d40c1e783beb80a917e7ea4728ead92306fb04fcbdc19ca0645c6b4be"
+    }
+  ]
+}
