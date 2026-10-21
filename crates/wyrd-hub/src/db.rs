@@ -54,6 +54,7 @@ pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {
         [
             migration!(20261020000001, "core"),
             migration!(20261020000002, "auth"),
+            migration!(20261021120000, "ci_trust"),
         ]
         .into_iter()
         .flatten()

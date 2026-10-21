@@ -25,6 +25,9 @@ browser / wyrd CLI ──HTTPS──▶ wyrd-hub (Axum)
 | `WYRD_HUB_S3_REGION` | `us-east-1` | SigV4 region |
 | `WYRD_HUB_S3_ACCESS_KEY_ID`, `WYRD_HUB_S3_SECRET_ACCESS_KEY` | required | credentials |
 | `WYRD_HUB_OIDC_ISSUER`, `WYRD_HUB_OIDC_CLIENT_ID`, `WYRD_HUB_OIDC_CLIENT_SECRET` | unset | OIDC login; unset disables browser login |
+| `WYRD_HUB_CI_ISSUER` | `https://token.actions.githubusercontent.com` | OIDC issuer whose tokens `POST /api/v1/ci/token` accepts (GitHub Enterprise Server: `https://HOST/_services/token`) |
+| `WYRD_HUB_CI_AUDIENCE` | the public URL | `aud` claim those tokens must carry (the action requests it) |
+| `WYRD_HUB_CI_TOKEN_TTL_SECS` | `900` | lifetime of CI upload tokens, 60–3600 |
 | `WYRD_HUB_DATA_DIR` | `wyrd-hub-data` | local scratch (upload spooling, analytics projections) |
 | `WYRD_LOG` | `info` | log filter; logs are JSON lines on stderr |
 
@@ -43,7 +46,9 @@ bucket. Until both are done:
 - `GET /metrics` — Prometheus text: `wyrd_hub_http_requests_total`
   (method, route template, status class),
   `wyrd_hub_http_request_duration_seconds`, `wyrd_hub_db_pool_connections`,
-  `wyrd_hub_ready`, plus feature counters added by later endpoints.
+  `wyrd_hub_ready`, `wyrd_hub_logins_total` (outcome),
+  `wyrd_hub_ci_token_exchanges_total` (outcome), plus feature counters
+  added by later endpoints.
 
 Every response carries `X-Request-ID` (a client value is kept when it is
 short visible ASCII, otherwise a ULID), and every request is logged with
@@ -63,6 +68,8 @@ migration, undo all of them, and apply them again.
 | `users` | OIDC `(issuer, subject)` identity, email and name for display |
 | `memberships` | `(org, user) → viewer \| member \| admin` |
 | `bundles` | verified manifest metadata, uploader-supplied repo, divergence rules, size, object key |
+| `oidc_logins`, `sessions`, `api_tokens` | login state, browser sessions, bearer tokens (hashed; `scope` `full` or `upload`) |
+| `ci_trust_rules` | per org: GitHub `repository_owner` and optional `repository` whose workflows may mint upload tokens |
 | `audit_logs` | actor, action, target, request id, details; append-only (a trigger rejects `UPDATE`, `DELETE`, `TRUNCATE`) |
 
 ## API (`/api/v1`)
@@ -80,6 +87,8 @@ belong to answers **404**, exactly like one that does not exist.
 | `POST /api/v1/orgs`, `GET /api/v1/orgs/{org}` | signed in / viewer | #156 |
 | `GET /api/v1/orgs/{org}/members`, `PUT`/`DELETE …/members/{user}` | viewer / admin | #156 |
 | `GET /api/v1/audit-logs?org=` | admin | #156 |
+| `POST /api/v1/ci/token` | a GitHub Actions OIDC token | #161 |
+| `GET`/`POST /api/v1/orgs/{org}/ci-trust`, `DELETE …/ci-trust/{id}` | admin | #161 |
 | `POST /api/v1/orgs/{org}/bundles`, `GET …/bundles?repo=&rule=&since=` | member / viewer | #157 |
 | `GET /api/v1/bundles/{bid}`, `GET …/download`, `DELETE …` | viewer / viewer / admin | #157 |
 | `PATCH /api/v1/orgs/{org}` (quota, retention) | admin | #157 |
@@ -105,6 +114,50 @@ one bundle:
   seeds it from the bundle's `annotations.automerge` when present.
 - Limits: frame and document size caps; every connection and rejected
   write is counted in `/metrics`.
+
+### CI upload tokens (#161)
+
+A workflow uploads bundles without a stored secret. The GitHub Action
+(`integrations/github-action/scripts/hub-upload.sh`, with
+`permissions: id-token: write`) asks the runner for an OIDC token whose
+`aud` is the Hub's public URL and posts it:
+
+```
+POST /api/v1/ci/token
+{ "token": "<GitHub Actions OIDC JWT>", "org": "acme" }
+
+200 { "token": "wyrdci_…", "token_type": "Bearer", "scope": "upload",
+      "org": "acme", "expires_in": 900, "expires_at": "2026-10-21T12:15:00Z" }
+```
+
+The Hub verifies the JWT before touching the database: signature against
+the issuer's JWKS (discovery at `WYRD_HUB_CI_ISSUER`, cached for an hour,
+refreshed once on an unknown `kid` so key rotation works, at most every
+30 s), `iss`, `aud` (= `WYRD_HUB_CI_AUDIENCE`), `exp`/`nbf`/`iat` with
+60 s leeway, and that `repository` belongs to `repository_owner`. Then it
+looks for a **trust rule** of the named organisation: an admin registers
+`{ "repository_owner": "acme-gh", "repository": "acme-gh/app" }` (one
+repository) or `{ "repository_owner": "acme-gh" }` (every repository of
+that user or GitHub organisation) through `POST /api/v1/orgs/{org}/ci-trust`;
+names match case-insensitively. Answers: a token that fails verification
+→ **401** `ci-token-rejected` (reason only in the log and in
+`wyrd_hub_ci_token_exchanges_total{outcome="failure"}`); no matching rule
+or unknown organisation → **403** `ci-not-trusted`; issuer unreachable or
+failing → **503** (the action retries).
+
+The minted token is an `api_tokens` row with `scope = 'upload'`,
+`expires_at` = now + `WYRD_HUB_CI_TOKEN_TTL_SECS`, owned by the
+repository's **CI identity**: a user `(issuer = the CI issuer,
+subject = repo:<owner/name>)` named `owner/name (GitHub Actions)`, which
+holds a `member` membership of the organisation (so uploads are attributed
+to it and the usual role checks apply). An upload-only token is accepted
+by exactly two routes — `POST /api/v1/orgs/{its org}/bundles` and
+`GET /api/v1/me` — and answers **403** `insufficient-scope` everywhere
+else. Removing a trust rule deletes the memberships (and live upload
+tokens) of CI identities no remaining rule covers. Every exchange writes
+an audit row `ci.token.exchange` (repository, owner and repository ids,
+actor, workflow ref, run id, ref, sha, event, expiry); rules are audited
+as `ci.trust.add` / `ci.trust.remove`.
 
 ## Tests
 

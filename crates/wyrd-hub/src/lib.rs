@@ -39,6 +39,8 @@ pub struct AppState {
     pub storage: Storage,
     /// `None` when no OIDC provider is configured (login disabled).
     pub oidc: Option<oidc::Provider>,
+    /// The CI issuer's signing keys (`POST /api/v1/ci/token`).
+    pub ci: oidc::Keys,
     pub metrics: metrics::Metrics,
 }
 
@@ -46,11 +48,13 @@ impl AppState {
     /// A Hub whose database is not connected yet (see [`AppState::set_db`]).
     pub fn new(config: Config, storage: Storage) -> Self {
         let oidc = config.oidc.clone().map(oidc::Provider::new);
+        let ci = oidc::Keys::new(config.ci.issuer.clone());
         AppState {
             config,
             db: OnceLock::new(),
             storage,
             oidc,
+            ci,
             metrics: metrics::Metrics::default(),
         }
     }

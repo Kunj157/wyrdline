@@ -220,6 +220,94 @@ pub fn check_id_token(
     })
 }
 
+/// Seconds since the Unix epoch.
+pub fn now() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    )
+    .unwrap_or(i64::MAX)
+}
+
+/// The workflow run a GitHub Actions OIDC token asserts
+/// (`docs/architecture/hub.md`, "CI upload tokens").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiIdentity {
+    /// `owner/name`, as GitHub spells it.
+    pub repository: String,
+    pub repository_owner: String,
+    pub repository_id: Option<String>,
+    pub repository_owner_id: Option<String>,
+    /// The GitHub user who triggered the run.
+    pub actor: Option<String>,
+    pub workflow_ref: Option<String>,
+    pub run_id: Option<String>,
+    pub git_ref: Option<String>,
+    pub sha: Option<String>,
+    pub event_name: Option<String>,
+}
+
+/// Checks on verified GitHub Actions token claims: issuer, audience
+/// (a string, or a list naming `audience`), expiry, not-before, and the
+/// repository claims a trust rule is matched against.
+pub fn check_ci_token(
+    claims: &serde_json::Value,
+    issuer: &str,
+    audience: &str,
+    now: i64,
+) -> Result<CiIdentity, JwtError> {
+    let s = |k: &'static str| claims.get(k).and_then(serde_json::Value::as_str);
+    if s("iss") != Some(issuer) {
+        return Err(JwtError::Issuer);
+    }
+    let aud_ok = match claims.get("aud") {
+        Some(serde_json::Value::String(a)) => a == audience,
+        Some(serde_json::Value::Array(a)) => a.iter().any(|v| v.as_str() == Some(audience)),
+        _ => false,
+    };
+    if !aud_ok {
+        return Err(JwtError::Audience);
+    }
+    let exp = claims
+        .get("exp")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or(JwtError::Missing("exp"))?;
+    if exp + LEEWAY_SECS < now {
+        return Err(JwtError::Expired);
+    }
+    for k in ["iat", "nbf"] {
+        if let Some(t) = claims.get(k).and_then(serde_json::Value::as_i64)
+            && t - LEEWAY_SECS > now
+        {
+            return Err(JwtError::NotYetValid);
+        }
+    }
+    let short = |k: &'static str| s(k).filter(|v| !v.is_empty() && v.len() <= 320);
+    let repository = short("repository").ok_or(JwtError::Missing("repository"))?;
+    let repository_owner =
+        short("repository_owner").ok_or(JwtError::Missing("repository_owner"))?;
+    if !repository
+        .strip_prefix(repository_owner)
+        .is_some_and(|rest| rest.starts_with('/') && rest.len() > 1)
+    {
+        return Err(JwtError::Missing("repository"));
+    }
+    let opt = |k| short(k).map(str::to_string);
+    Ok(CiIdentity {
+        repository: repository.to_string(),
+        repository_owner: repository_owner.to_string(),
+        repository_id: opt("repository_id"),
+        repository_owner_id: opt("repository_owner_id"),
+        actor: opt("actor"),
+        workflow_ref: opt("workflow_ref").or_else(|| opt("job_workflow_ref")),
+        run_id: opt("run_id"),
+        git_ref: opt("ref"),
+        sha: opt("sha"),
+        event_name: opt("event_name"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use ring::rand::SystemRandom;
@@ -357,5 +445,70 @@ mod tests {
         assert_eq!(with("iat", json!(now + 120)), Err(JwtError::NotYetValid));
         assert_eq!(with("nonce", json!("other")), Err(JwtError::Nonce));
         assert_eq!(with("sub", json!("")), Err(JwtError::Missing("sub")));
+    }
+
+    #[test]
+    fn ci_token_checks() {
+        let now = 1_000_000;
+        let iss = "https://token.actions.githubusercontent.com";
+        let ok = json!({
+            "iss": iss, "aud": "https://hub.example", "sub": "repo:acme/app:ref:refs/heads/main",
+            "exp": now + 300, "iat": now, "nbf": now - 5,
+            "repository": "acme/App", "repository_owner": "acme",
+            "repository_id": "123", "repository_owner_id": "77",
+            "actor": "octocat", "workflow_ref": "acme/App/.github/workflows/ci.yml@refs/heads/main",
+            "run_id": "42", "ref": "refs/heads/main", "sha": "abc", "event_name": "pull_request"
+        });
+        let id = check_ci_token(&ok, iss, "https://hub.example", now).unwrap();
+        assert_eq!(id.repository, "acme/App");
+        assert_eq!(id.repository_owner, "acme");
+        assert_eq!(id.repository_id.as_deref(), Some("123"));
+        assert_eq!(id.actor.as_deref(), Some("octocat"));
+        assert_eq!(id.run_id.as_deref(), Some("42"));
+        let with = |k: &str, v: serde_json::Value| {
+            let mut c = ok.clone();
+            c[k] = v;
+            check_ci_token(&c, iss, "https://hub.example", now)
+        };
+        assert_eq!(with("iss", json!("https://evil")), Err(JwtError::Issuer));
+        assert_eq!(with("aud", json!("https://other")), Err(JwtError::Audience));
+        assert!(with("aud", json!(["x", "https://hub.example"])).is_ok());
+        assert_eq!(with("aud", json!(7)), Err(JwtError::Audience));
+        assert_eq!(with("exp", json!(now - 61)), Err(JwtError::Expired));
+        assert_eq!(with("exp", json!(null)), Err(JwtError::Missing("exp")));
+        assert_eq!(with("nbf", json!(now + 120)), Err(JwtError::NotYetValid));
+        assert_eq!(with("iat", json!(now + 120)), Err(JwtError::NotYetValid));
+        assert_eq!(
+            with("repository", json!(null)),
+            Err(JwtError::Missing("repository"))
+        );
+        assert_eq!(
+            with("repository_owner", json!("")),
+            Err(JwtError::Missing("repository_owner"))
+        );
+        // The repository must belong to the owner claim.
+        assert_eq!(
+            with("repository", json!("other/App")),
+            Err(JwtError::Missing("repository"))
+        );
+        assert_eq!(
+            with("repository", json!("acme")),
+            Err(JwtError::Missing("repository"))
+        );
+        // Optional claims may be absent.
+        let mut bare = ok.clone();
+        for k in [
+            "actor",
+            "workflow_ref",
+            "run_id",
+            "ref",
+            "sha",
+            "event_name",
+        ] {
+            bare.as_object_mut().unwrap().remove(k);
+        }
+        let id = check_ci_token(&bare, iss, "https://hub.example", now).unwrap();
+        assert_eq!(id.actor, None);
+        assert_eq!(id.workflow_ref, None);
     }
 }
