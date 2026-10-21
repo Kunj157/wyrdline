@@ -35,10 +35,11 @@ jobs:
           node-version-file: .node-version
       - name: Summary, comment, fail-on, and command parsing
         run: node --test integrations/github-action/tests/*.test.mjs
-      - name: Installer (checksums, signatures) and sensor start-up
+      - name: Installer (checksums, signatures), sensor start-up, Hub upload
         run: |
           bash integrations/github-action/tests/install.test.sh
           bash integrations/github-action/tests/sensord.test.sh
+          bash integrations/github-action/tests/hub-upload.test.sh
       - name: shellcheck
         run: shellcheck integrations/github-action/scripts/*.sh integrations/github-action/tests/*.sh
       - name: The example workflow is valid
