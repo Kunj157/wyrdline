@@ -882,6 +882,12 @@ fn bstr(input: &[u8]) -> Result<(&[u8], &[u8]), String> {
         .ok_or_else(|| "truncated byte string".into())
 }
 
+/// Walk the records of a `ledger.cbor-seq`, decode each event, and
+/// recompute the chain (no manifest to compare the head with).
+pub fn check_ledger(ledger: &[u8]) -> Result<Vec<Event>, ReadError> {
+    check_records(ledger, None)
+}
+
 /// Walk the records, decode each event, and recompute the chain. With
 /// `head`, also compare the final count and head.
 fn check_records(ledger: &[u8], head: Option<(u64, Hash)>) -> Result<Vec<Event>, ReadError> {
