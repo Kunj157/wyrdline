@@ -2,8 +2,8 @@
 //! embedded DuckDB (feature `analytics`).
 //!
 //! Each verified bundle gets `projections/<org>/<bundle>/{events,
-//! divergences,guard}.parquet` under the data directory, written on
-//! upload. A missing projection (another replica, a wiped volume) is
+//! divergences,guard,judge}.parquet` under the data directory, written
+//! on upload. A missing projection (another replica, a wiped volume) is
 //! rebuilt from the stored bundle on first use. Every value that comes
 //! from a user reaches DuckDB as a bound parameter; the only text spliced
 //! into SQL is the server's own file paths, quoted.
@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 use duckdb::{Connection, params, params_from_iter};
 
-use crate::projection::{Query, Rows};
+use crate::projection::{JudgeStats, Query, Rows, Stats};
 
-pub const FILES: [&str; 3] = ["events", "divergences", "guard"];
+pub const FILES: [&str; 4] = ["events", "divergences", "guard", "judge"];
 
 /// The projection directory of one bundle.
 pub fn dir(data_dir: &Path, org_id: &str, bundle_id: &str) -> PathBuf {
@@ -47,7 +47,11 @@ pub fn write(rows: &Rows, dir: &Path) -> Result<(), duckdb::Error> {
              CREATE TABLE divergences (seq BIGINT, rule_id VARCHAR, severity VARCHAR, \
                confidence_bp INTEGER, summary VARCHAR);
              CREATE TABLE guard (seq BIGINT, stage VARCHAR, decision VARCHAR, policy_id VARCHAR, \
-               reason VARCHAR);",
+               reason VARCHAR);
+             CREATE TABLE judge (model VARCHAR, prompt_version VARCHAR, input_tokens BIGINT, \
+               output_tokens BIGINT, cache_creation_input_tokens BIGINT, \
+               cache_read_input_tokens BIGINT, cost_micro_usd BIGINT, latency_ms BIGINT, \
+               failed BOOLEAN);",
         )?;
         {
             let mut a = db.appender("events")?;
@@ -78,6 +82,20 @@ pub fn write(rows: &Rows, dir: &Path) -> Result<(), duckdb::Error> {
             let mut a = db.appender("guard")?;
             for r in &rows.guard {
                 a.append_row(params![r.seq, r.stage, r.decision, r.policy_id, r.reason])?;
+            }
+            let mut a = db.appender("judge")?;
+            for r in &rows.judge {
+                a.append_row(params![
+                    r.model,
+                    r.prompt_version,
+                    r.input_tokens,
+                    r.output_tokens,
+                    r.cache_creation_input_tokens,
+                    r.cache_read_input_tokens,
+                    r.cost_micro_usd,
+                    r.latency_ms,
+                    r.failed
+                ])?;
             }
         }
         for f in FILES {
@@ -114,19 +132,6 @@ fn source(dirs: &[PathBuf], file: &str) -> String {
 /// The bundle id from a projection file name.
 const BUNDLE_OF: &str = "regexp_extract(filename, '([0-9A-Z]{26})[/\\\\][a-z]+\\.parquet$', 1)";
 
-/// Divergence counts per rule: (rule, sessions with it, times raised).
-pub type RuleCount = (String, i64, i64);
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Stats {
-    pub rules: Vec<RuleCount>,
-    /// Denied actions by event kind.
-    pub denied: Vec<(String, i64)>,
-    pub events: i64,
-    pub dropped: i64,
-    pub sensor_lost: i64,
-}
-
 /// Aggregate the projections in `dirs` (blocking).
 pub fn stats(dirs: &[PathBuf]) -> Result<Stats, duckdb::Error> {
     if dirs.is_empty() {
@@ -155,6 +160,46 @@ pub fn stats(dirs: &[PathBuf]) -> Result<Stats, duckdb::Error> {
     ))?;
     (out.events, out.dropped, out.sensor_lost) =
         q.query_row([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    out.judge = judge(&db, dirs)?;
+    Ok(out)
+}
+
+fn judge(db: &Connection, dirs: &[PathBuf]) -> Result<JudgeStats, duckdb::Error> {
+    let judge = source(dirs, "judge");
+    let mut out = JudgeStats::default();
+    let mut q = db.prepare(&format!(
+        "SELECT count(*), count(*) FILTER (WHERE failed), \
+         coalesce(sum(input_tokens), 0)::BIGINT, coalesce(sum(output_tokens), 0)::BIGINT, \
+         coalesce(sum(cache_creation_input_tokens), 0)::BIGINT, \
+         coalesce(sum(cache_read_input_tokens), 0)::BIGINT, \
+         coalesce(sum(cost_micro_usd), 0)::BIGINT FROM {judge}"
+    ))?;
+    (
+        out.runs,
+        out.failed,
+        out.input_tokens,
+        out.output_tokens,
+        out.cache_creation_input_tokens,
+        out.cache_read_input_tokens,
+        out.cost_micro_usd,
+    ) = q.query_row([], |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+            r.get(6)?,
+        ))
+    })?;
+    let mut q = db.prepare(&format!(
+        "SELECT model, count(*), coalesce(sum(cost_micro_usd), 0)::BIGINT FROM {judge} \
+         GROUP BY model ORDER BY count(*) DESC, model"
+    ))?;
+    out.by_model = q
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
     Ok(out)
 }
 

@@ -8,7 +8,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::bundles::bundle_with;
-use common::{as_user, idp, send, upload};
+use common::{as_user, idp, send, upload, upload_with};
 use serde_json::{Value, json};
 use wyrd_schema::{
     Decision, EventBody, FilePath, GuardDecision, GuardStage, NetConnect, NetVerdict, ProcExec,
@@ -65,8 +65,18 @@ struct World {
     t: common::Team,
 }
 
-/// acme: an exfiltration attempt (shop), a clean session (shop), and a
-/// session with sensor loss (auth); other: its own ~/.ssh read.
+/// Two judge runs, one of them failed: 300 input and 50 output tokens,
+/// 0.003 USD.
+pub const JUDGE_RUNS: &str = concat!(
+    r#"{"model":"claude-x","prompt_version":"v1","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":40},"est_cost_usd":0.001,"latency_ms":50,"attempts":1,"dropped":0,"error":null}"#,
+    "\n",
+    r#"{"model":"claude-x","prompt_version":"v1","usage":{"input_tokens":200,"output_tokens":30,"cache_creation_input_tokens":10,"cache_read_input_tokens":0},"est_cost_usd":0.002,"latency_ms":70,"attempts":2,"dropped":1,"error":"timeout"}"#,
+    "\n"
+);
+
+/// acme: an exfiltration attempt (shop, with judge runs), a clean
+/// session (shop), and a session with sensor loss (auth); other: its own
+/// ~/.ssh read.
 async fn world() -> World {
     let idp = idp::start().await;
     let hub = common::hub_with_idp(&idp).await;
@@ -102,11 +112,17 @@ async fn world() -> World {
         })],
         7,
     );
-    for (b, repo, who) in [
-        (&exfil, "shop", &t.member),
-        (&clean, "shop", &t.admin),
-        (&lossy, "auth", &t.member),
-    ] {
+    let r = upload_with(
+        &app,
+        &t.member,
+        "acme",
+        &exfil,
+        &[("repo", "shop"), ("judge_runs", JUDGE_RUNS)],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["bundle"]["judge_runs"], 2);
+    for (b, repo, who) in [(&clean, "shop", &t.admin), (&lossy, "auth", &t.member)] {
         let r = upload(&app, who, "acme", b, Some(repo)).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
     }
@@ -178,9 +194,19 @@ async fn stats_cover_the_dashboard() {
     assert_eq!(s["capture"]["dropped_events"], 7);
     assert_eq!(s["capture"]["sensor_lost"], 1);
     assert!(s["capture"]["overhead_pct"].is_null());
-    assert_eq!(s["judge"]["recorded"], false);
+    assert_eq!(
+        s["judge"],
+        json!({
+            "recorded": true, "runs": 2, "failed": 1,
+            "input_tokens": 300, "output_tokens": 50,
+            "cache_creation_input_tokens": 10, "cache_read_input_tokens": 40,
+            "cost_usd": 0.003,
+            "by_model": [{"model": "claude-x", "runs": 2, "cost_usd": 0.003}],
+        })
+    );
     let since = get_json(&w, "/api/v1/orgs/acme/stats?since=2999-01-01").await;
     assert_eq!(since["sessions"]["total"], 0);
+    assert_eq!(since["judge"]["recorded"], false);
     let m = common::get(&w.app, "/metrics").await.text();
     assert!(
         m.contains("wyrd_hub_query_seconds_count{query=\"stats\"} 2"),
@@ -260,6 +286,38 @@ async fn malformed_queries_are_400_with_the_position() {
 }
 
 #[tokio::test]
+async fn bad_judge_runs_are_400_and_nothing_is_stored() {
+    let idp = idp::start().await;
+    let hub = common::hub_with_idp(&idp).await;
+    let app = hub.app();
+    let t = common::team(&app, &idp).await;
+    for (runs, reason) in [
+        ("{\"model\":\"m\"}\nnot json\n", "line 2"),
+        ("{\"model\":\"\"}\n", "invalid run"),
+    ] {
+        let r = upload_with(
+            &app,
+            &t.member,
+            "acme",
+            &bundle_with("j", &[], Vec::new(), 0),
+            &[("judge_runs", runs)],
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+        assert!(
+            r.json()["detail"].as_str().unwrap().contains(reason),
+            "{}",
+            r.text()
+        );
+    }
+    let n: i64 = wyrd_hub::db::query_scalar("SELECT count(*) FROM bundles")
+        .fetch_one(&hub.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
 async fn missing_projections_are_rebuilt_from_the_bundle() {
     let w = world().await;
     let projections = w.hub.data.path().join("projections");
@@ -272,4 +330,7 @@ async fn missing_projections_are_rebuilt_from_the_bundle() {
     assert_eq!(names(&r, "hits"), ["exfil"]);
     let m = common::get(&w.app, "/metrics").await.text();
     assert!(m.contains("wyrd_hub_projection_rebuilds_total 3"), "{m}");
+    // The rebuilt projections still carry the judge runs (from the row).
+    let s = get_json(&w, "/api/v1/orgs/acme/stats").await;
+    assert_eq!(s["judge"]["runs"], 2);
 }

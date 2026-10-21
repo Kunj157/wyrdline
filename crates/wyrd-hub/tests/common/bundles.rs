@@ -150,12 +150,20 @@ pub fn unsigned(name: &str) -> Vec<u8> {
 
 /// A multipart body with the `bundle` file and optional `repo`.
 pub fn multipart(bundle: &[u8], repo: Option<&str>) -> (String, Vec<u8>) {
+    let fields: Vec<(&str, &str)> = repo.map(|r| ("repo", r)).into_iter().collect();
+    multipart_with(bundle, &fields)
+}
+
+/// A multipart body with text `fields`, then the `bundle` file.
+pub fn multipart_with(bundle: &[u8], fields: &[(&str, &str)]) -> (String, Vec<u8>) {
     let boundary = format!("wyrd{}", super::throwaway());
     let mut body = Vec::new();
-    if let Some(r) = repo {
+    for (name, value) in fields {
         body.extend_from_slice(
-            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"repo\"\r\n\r\n{r}\r\n")
-                .as_bytes(),
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
         );
     }
     body.extend_from_slice(

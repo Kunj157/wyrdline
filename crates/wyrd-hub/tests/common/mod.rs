@@ -354,7 +354,19 @@ pub async fn upload(
     bytes: &[u8],
     repo: Option<&str>,
 ) -> Reply {
-    let (content_type, body) = bundles::multipart(bytes, repo);
+    let fields: Vec<(&str, &str)> = repo.map(|r| ("repo", r)).into_iter().collect();
+    upload_with(app, cookie, org, bytes, &fields).await
+}
+
+/// Upload `bytes` with extra text `fields` (`repo`, `judge_runs`).
+pub async fn upload_with(
+    app: &Router,
+    cookie: &str,
+    org: &str,
+    bytes: &[u8],
+    fields: &[(&str, &str)],
+) -> Reply {
+    let (content_type, body) = bundles::multipart_with(bytes, fields);
     send(
         app,
         Request::post(format!("/api/v1/orgs/{org}/bundles"))

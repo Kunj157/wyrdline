@@ -155,6 +155,54 @@ fn uploads_with_the_token_and_the_repo() {
         "the file is sent unchanged"
     );
     assert!(String::from_utf8_lossy(&body).contains("name=\"repo\"\r\n\r\no/r\r\n"));
+    assert!(
+        !String::from_utf8_lossy(&body).contains("name=\"judge_runs\""),
+        "no local session, no judge runs"
+    );
+}
+
+#[test]
+fn judge_runs_of_the_local_session_travel_with_the_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("s.wyrd");
+    std::fs::write(&file, bundle()).unwrap();
+    // The session the bundle came from is on this machine, with two
+    // judge runs next to its ledger.
+    let data = dir.path().join("data");
+    let session = data.join("sessions").join("01jpush");
+    std::fs::create_dir_all(&session).unwrap();
+    let runs = concat!(
+        r#"{"model":"m","prompt_version":"v1","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"est_cost_usd":0.001,"latency_ms":50,"attempts":1,"dropped":0,"error":null}"#,
+        "\n",
+        r#"{"model":"m","prompt_version":"v1","usage":{"input_tokens":200,"output_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"est_cost_usd":0.002,"latency_ms":70,"attempts":1,"dropped":0,"error":null}"#,
+        "\n"
+    );
+    std::fs::write(session.join("judge-runs.jsonl"), runs).unwrap();
+    let (url, seen) = hub(201, r#"{"duplicate":false,"bundle":{"id":"01BUNDLE"}}"#);
+    let mut c = Command::new(env!("CARGO_BIN_EXE_wyrd"));
+    let out = c
+        .args([
+            "push",
+            file.to_str().unwrap(),
+            "--hub",
+            &url,
+            "--org",
+            "acme",
+        ])
+        .env_remove("WYRD_HUB_URL")
+        .env("WYRD_HUB_TOKEN", "t")
+        .env("WYRD_DATA_DIR", &data)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = String::from_utf8_lossy(&seen.recv().unwrap().body).into_owned();
+    let field = format!("name=\"judge_runs\"\r\n\r\n{runs}\r\n");
+    assert!(body.contains(&field), "{body}");
 }
 
 #[test]

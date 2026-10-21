@@ -31,15 +31,15 @@ pub struct PushArgs {
 /// A multipart body streamed from the file: form fields, then the file.
 fn body(
     boundary: &str,
-    repo: Option<&str>,
+    fields: &[(&str, &str)],
     file: std::fs::File,
     name: &str,
 ) -> (u64, impl Read + Send + 'static) {
     let mut head = String::new();
-    if let Some(r) = repo {
+    for (field, value) in fields {
         let _ = write!(
             head,
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"repo\"\r\n\r\n{r}\r\n"
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n{value}\r\n"
         );
     }
     let _ = write!(
@@ -87,7 +87,19 @@ pub fn push(a: &PushArgs) -> anyhow::Result<u8> {
         |n| n.to_string_lossy().replace('"', "_"),
     );
     let boundary = format!("wyrd-{}", hex::encode(rand_bytes()));
-    let (len, reader) = body(&boundary, a.repo.as_deref(), file, &name);
+    let judge_runs = local
+        .result
+        .as_ref()
+        .ok()
+        .and_then(|b| local_judge_runs(&b.manifest.session.id));
+    let mut fields: Vec<(&str, &str)> = Vec::new();
+    if let Some(r) = a.repo.as_deref() {
+        fields.push(("repo", r));
+    }
+    if let Some(j) = judge_runs.as_deref() {
+        fields.push(("judge_runs", j));
+    }
+    let (len, reader) = body(&boundary, &fields, file, &name);
     let url = format!(
         "{}/api/v1/orgs/{}/bundles",
         hub.trim_end_matches('/'),
@@ -168,6 +180,16 @@ fn report(a: &PushArgs, status: u16, answer: &serde_json::Value) -> anyhow::Resu
     }
 }
 
+/// The judge runs (`wyrd verdict`: model, tokens, cost per run) of the
+/// session the bundle came from, when that session is on this machine.
+/// They live next to the local ledger, not in the bundle, so they travel
+/// as their own field (JSON lines, at most 1 MiB).
+fn local_judge_runs(session_id: &str) -> Option<String> {
+    let dir = wyrd_cell::DataDir::from_env().session(session_id);
+    let text = std::fs::read_to_string(dir.root().join(super::verdict::JUDGE_RUNS)).ok()?;
+    (!text.trim().is_empty() && text.len() <= 1 << 20).then_some(text)
+}
+
 /// 8 bytes for the multipart boundary (uniqueness, not secrecy).
 fn rand_bytes() -> [u8; 8] {
     let nanos = std::time::SystemTime::now()
@@ -188,7 +210,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.wyrd");
         std::fs::write(&p, b"0123456789").unwrap();
-        let (len, mut r) = body("b", Some("o/r"), std::fs::File::open(&p).unwrap(), "s.wyrd");
+        let (len, mut r) = body(
+            "b",
+            &[("repo", "o/r")],
+            std::fs::File::open(&p).unwrap(),
+            "s.wyrd",
+        );
         let mut all = Vec::new();
         r.read_to_end(&mut all).unwrap();
         assert_eq!(all.len() as u64, len);

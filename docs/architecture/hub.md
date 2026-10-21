@@ -120,7 +120,10 @@ organisation's log with `GET /api/v1/audit-logs?org=<slug>&limit=&before=`
 ## Bundles
 
 `POST /api/v1/orgs/{org}/bundles` (member) takes `multipart/form-data`
-with a `bundle` file and an optional `repo` label, and:
+with a `bundle` file, an optional `repo` label, and optional `judge_runs`
+(the session's judge runs as JSON lines: `model`, `prompt_version`,
+`usage` token counts, `est_cost_usd`, `latency_ms`; at most 1 MiB and
+1000 lines, else 400), and:
 
 1. streams the file to a spool file under `WYRD_HUB_DATA_DIR/uploads`,
    refusing it with 413 as soon as it passes `WYRD_HUB_MAX_UPLOAD_BYTES`
@@ -156,7 +159,9 @@ would raise their own limit); the operator changes `orgs.quota_bytes` and
 
 **From the CLI:** `wyrd push file.wyrd --hub <url> --org <slug> [--repo
 owner/name]` with an API token in `WYRD_HUB_TOKEN`. It verifies the file
-locally first, then streams it. Exit codes: 0 uploaded (or already
+locally first, then streams it; when the session the bundle came from is
+on this machine, its judge runs (`judge-runs.jsonl` next to the ledger)
+go along as the `judge_runs` field. Exit codes: 0 uploaded (or already
 there), 1 usage or refused, 3 verification failed, 4 over quota, 5 Hub
 unreachable.
 
@@ -173,7 +178,9 @@ out and the two endpoints answer 501 there).
 On upload the Hub writes a Parquet **projection** of the bundle to
 `WYRD_HUB_DATA_DIR/projections/<org>/<bundle>/`: `events.parquet` (seq,
 plane, kind, time, pid, path, target, detail, outcome, dropped events),
-`divergences.parquet`, and `guard.parquet`. Queries run in an embedded,
+`divergences.parquet`, `guard.parquet`, and `judge.parquet` (the judge
+runs sent with the upload, also kept in the bundle's row so a rebuild has
+them). Queries run in an embedded,
 in-memory DuckDB over the projections of the organisation's 500 most
 recent matching bundles. A missing projection (a new replica, a wiped
 volume) is rebuilt from the stored bundle, verified again, on first use
@@ -183,10 +190,12 @@ volume) is rebuilt from the stored bundle, verified again, on first use
 per repo and per agent; per divergence rule the sessions that raised it,
 how often, and the rate over the sessions considered; denied actions by
 kind (refused connects, denied tool calls, deny decisions); captured
-events, dropped events, and sensor losses. Capture overhead and judge
-token usage and cost are not in bundle format v1 (judge runs stay next
-to the local ledger), so they are reported as `null` and
-`"recorded": false`.
+events, dropped events, and sensor losses; judge runs, input, output,
+and cached tokens, and estimated cost in total and per model (from the
+`judge_runs` sent with each upload; `"recorded": false` while no bundle
+brought any). Capture overhead is not measured per session (it is a
+benchmark number, `docs/results/perf-sensor.md`), so `overhead_pct` is
+`null`.
 
 `GET /api/v1/orgs/{org}/search?q=&limit=` (viewer) takes filters
 `path:` `rule:` `repo:` `agent:` `session:` `kind:` `host:` `exe:` `tool:`

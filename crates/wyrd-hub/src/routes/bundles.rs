@@ -21,6 +21,7 @@ use crate::audit::{self, Entry};
 use crate::auth::{Caller, Role};
 use crate::db::{self, PgRow};
 use crate::ingest::{self, Spool};
+use crate::projection::{self, JudgeRun};
 use crate::storage::StorageError;
 use crate::{AppState, Problem};
 
@@ -59,6 +60,8 @@ pub struct BundleRow {
     pub uploaded_by: Option<String>,
     pub storage_key: String,
     pub created_ms: i64,
+    /// Sent by the uploader with the bundle (not part of the bundle).
+    pub judge_runs: Vec<JudgeRun>,
 }
 
 impl<'r> FromRow<'r, PgRow> for BundleRow {
@@ -80,6 +83,9 @@ impl<'r> FromRow<'r, PgRow> for BundleRow {
             uploaded_by: r.try_get("uploaded_by")?,
             storage_key: r.try_get("storage_key")?,
             created_ms: r.try_get("created_ms")?,
+            judge_runs: r
+                .try_get::<sqlx_core::types::Json<Vec<JudgeRun>>, _>("judge_runs")?
+                .0,
         })
     }
 }
@@ -103,6 +109,7 @@ impl BundleRow {
             "manifest_hash": self.manifest_hash,
             "uploaded_by": self.uploaded_by,
             "created_ms": self.created_ms,
+            "judge_runs": self.judge_runs.len(),
         })
     }
 }
@@ -114,7 +121,7 @@ macro_rules! select {
             "SELECT b.id, b.org_id, o.slug AS org, b.repo, b.session_id, b.session_name, \
              b.agent, (extract(epoch FROM b.session_created_at) * 1000)::bigint AS session_created_ms, \
              b.events, b.rules, b.size_bytes, b.signer, b.manifest_hash, b.uploaded_by, b.storage_key, \
-             (extract(epoch FROM b.created_at) * 1000)::bigint AS created_ms \
+             (extract(epoch FROM b.created_at) * 1000)::bigint AS created_ms, b.judge_runs \
              FROM bundles b JOIN orgs o ON o.id = b.org_id",
             $rest
         )
@@ -153,14 +160,24 @@ fn too_large(st: &AppState, detail: String) -> Problem {
     .detail(detail)
 }
 
-/// Read the multipart body: the `bundle` file into `spool`, `repo` text.
+/// What came with the bundle file.
+#[derive(Debug, Default)]
+struct Received {
+    size: u64,
+    repo: Option<String>,
+    judge_runs: Vec<JudgeRun>,
+}
+
+/// Read the multipart body: the `bundle` file into `spool`, `repo` and
+/// `judge_runs` text.
 async fn receive(
     st: &AppState,
     mp: &mut Multipart,
     spool: &mut Spool,
-) -> Result<(u64, Option<String>), Problem> {
+) -> Result<Received, Problem> {
     let max = st.config.limits.max_upload_bytes;
-    let (mut size, mut repo, mut got) = (0u64, None, false);
+    let mut out = Received::default();
+    let mut got = false;
     let multipart_err = |e: axum::extract::multipart::MultipartError| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
             too_large(st, format!("the limit is {max} bytes"))
@@ -173,8 +190,8 @@ async fn receive(
             Some("bundle") if !got => {
                 got = true;
                 while let Some(chunk) = field.chunk().await.map_err(multipart_err)? {
-                    size += chunk.len() as u64;
-                    if size > max {
+                    out.size += chunk.len() as u64;
+                    if out.size > max {
                         return Err(too_large(st, format!("the limit is {max} bytes")));
                     }
                     spool
@@ -191,7 +208,24 @@ async fn receive(
                         "repo: 1-200 characters of letters, digits, and -_./:@",
                     ));
                 }
-                repo = Some(text);
+                out.repo = Some(text);
+            }
+            Some("judge_runs") => {
+                // Bounded before it is buffered.
+                let mut text = Vec::new();
+                while let Some(chunk) = field.chunk().await.map_err(multipart_err)? {
+                    text.extend_from_slice(&chunk);
+                    if text.len() > projection::MAX_JUDGE_BYTES {
+                        return Err(Problem::bad_request(format!(
+                            "judge_runs: larger than {} bytes",
+                            projection::MAX_JUDGE_BYTES
+                        )));
+                    }
+                }
+                let text = String::from_utf8(text)
+                    .map_err(|_| Problem::bad_request("judge_runs: not UTF-8"))?;
+                out.judge_runs =
+                    projection::parse_judge_runs(&text).map_err(Problem::bad_request)?;
             }
             other => {
                 return Err(Problem::bad_request(format!(
@@ -209,7 +243,7 @@ async fn receive(
         .flush()
         .await
         .map_err(|e| Problem::internal(&e))?;
-    Ok((size, repo))
+    Ok(out)
 }
 
 fn storage_problem(e: &StorageError) -> Problem {
@@ -227,7 +261,8 @@ async fn upload(
     let a = access::org(pool, &caller, &slug).await?;
     a.require(Role::Member)?;
     let mut spool = Spool::create(&st.config.data_dir).await?;
-    let (size, repo) = receive(&st, &mut mp, &mut spool).await?;
+    let received = receive(&st, &mut mp, &mut spool).await?;
+    let size = received.size;
 
     let started = Instant::now();
     let verified = ingest::verify(spool.path.clone(), st.config.limits.max_upload_bytes).await;
@@ -242,9 +277,9 @@ async fn upload(
     };
     let summary = ingest::summarize(&bundle);
     #[cfg(feature = "analytics")]
-    let rows = crate::projection::rows(&bundle);
+    let rows = projection::rows(&bundle, &received.judge_runs);
     drop(bundle);
-    let (id, duplicate) = store(&st, &caller, &a, &spool, size, repo, &summary).await?;
+    let (id, duplicate) = store(&st, &caller, &a, &spool, &received, &summary).await?;
     let (row, _) = bundle_for(&st, &caller, &id).await?;
     let status = if duplicate {
         StatusCode::OK
@@ -262,6 +297,34 @@ async fn upload(
         .into_response())
 }
 
+/// 429 when the organisation has no bundle left in its quota, 413 when
+/// `size` does not fit in its bytes.
+fn within_quota(
+    (count, quota_bundles): (i64, i64),
+    (used, quota_bytes): (i64, i64),
+    size: i64,
+) -> Result<(), Problem> {
+    if count >= quota_bundles {
+        return Err(Problem::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "quota-bundles",
+            "Bundle count quota reached",
+        )
+        .detail(format!("{count} of {quota_bundles} bundles stored")));
+    }
+    if used.saturating_add(size) > quota_bytes {
+        return Err(Problem::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "quota-bytes",
+            "Storage quota reached",
+        )
+        .detail(format!(
+            "{used} of {quota_bytes} bytes used, this bundle is {size}"
+        )));
+    }
+    Ok(())
+}
+
 /// Quota check, object upload, row and audit entry (one org at a time).
 /// Returns the bundle id and whether the org already had this bundle.
 async fn store(
@@ -269,11 +332,11 @@ async fn store(
     caller: &Caller,
     a: &OrgAccess,
     spool: &Spool,
-    size: u64,
-    repo: Option<String>,
+    received: &Received,
     summary: &ingest::Summary,
 ) -> Result<(String, bool), Problem> {
     let pool = st.db()?;
+    let (size, repo) = (received.size, &received.repo);
     let size_i = i64::try_from(size).unwrap_or(i64::MAX);
     let mut tx = pool.begin().await?;
     // One upload per org at a time past this point: quota and dedup.
@@ -298,25 +361,9 @@ async fn store(
     .bind(&a.org_id)
     .fetch_one(&mut *tx)
     .await?;
-    if count >= quota_bundles {
+    if let Err(p) = within_quota((count, quota_bundles), (used, quota_bytes), size_i) {
         upload_outcome(st, "over_quota");
-        return Err(Problem::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "quota-bundles",
-            "Bundle count quota reached",
-        )
-        .detail(format!("{count} of {quota_bundles} bundles stored")));
-    }
-    if used.saturating_add(size_i) > quota_bytes {
-        upload_outcome(st, "over_quota");
-        return Err(Problem::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "quota-bytes",
-            "Storage quota reached",
-        )
-        .detail(format!(
-            "{used} of {quota_bytes} bytes used, this bundle is {size}"
-        )));
+        return Err(p);
     }
 
     let id = ulid::Ulid::generate().to_string();
@@ -328,9 +375,10 @@ async fn store(
     let stored = async {
         db::query(
             "INSERT INTO bundles (id, org_id, uploaded_by, manifest_hash, signer, session_id, \
-             session_name, agent, session_created_at, events, repo, rules, size_bytes, storage_key) \
+             session_name, agent, session_created_at, events, repo, rules, size_bytes, storage_key, \
+             judge_runs) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::bigint / 1000.0), $10, $11, \
-             $12, $13, $14)",
+             $12, $13, $14, $15)",
         )
         .bind(&id)
         .bind(&a.org_id)
@@ -342,10 +390,11 @@ async fn store(
         .bind(&summary.agent)
         .bind(summary.session_created_ms)
         .bind(summary.events)
-        .bind(&repo)
+        .bind(repo)
         .bind(&summary.rules)
         .bind(size_i)
         .bind(&key)
+        .bind(sqlx_core::types::Json(&received.judge_runs))
         .execute(&mut *tx)
         .await?;
         audit::record(
@@ -357,7 +406,12 @@ async fn store(
                 target: Some(&id),
                 request_id: &caller.request_id,
             },
-            json!({ "size_bytes": size, "session_id": summary.session_id, "repo": repo }),
+            json!({
+                "size_bytes": size,
+                "session_id": summary.session_id,
+                "repo": repo,
+                "judge_runs": received.judge_runs.len(),
+            }),
         )
         .await?;
         tx.commit().await

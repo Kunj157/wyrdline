@@ -30,6 +30,12 @@ struct StatsQuery {
     since: Option<String>,
 }
 
+/// Micro-dollars as dollars.
+#[allow(clippy::cast_precision_loss)] // cents, far below 2^52
+fn usd(micro: i64) -> f64 {
+    micro as f64 / 1_000_000.0
+}
+
 fn bad_since(e: sqlx_core::Error) -> Problem {
     let input = e
         .as_database_error()
@@ -115,12 +121,22 @@ async fn stats(
             "events": s.events,
             "dropped_events": s.dropped,
             "sensor_lost": s.sensor_lost,
-            // Not recorded in bundle format v1.
+            // Overhead is a benchmark number (docs/results), not per session.
             "overhead_pct": Value::Null,
         },
-        // Judge runs are kept next to the local ledger, not in bundles
-        // (format v1), so the Hub has none to count yet.
-        "judge": { "recorded": false, "runs": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0 },
+        "judge": {
+            "recorded": s.judge.runs > 0,
+            "runs": s.judge.runs,
+            "failed": s.judge.failed,
+            "input_tokens": s.judge.input_tokens,
+            "output_tokens": s.judge.output_tokens,
+            "cache_creation_input_tokens": s.judge.cache_creation_input_tokens,
+            "cache_read_input_tokens": s.judge.cache_read_input_tokens,
+            "cost_usd": usd(s.judge.cost_micro_usd),
+            "by_model": s.judge.by_model.iter().map(|(model, runs, cost)| json!({
+                "model": model, "runs": runs, "cost_usd": usd(*cost),
+            })).collect::<Vec<_>>(),
+        },
     })))
 }
 
@@ -211,8 +227,8 @@ mod engine {
     use std::path::PathBuf;
 
     use super::HitRow;
-    use crate::analytics::{self, Stats};
-    use crate::projection::{self, Query};
+    use crate::analytics;
+    use crate::projection::{self, Query, Stats};
     use crate::routes::bundles::BundleRow;
     use crate::{AppState, Problem, ingest};
 
@@ -242,7 +258,7 @@ mod engine {
         .map_err(|e| failed(&e))?
         .map_err(|e| failed(&e))?;
         let bundle = ingest::verify(spool.path.clone(), st.config.limits.max_upload_bytes).await?;
-        let rows = projection::rows(&bundle);
+        let rows = projection::rows(&bundle, &row.judge_runs);
         drop(bundle);
         let out = dir.clone();
         tokio::task::spawn_blocking(move || analytics::write(&rows, &out))
@@ -295,19 +311,9 @@ mod engine {
     use axum::http::StatusCode;
 
     use super::HitRow;
-    use crate::projection::Query;
+    use crate::projection::{Query, Stats};
     use crate::routes::bundles::BundleRow;
     use crate::{AppState, Problem};
-
-    /// What [`crate::analytics::stats`] returns, when it is built in.
-    #[derive(Debug, Default)]
-    pub struct Stats {
-        pub rules: Vec<(String, i64, i64)>,
-        pub denied: Vec<(String, i64)>,
-        pub events: i64,
-        pub dropped: i64,
-        pub sensor_lost: i64,
-    }
 
     fn disabled() -> Problem {
         Problem::new(
