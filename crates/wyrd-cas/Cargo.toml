@@ -9,16 +9,21 @@ repository.workspace = true
 authors.workspace = true
 publish.workspace = true
 
+[features]
+default = ["store"]
+# The on-disk store (chunking, compression, snapshots). Off for WebAssembly.
+store = ["dep:fastcdc", "dep:rustix", "dep:zstd"]
+
 [dependencies]
 blake3.workspace = true
 ciborium.workspace = true
-fastcdc.workspace = true
+fastcdc = { workspace = true, optional = true }
 hex.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, optional = true }
 serde.workspace = true
 serde_bytes.workspace = true
 thiserror.workspace = true
-zstd.workspace = true
+zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 blake3.workspace = true
