@@ -228,6 +228,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
@@ -2244,6 +2245,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
+]
+
+[[package]]
 name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3232,6 +3250,12 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "sqlite-wasm-rs"
@@ -4695,6 +4719,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ed25519-dalek",
  "hex",
  "insta",
  "landlock",
@@ -4705,6 +4730,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tracing",
+ "ureq",
  "wyrd-adapters",
  "wyrd-bundle",
  "wyrd-cas",
@@ -4811,13 +4837,17 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "ed25519-dalek",
+ "futures-util",
  "hex",
  "http-body-util",
  "ring",
+ "ruzstd",
  "serde",
  "serde_json",
  "sqlx-core",
  "sqlx-postgres",
+ "tar",
  "tempfile",
  "testcontainers",
  "thiserror",
@@ -4828,6 +4858,9 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "ureq",
+ "wyrd-bundle",
+ "wyrd-divergence",
+ "wyrd-schema",
 ]
 
 [[package]]

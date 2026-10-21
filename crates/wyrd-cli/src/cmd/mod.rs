@@ -10,6 +10,7 @@ pub mod inspect;
 pub mod intent;
 pub mod mcp_proxy;
 pub mod policy;
+pub mod push;
 pub mod session;
 pub mod studio;
 pub mod verdict;
