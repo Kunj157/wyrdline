@@ -252,5 +252,72 @@ fn normalisation() {
 #[test]
 fn the_ebpf_object_is_embedded() {
     assert!(wyrd_sensor::EBPF_OBJECT.starts_with(b"\x7fELF"));
-    assert!(wyrd_sensor::loader::PROGRAMS.len() >= 20);
+    assert_eq!(wyrd_sensor::loader::RAW_PROGRAMS, ["sys_enter", "sys_exit"]);
+}
+
+#[test]
+fn syscall_tables_cover_every_handled_call_once() {
+    use wyrd_common::{MAX_SYSCALL_NR, sys};
+    use wyrd_sensor::syscalls::{AARCH64, X86_64};
+    for arch in [X86_64, AARCH64] {
+        let mut nrs: Vec<u32> = arch.table.iter().map(|(n, _)| *n).collect();
+        let mut codes: Vec<u32> = arch.table.iter().map(|(_, c)| *c).collect();
+        assert!(nrs.iter().all(|n| *n < MAX_SYSCALL_NR), "{}", arch.name);
+        assert!(
+            codes.iter().all(|c| *c != 0),
+            "{}: 0 means unhandled",
+            arch.name
+        );
+        nrs.sort_unstable();
+        nrs.dedup();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(
+            nrs.len(),
+            arch.table.len(),
+            "{}: duplicate numbers",
+            arch.name
+        );
+        assert_eq!(
+            codes.len(),
+            arch.table.len(),
+            "{}: duplicate codes",
+            arch.name
+        );
+    }
+    // x86_64 handles all 22 calls; aarch64 has no legacy path calls.
+    assert_eq!(X86_64.table.len(), 22);
+    let legacy = [
+        sys::OPEN,
+        sys::CREAT,
+        sys::UNLINK,
+        sys::RMDIR,
+        sys::RENAME,
+        sys::MKDIR,
+        sys::CHMOD,
+    ];
+    assert!(AARCH64.table.iter().all(|(_, c)| !legacy.contains(c)));
+    assert_eq!(AARCH64.table.len(), 22 - legacy.len());
+    // Spot checks against the kernel tables.
+    assert!(X86_64.table.contains(&(59, sys::EXECVE)));
+    assert!(X86_64.table.contains(&(257, sys::OPENAT)));
+    assert!(AARCH64.table.contains(&(221, sys::EXECVE)));
+    assert!(AARCH64.table.contains(&(56, sys::OPENAT)));
+    // First argument: rdi on x86_64, x0 on aarch64; compat only on x86_64.
+    assert_eq!((X86_64.regs_args[0], AARCH64.regs_args[0]), (112, 0));
+    assert_eq!(X86_64.compat_mask, 2);
+    assert_eq!(AARCH64.compat_offset, u32::MAX);
+}
+
+#[test]
+fn fdinfo_counters_are_parsed() {
+    use wyrd_sensor::loader::fdinfo_field;
+    let info = "pos:\t0\nflags:\t02000002\nprog_type:\t17\nrun_cnt:\t42\nrecursion_misses:\t3\n";
+    assert_eq!(fdinfo_field(info, "run_cnt"), 42);
+    assert_eq!(fdinfo_field(info, "recursion_misses"), 3);
+    assert_eq!(
+        fdinfo_field(info, "verified_insns"),
+        0,
+        "absent counters read as 0"
+    );
 }
