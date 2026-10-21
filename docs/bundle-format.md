@@ -2,7 +2,36 @@
 
 A bundle (`.wyrd`) is one session, redacted and signed, in a single file
 that can be shared and opened without the machine that recorded it.
-Written by `wyrd export`; the implementation is `crates/wyrd-bundle`.
+Written by `wyrd export`; the implementation is `crates/wyrd-bundle`
+(`FORMAT` = `wyrdline.bundle`, `FORMAT_VERSION` = 1).
+
+## Writing one
+
+```sh
+wyrd export <session> -o session.wyrd                  # strict redaction, content included
+wyrd export <session> -o session.wyrd --redact standard
+wyrd export <session> -o meta.wyrd --no-content        # no cas/: metadata only
+wyrd export <session> -o session.wyrd --json           # the summary as JSON
+```
+
+| Flag | Meaning |
+|---|---|
+| `-o, --output FILE` | the bundle to write (atomically: a temporary file renamed into place) |
+| `--redact standard\|strict` | redaction applied to every string of every event; `strict` is the default ([redaction](#redaction)) |
+| `--no-content` | leave out checkpoint content (`cas/`) |
+| `--json` | print the summary as JSON |
+
+`export` refuses a session that is still recording (exit 4: let the
+agent exit or `wyrd stop` it first) and a ledger that does not verify
+(exit 3: run `wyrd verify`). It signs with the host key, creating one if
+none exists yet. The summary names the output, the number of events,
+chunks, and withheld files, the ledger and bundle sizes, the manifest
+hash, and the signer fingerprint to pass on to the receiver.
+
+A session need not be closed to be exported. The bundle's integrity
+comes from the manifest signature over the redacted chain, not from the
+ledger seal, which is not included: `ledger.head_hash` is the head of
+the events as exported.
 
 ## Container
 
@@ -174,7 +203,7 @@ target nightly.
 
 ## Versioning
 
-`format_version` is 1. Readers refuse any other version and any unknown
-manifest field. A change to the container, the layout, the manifest, the
+`format_version` is 1 (`wyrd_bundle::format::FORMAT_VERSION`). Readers
+refuse any other version and any unknown manifest field. A change to the container, the layout, the manifest, the
 signed message, or the record encoding increments the version; the
 `BREAKING CHANGE` footer of the commit says so.
