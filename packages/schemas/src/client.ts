@@ -158,6 +158,8 @@ export function createClient(options: ClientOptions = {}) {
     /** URL for an `EventSource`; resume with `afterSeq` (or the browser's Last-Event-ID). */
     streamUrl: (sid: string, afterSeq?: number) =>
       `${base}${s(sid)}/stream${query({ after_seq: afterSeq })}`,
+    /** URL of the annotation sync WebSocket for a session (http(s) form; the caller switches to ws(s)). */
+    syncUrl: (sid: string) => `${base}/v1/sync${query({ session: sid })}`,
   };
 }
 
