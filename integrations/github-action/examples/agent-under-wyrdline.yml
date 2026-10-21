@@ -38,7 +38,7 @@ jobs:
       - name: Install the agent
         run: npm install --global @anthropic-ai/claude-code@2.1.304
       - name: Fix the test, under Wyrdline
-        uses: Kunj157/wyrdline/integrations/github-action@dev # pin to a commit SHA
+        uses: Kunj157/wyrdline/integrations/github-action@9c5eb9e128a5046a3c7adaf14e6558330d096960 # dev, 2026-10-21; move to a v* release tag's commit
         with:
           command: >-
             claude -p '${{ inputs.task || 'Fix the failing test.' }}'
