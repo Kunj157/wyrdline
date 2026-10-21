@@ -1,0 +1,374 @@
+name: release
+
+# Signed, reproducible release on every `v*` tag (plan §20.4):
+#
+#   gate ──────────────────────────────────────┐
+#   kernel-matrix ─────────────────────────────┤
+#   studio ─┐                                  │
+#   build (x86_64, aarch64) ─┐                 ├─ publish (tag only)
+#   sbom ────────────────────┼─ sign ─ smoke ──┤
+#   reproducible ────────────────────────────── ┘
+#
+# Assets: wyrdline-<target>.tar.gz, wyrdline_<version>_<arch>.deb, CycloneDX
+# SBOMs, SHA256SUMS, SHA256SUMS.sigstore.json (cosign keyless, identity
+# this workflow on the tag), plus a GitHub build-provenance attestation per
+# asset. `workflow_dispatch` runs everything except publishing, with a
+# `0.0.0-dev.<run>` version, to rehearse the pipeline without a tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  version:
+    name: Release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      epoch: ${{ steps.v.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            case "$REF_NAME" in
+              v[0-9]*.[0-9]*.[0-9]*) version=${REF_NAME#v} ;;
+              *) echo "::error::tag $REF_NAME is not vMAJOR.MINOR.PATCH[-pre]"; exit 1 ;;
+            esac
+          else
+            version="0.0.0-dev.$RUN_NUMBER"
+          fi
+          # Every build and package step uses the commit time, so the
+          # artefacts are reproducible (SOURCE_DATE_EPOCH).
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+          echo "release $version (epoch $(git log -1 --format=%ct))" >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    name: PR gate
+    uses: ./.github/workflows/pull-request.yml
+
+  kernel-matrix:
+    name: Kernel matrix
+    uses: ./.github/workflows/kernel-matrix.yml
+
+  studio:
+    name: Studio build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-binstall
+      - name: Install wasm-bindgen (offline-mode correlator)
+        run: cargo binstall --no-confirm --locked wasm-bindgen-cli@0.2.129 > /dev/null 2>&1 || cargo install --locked wasm-bindgen-cli@0.2.129
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the Studio with its WebAssembly correlator
+        run: |
+          scripts/build-studio-wasm.sh
+          pnpm --filter @wyrdline/studio build
+          test -f apps/studio/dist/index.html
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: studio-dist
+          path: apps/studio/dist
+          retention-days: 7
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [version, studio]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    env:
+      SOURCE_DATE_EPOCH: ${{ needs.version.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install nightly for the eBPF object
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: bpf-linker
+      - name: Reproducible build flags
+        run: |
+          cargo_home=${CARGO_HOME:-$HOME/.cargo}
+          echo "RUSTFLAGS=--remap-path-prefix=$PWD=/wyrdline --remap-path-prefix=$cargo_home=/cargo" >> "$GITHUB_ENV"
+      - name: Stamp the workspace version
+        run: scripts/release/stamp-version.sh "${{ needs.version.outputs.version }}"
+      - name: Build release binaries
+        run: |
+          cargo build --release --locked --target "${{ matrix.target }}" \
+            -p wyrd-cli -p wyrdd -p wyrd-sensord -p wyrd-hub --bins
+          "target/${{ matrix.target }}/release/wyrd" --version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: studio-dist
+          path: studio-dist
+      - name: Package tarball and .deb
+        run: |
+          scripts/release/package.sh --version "${{ needs.version.outputs.version }}" \
+            --target "${{ matrix.target }}" --bins "target/${{ matrix.target }}/release" \
+            --studio studio-dist --out dist
+          # Raw binaries for the reproducibility job.
+          mkdir -p dist-bins
+          for b in wyrd wyrdd wyrd-sensord; do cp "target/${{ matrix.target }}/release/$b" dist-bins/; done
+          sha256sum dist/* dist-bins/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: assets-${{ matrix.target }}
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bins-${{ matrix.target }}
+          path: dist-bins
+          retention-days: 7
+          if-no-files-found: error
+
+  reproducible:
+    name: Reproducible build
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SOURCE_DATE_EPOCH: ${{ needs.version.outputs.epoch }}
+      TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install nightly for the eBPF object
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: bpf-linker
+      - name: Reproducible build flags
+        run: |
+          cargo_home=${CARGO_HOME:-$HOME/.cargo}
+          echo "RUSTFLAGS=--remap-path-prefix=$PWD=/wyrdline --remap-path-prefix=$cargo_home=/cargo" >> "$GITHUB_ENV"
+      - name: Stamp the workspace version
+        run: scripts/release/stamp-version.sh "${{ needs.version.outputs.version }}"
+      - name: Build twice from a clean target directory
+        run: |
+          for n in 1 2; do
+            cargo clean
+            cargo build --release --locked --target "$TARGET" \
+              -p wyrd-cli -p wyrdd -p wyrd-sensord --bin wyrd --bin wyrdd --bin wyrd-sensord
+            mkdir -p "build-$n"
+            for b in wyrd wyrdd wyrd-sensord; do cp "target/$TARGET/release/$b" "build-$n/"; done
+          done
+      - name: The two builds are identical
+        run: scripts/release/compare-builds.sh build-1 build-2 build-1 build-2 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bins-${{ env.TARGET }}
+          path: release-bins
+      - name: The release binaries match this independent build
+        run: |
+          if scripts/release/compare-builds.sh build-1 release-bins local-build release-job | tee -a "$GITHUB_STEP_SUMMARY"; then
+            echo "release binaries reproduced on an independent runner" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::the release job's binaries differ from an independent rebuild (see the job log); the two builds on this runner are identical"
+          fi
+
+  sbom:
+    name: SBOM (CycloneDX)
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      SOURCE_DATE_EPOCH: ${{ needs.version.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      - name: Stamp the workspace version
+        run: scripts/release/stamp-version.sh "${{ needs.version.outputs.version }}"
+      - name: SBOM per binary and target
+        run: scripts/release/sbom.sh --out dist --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: assets-sbom
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+
+  sign:
+    name: Checksums, signature, attestation
+    needs: [version, build, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: assets-*
+          path: assets
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          cd assets
+          ls -la
+          sha256sum -- * | LC_ALL=C sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign SHA256SUMS (cosign keyless, this workflow's identity)
+        run: |
+          cosign sign-blob --yes --bundle assets/SHA256SUMS.sigstore.json assets/SHA256SUMS
+          cosign verify-blob --bundle assets/SHA256SUMS.sigstore.json \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}" \
+            assets/SHA256SUMS
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            assets/*.tar.gz
+            assets/*.deb
+            assets/*.cdx.json
+            assets/SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: assets
+          retention-days: 7
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke install ${{ matrix.target }}
+    needs: [version, sign]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            deb_arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            deb_arch: arm64
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: assets
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: install.sh against the built assets (signature required)
+        env:
+          WYRD_RELEASE_BASE: file://${{ github.workspace }}/assets
+          WYRD_VERSION: ${{ github.ref_name }}
+          WYRD_VERIFY_SIGNATURE: required
+          WYRD_SIGNER_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@${{ github.ref }}$
+          WYRD_INSTALL_DIR: ${{ runner.temp }}/wyrdline/bin
+        run: |
+          bash integrations/github-action/scripts/install.sh
+          v=$("$WYRD_INSTALL_DIR/wyrd" --version)
+          echo "$v"
+          [ "$v" = "wyrd $VERSION" ]
+          [ "$("$WYRD_INSTALL_DIR/wyrd-sensord" --version)" = "wyrd-sensord $VERSION" ]
+          "$WYRD_INSTALL_DIR/wyrd" doctor || true
+      - name: A tampered checksum file is refused
+        env:
+          WYRD_RELEASE_BASE: file://${{ runner.temp }}/tampered
+          WYRD_VERIFY_SIGNATURE: required
+          WYRD_SIGNER_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@${{ github.ref }}$
+          WYRD_INSTALL_DIR: ${{ runner.temp }}/tampered-bin
+        run: |
+          cp -R assets "$RUNNER_TEMP/tampered"
+          sed -i '1s/^./0/' "$RUNNER_TEMP/tampered/SHA256SUMS"
+          if bash integrations/github-action/scripts/install.sh; then
+            echo "::error::install.sh accepted a SHA256SUMS that no longer matches its signature"; exit 1
+          fi
+      - name: Attestation verifies against this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify "assets/wyrdline-${{ matrix.target }}.tar.gz" --repo "${{ github.repository }}"
+      - name: Install the .deb, start the sensor, remove it
+        run: |
+          set -- assets/wyrdline_*_${{ matrix.deb_arch }}.deb
+          if [ $# != 1 ] || [ ! -f "$1" ]; then echo "::error::expected one ${{ matrix.deb_arch }} .deb, got: $*"; exit 1; fi
+          sudo apt-get install -y "./$1"
+          dpkg -s wyrdline | grep -E '^(Version|Status)'
+          [ "$(wyrd --version)" = "wyrd $VERSION" ]
+          wyrdd --help > /dev/null
+          test -f /usr/share/wyrdline/studio/index.html
+          systemd-analyze verify /usr/lib/systemd/system/wyrd-sensord.service
+          sudo systemctl start wyrd-sensord
+          for _ in $(seq 1 25); do [ -S /run/wyrdline/sensord.sock ] && break; sleep 0.2; done
+          systemctl is-active wyrd-sensord
+          test -S /run/wyrdline/sensord.sock
+          wyrd doctor || true
+          sudo systemctl stop wyrd-sensord
+          sudo apt-get remove -y wyrdline
+          if command -v wyrd; then echo "::error::wyrd still installed after removal"; exit 1; fi
+          test ! -f /usr/lib/systemd/system/wyrd-sensord.service
+
+  publish:
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    needs: [version, gate, kernel-matrix, reproducible, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: assets
+      - name: Create the release with notes from the merged pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=()
+          case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${prerelease[@]}" assets/*
+          echo "released $TAG with $(find assets -type f | wc -l) assets" >> "$GITHUB_STEP_SUMMARY"
