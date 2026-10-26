@@ -30,6 +30,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
 
+# `bash -e` (the default) lets `compare | tee` pass when the comparison
+# fails; pipefail makes the pipeline fail with it.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   version:
     name: Release version
