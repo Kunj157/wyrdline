@@ -234,22 +234,9 @@ expect = "deny"
 
 ## Backtesting
 
-<<<<<<< HEAD
-`wyrd policy backtest <policy.wasm> <session | bundle.wyrd | events.jsonl>`
+`wyrd policy backtest <policy.wasm> <session | bundle.wyrd | events.jsonl> [--json]`
 replays a recorded session (a `.wyrd` bundle is verified first; one that
-does not verify is refused with exit 3): tool calls through `on-tool-call`, effects through a
-simulation of the kernel rules (connects against the egress rules, using
-the recorded DNS name only; sensitive reads; writes that left the Cell;
-execs by name) and then `on-effect`. The output lists every event the
-policy would have denied or asked about, by `seq`. It is deterministic:
-the same policy and session always give the same report. The daemon offers
-the same over `POST /v1/policies` and `POST /v1/policies/{id}/backtest`,
-and Studio's Backtest tab draws the findings on the river. `--json` prints
-the daemon's report shape (with `session_id`); in bundle mode, where there
-is no policy host in the browser, Studio's Backtest tab loads that file.
-=======
-`wyrd policy backtest <policy.wasm> <session | events.jsonl> [--json]`
-replays a recorded session: tool calls through `on-tool-call`, effects
+does not verify is refused with exit 3): tool calls through `on-tool-call`, effects
 through a simulation of the kernel rules (connects against the egress
 rules, using the recorded DNS name only; sensitive reads; writes that
 left the Cell; execs by name) and then `on-effect`. The output lists
@@ -276,6 +263,8 @@ is the `.wasm`; a component that does not implement the world is
 refused with 422), and `POST /v1/policies/{id}/backtest` with
 `{ "session_id": … }` returns the report. Studio's Backtest tab on the
 session screen uploads a policy and draws the findings on the river.
+In bundle mode, where there is no policy host in the browser, Studio's Backtest tab
+loads the `--json` report file instead.
 
 ## Project configuration (`.wyrdline/`)
 
@@ -305,4 +294,3 @@ include = ["src/**", "tests/**"]
 # .wyrdline/secrets.toml — extra secret path patterns (never secret values)
 paths = ["config/credentials.yml"]
 ```
->>>>>>> origin/dev
