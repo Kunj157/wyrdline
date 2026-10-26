@@ -9,6 +9,7 @@ pub mod hook;
 pub mod inspect;
 pub mod intent;
 pub mod mcp_proxy;
+pub mod open;
 pub mod policy;
 pub mod session;
 pub mod studio;
