@@ -4,7 +4,7 @@ import { Badge, Button, Dialog } from "@wyrdline/ui";
 import { GitBranch, GitCompare, GitFork, History, Upload } from "lucide-react";
 import { useState } from "react";
 
-import { offlineSource, useSessionActions } from "../lib/api";
+import { offlineBundle, offlineSource, useSessionActions } from "../lib/api";
 import { describe, irreversibleAfter } from "../lib/model";
 import { DiffView } from "./DiffView";
 
@@ -21,14 +21,17 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
   const [action, setAction] = useState<Action>(null);
   if (!checkpoints) return null;
   const close = () => setAction(null);
-  // A replayed export has no daemon and no content store behind it.
+  // A replay has no daemon behind it; a bundle with content still diffs
+  // (from its cas/), an export or a --no-content bundle cannot.
   const readOnly = offlineSource() !== null;
+  const canDiff = !readOnly || Boolean(offlineBundle()?.content.included);
   return (
     <section aria-label="Checkpoints and branches">
       {readOnly && (
         <p className="mb-2 text-xs text-text-muted">
-          Read-only replay: rewind, fork, diff, and apply need the daemon and the session's content
-          store.
+          {canDiff
+            ? "Read-only bundle: diffs come from the bundle; rewind, fork, and apply need the daemon."
+            : "Read-only replay: rewind, fork, diff, and apply need the daemon and the session's content store."}
         </p>
       )}
       <ul className="flex flex-col gap-1">
@@ -49,25 +52,29 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
                     <span className="text-xs text-text-muted">
                       seq {c.seq} · {c.files} {c.files === 1 ? "file" : "files"}
                     </span>
-                    <span className={readOnly ? "hidden" : "ml-auto flex gap-1"}>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={<History className="size-3.5" aria-hidden="true" />}
-                        onClick={() => setAction({ kind: "rewind", cp: c })}
-                        aria-label={`Rewind to ${c.id}`}
-                      >
-                        Rewind
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={<GitFork className="size-3.5" aria-hidden="true" />}
-                        onClick={() => setAction({ kind: "fork", cp: c })}
-                        aria-label={`Fork from ${c.id}`}
-                      >
-                        Fork
-                      </Button>
+                    <span className={canDiff ? "ml-auto flex gap-1" : "hidden"}>
+                      {!readOnly && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<History className="size-3.5" aria-hidden="true" />}
+                          onClick={() => setAction({ kind: "rewind", cp: c })}
+                          aria-label={`Rewind to ${c.id}`}
+                        >
+                          Rewind
+                        </Button>
+                      )}
+                      {!readOnly && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<GitFork className="size-3.5" aria-hidden="true" />}
+                          onClick={() => setAction({ kind: "fork", cp: c })}
+                          aria-label={`Fork from ${c.id}`}
+                        >
+                          Fork
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -77,15 +84,17 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
                       >
                         Diff
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={<Upload className="size-3.5" aria-hidden="true" />}
-                        onClick={() => setAction({ kind: "apply", cp: c })}
-                        aria-label={`Apply ${c.id}`}
-                      >
-                        Apply
-                      </Button>
+                      {!readOnly && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Upload className="size-3.5" aria-hidden="true" />}
+                          onClick={() => setAction({ kind: "apply", cp: c })}
+                          aria-label={`Apply ${c.id}`}
+                        >
+                          Apply
+                        </Button>
+                      )}
                     </span>
                   </li>
                 ))}

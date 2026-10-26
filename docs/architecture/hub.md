@@ -86,25 +86,42 @@ belong to answers **404**, exactly like one that does not exist.
 | `GET /api/v1/orgs/{org}/stats`, `GET …/search?q=` | viewer | #158 |
 | `GET /api/v1/sync?bundle={bid}` (WebSocket) | viewer read-only, member+ write | #159 |
 
-### Annotation sync endpoint (for #159)
+### Annotation sync endpoint (#159)
 
 `GET /api/v1/sync?bundle={bid}` upgrades to a WebSocket carrying the
-Automerge sync protocol (binary frames) for the annotation document of
-one bundle:
+Automerge sync protocol for the annotation document of one bundle
+(`crates/wyrd-sync` is the relay; `routes/sync.rs` mounts it):
 
-- Authentication as for every other endpoint: the session cookie (with
-  the `Origin` check that guards cookie-authenticated requests) or
-  `Authorization: Bearer <api token>`; checked before the upgrade.
-- Authorisation before the upgrade: the bundle must exist in an org the
-  caller belongs to, else 404. Viewers receive changes but every change
-  they send is rejected (the server never applies it and closes with an
-  error message); members and admins may write.
-- The server persists one document per bundle, in a
-  `bundle_annotations (bundle_id PK → bundles ON DELETE CASCADE, doc bytea,
-  updated_at)` table added by that issue's own timestamped migration, and
-  seeds it from the bundle's `annotations.automerge` when present.
-- Limits: frame and document size caps; every connection and rejected
-  write is counted in `/metrics`.
+- Authentication as for every other endpoint: the session cookie or
+  `Authorization: Bearer <api token>`, checked before the upgrade. A
+  cookie-authenticated upgrade must also carry the Hub's own `Origin`
+  (browsers send it on every WebSocket handshake), so a page on another
+  site cannot open a sync socket with the user's session: 403 otherwise.
+- Authorisation before the upgrade: the bundle must exist in an
+  organisation the caller belongs to (and that an org-bound token is bound
+  to), else 404 like any resource in another organisation.
+- Frames: binary frames are sync messages. The server sends one text
+  frame first, `{"role":"viewer"|"member"|"admin"}`, so the client can
+  disable editing for viewers. Viewers follow the document; a message
+  from a viewer that carries changes is never applied: the server answers
+  a last text frame `{"error":"read_only","message":…}` and closes with
+  code 1008, and the client rolls back. The same shape with `too_large`
+  (frame or document over the limit) or `invalid` (not a sync message).
+  Text frames from clients close the socket with 1003; a client whose
+  outgoing queue overflows is closed with 1013 and resyncs on reconnect.
+- Persistence: one row per bundle in `bundle_annotations (bundle_id PK →
+  bundles ON DELETE CASCADE, doc bytea, updated_at)` (migration
+  `20261021000001_annotations`), written after every change that
+  arrives and loaded when the first client of a bundle connects.
+- Limits (`wyrd_sync::Limits::default`): 1 MiB per frame (enforced by the
+  WebSocket layer and the relay), 8 MiB of changes per document, 64
+  clients per bundle (503 beyond), 256 queued outgoing messages per
+  client.
+- Metrics: `wyrd_hub_sync_connections_total{role}`,
+  `wyrd_hub_sync_messages_total{direction,outcome}` (`ok`, `read_only`,
+  `too_large`, `invalid`), and the gauges `wyrd_hub_sync_clients`,
+  `wyrd_hub_sync_documents`, `wyrd_hub_sync_document_bytes` (largest open
+  document).
 
 ## Tests
 

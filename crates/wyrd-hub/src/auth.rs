@@ -154,7 +154,7 @@ fn unauthorized() -> Problem {
 
 /// Browsers send `Origin` on cross-site and same-site mutations; a
 /// cookie-authenticated mutation must come from the Hub's own origin.
-fn same_origin(state: &AppState, headers: &HeaderMap) -> bool {
+pub(crate) fn same_origin(state: &AppState, headers: &HeaderMap) -> bool {
     match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
         Some(origin) => origin == origin_of(&state.config.public_url),
         None => headers
