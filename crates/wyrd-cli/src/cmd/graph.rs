@@ -29,7 +29,12 @@ pub struct ExplainArgs {
 }
 
 pub(crate) fn load(session: &str) -> anyhow::Result<Vec<Event>> {
-    let s = Session::open(&DataDir::from_env(), session)?;
+    load_from(&DataDir::from_env(), session)
+}
+
+/// Every event of `session` in `data`, in ledger order.
+pub(crate) fn load_from(data: &DataDir, session: &str) -> anyhow::Result<Vec<Event>> {
+    let s = Session::open(data, session)?;
     let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
     let mut all = Vec::new();
     loop {
@@ -155,8 +160,39 @@ pub fn graph(a: &GraphArgs) -> anyhow::Result<u8> {
     Ok(exit::OK)
 }
 
+/// One effect of `events` as JSON: the effect, its event, the attributed
+/// call, and the process chain (`wyrd explain --json`, `wyrd mcp`).
+pub(crate) fn explanation(events: &[Event], seq: u64) -> anyhow::Result<serde_json::Value> {
+    let graph = wyrd_correlator::correlate(events);
+    let eff = graph
+        .effect(seq)
+        .with_context(|| format!("seq {seq} is not a kernel effect of this session"))?;
+    let ev = events
+        .iter()
+        .find(|e| e.seq == seq)
+        .context("event missing")?;
+    let call = eff.call_id.as_deref().and_then(|id| graph.call(id));
+    let processes: Vec<_> = process_chain(&graph, ev)
+        .iter()
+        .map(|(pid, name)| serde_json::json!({ "pid": pid, "program": name }))
+        .collect();
+    Ok(serde_json::json!({
+        "effect": eff,
+        "event": ev,
+        "call": call,
+        "process_chain": processes,
+    }))
+}
+
 pub fn explain(a: &ExplainArgs) -> anyhow::Result<u8> {
     let events = load(&a.session)?;
+    if a.json {
+        let v = explanation(&events, a.seq)?;
+        let mut out = std::io::stdout().lock();
+        serde_json::to_writer_pretty(&mut out, &v)?;
+        writeln!(out)?;
+        return Ok(exit::OK);
+    }
     let graph = wyrd_correlator::correlate(&events);
     let eff = graph
         .effect(a.seq)
@@ -167,22 +203,6 @@ pub fn explain(a: &ExplainArgs) -> anyhow::Result<u8> {
         .context("event missing")?;
     let chain = process_chain(&graph, ev);
     let mut out = std::io::stdout().lock();
-    if a.json {
-        let call = eff.call_id.as_deref().and_then(|id| graph.call(id));
-        let processes: Vec<_> = chain
-            .iter()
-            .map(|(pid, name)| serde_json::json!({ "pid": pid, "program": name }))
-            .collect();
-        let v = serde_json::json!({
-            "effect": eff,
-            "event": ev,
-            "call": call,
-            "process_chain": processes,
-        });
-        serde_json::to_writer_pretty(&mut out, &v)?;
-        writeln!(out)?;
-        return Ok(exit::OK);
-    }
     writeln!(out, "effect   {} — {}", a.seq, describe(&ev.body))?;
     writeln!(
         out,

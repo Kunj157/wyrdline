@@ -12,7 +12,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 base64 = "0.22.1"
-axum = { workspace = true, features = ["form", "matched-path"] }
+axum = { workspace = true, features = ["form", "matched-path", "ws"] }
 hex.workspace = true
 ring = "0.17.14"
 serde.workspace = true
@@ -27,11 +27,15 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
 ureq.workspace = true
+wyrd-sync = { path = "../wyrd-sync" }
 
 [dev-dependencies]
+automerge.workspace = true
+futures-util.workspace = true
 http-body-util.workspace = true
 tempfile.workspace = true
 testcontainers = "0.28.0"
+tokio-tungstenite = "0.29.0"
 
 [features]
 # Integration tests that start Postgres and MinIO with Testcontainers
