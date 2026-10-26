@@ -1,0 +1,12 @@
+wyrdline-hub {{ .Chart.AppVersion }} is deployed as {{ include "wyrdline-hub.fullname" . }}.
+
+Public URL: {{ .Values.publicUrl }}
+
+Check readiness (database connected and migrated, bucket reachable):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "wyrdline-hub.fullname" . }} 7730:{{ .Values.service.port }}
+  curl -fsS http://127.0.0.1:7730/readyz
+
+{{- if not .Values.oidc.issuer }}
+
+OIDC login is disabled (oidc.issuer is empty). Only token-based access works.
+{{- end }}

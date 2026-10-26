@@ -1,0 +1,154 @@
+# Default values for wyrdline-hub.
+#
+# Secrets are never set here. Create them out of band (or with your secret
+# manager's operator) and reference them by name:
+#
+#   database.existingSecret  key: database-url          (postgres://...)
+#   s3.existingSecret        keys: access-key-id, secret-access-key
+#   oidc.existingSecret      key: client-secret         (only when oidc.issuer is set)
+#
+# The chart fails to render with a message naming whatever is missing.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/kunj157/wyrdline-hub
+  # Defaults to the chart's appVersion when empty. Prefer a digest in production.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Public URL users reach the Hub at (OIDC redirects, Secure cookies). Required.
+publicUrl: ""
+
+hub:
+  listenPort: 7730
+  dbMaxConnections: 10
+  logFilter: info
+
+database:
+  # Secret holding key "database-url". Required.
+  existingSecret: ""
+
+s3:
+  # S3-compatible endpoint, path-style, e.g. https://s3.example.internal:9000. Required.
+  endpoint: ""
+  bucket: ""
+  region: us-east-1
+  # Secret holding keys "access-key-id" and "secret-access-key". Required.
+  existingSecret: ""
+
+oidc:
+  # Empty disables browser login. When set, client id and oidc.existingSecret are required.
+  issuer: ""
+  clientId: ""
+  existingSecret: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+# Prometheus scrape annotations (/metrics). Use metrics.serviceMonitor for the operator.
+metrics:
+  scrapeAnnotations: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# Scratch space. The root filesystem is read-only; /data (WYRD_HUB_DATA_DIR)
+# and /tmp are memory-free emptyDir volumes.
+persistence:
+  dataSizeLimit: 2Gi
+  tmpSizeLimit: 256Mi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+  #  - secretName: hub-tls
+  #    hosts: [hub.example.internal]
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# Deny-all by default. Ingress is allowed only from the namespaces listed in
+# ingressFromNamespaces and only on the Hub port. Egress is limited to DNS and
+# the ports in egressPorts (HTTPS for OIDC discovery and JWKS, PostgreSQL, S3).
+# Narrow egressTo (a list of NetworkPolicyPeer) to your database and bucket CIDRs
+# or pod selectors for a stricter policy.
+networkPolicy:
+  enabled: true
+  ingressFromNamespaces:
+    - ingress-nginx
+  egressPorts:
+    - port: 443
+      protocol: TCP
+    - port: 5432
+      protocol: TCP
+    - port: 9000
+      protocol: TCP
+  egressTo: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
