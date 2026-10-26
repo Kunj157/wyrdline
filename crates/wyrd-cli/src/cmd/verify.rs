@@ -9,7 +9,7 @@ use crate::exit;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    /// Session id (or unique prefix), or the path of a ledger file.
+    /// Session id (or unique prefix), or the path of a ledger or bundle file.
     target: String,
     /// Print the result as JSON.
     #[arg(long)]
@@ -18,6 +18,9 @@ pub struct Args {
 
 pub fn run(args: &Args) -> anyhow::Result<u8> {
     let path = PathBuf::from(&args.target);
+    if path.is_file() && crate::cmd::bundle::is_bundle(&path) {
+        return crate::cmd::bundle::verify(&path, args.json);
+    }
     let path = if path.exists() {
         path
     } else {

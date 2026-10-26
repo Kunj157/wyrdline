@@ -31,7 +31,7 @@ struct Cli {
 enum Command {
     /// Report which kernel capabilities Wyrdline can use on this machine.
     Doctor(cmd::doctor::Args),
-    /// Verify a session ledger's hash chain and seal signature.
+    /// Verify a session ledger (chain and seal) or a `.wyrd` bundle.
     Verify(cmd::verify::Args),
     /// Run an agent inside a Cell and record the session.
     Run(cmd::session::RunArgs),
@@ -72,6 +72,8 @@ enum Command {
     Export(cmd::bundle::ExportArgs),
     /// Upload a bundle to a Wyrdline Hub (token in `$WYRD_HUB_TOKEN`).
     Push(cmd::push::PushArgs),
+    /// Verify a `.wyrd` bundle and add it as a read-only session.
+    Import(cmd::bundle::ImportArgs),
     /// Open Studio in a browser (served by the running daemon).
     Studio(cmd::studio::Args),
     /// Manage the daemon token.
@@ -131,6 +133,7 @@ fn main() -> ExitCode {
         Command::Close(a) => cmd::session::close(&a),
         Command::Export(a) => cmd::bundle::export(&a),
         Command::Push(a) => cmd::push::push(&a),
+        Command::Import(a) => cmd::bundle::import(&a),
         Command::Hook(a) => cmd::hook::run(&a),
         Command::McpProxy(a) => cmd::mcp_proxy::run(&a),
         Command::Policy(c) => cmd::policy::run(&c),
