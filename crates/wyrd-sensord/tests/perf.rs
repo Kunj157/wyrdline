@@ -318,6 +318,38 @@ fn overhead_of_capture_on_cargo_build() {
     );
 }
 
+/// The plan's second overhead workload (§18.2): the test script of the
+/// demo repository, `pnpm test` in `demo/victim-shop` (a `node --test` run
+/// over `src/*.test.ts`). The command is the script body, run directly so
+/// the measurement does not include pnpm's own startup.
+#[test]
+#[ignore = "release measurement; make test-perf"]
+fn overhead_of_capture_on_victim_shop_tests() {
+    let shop = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demo/victim-shop");
+    let rounds = 5;
+    let o = measure_overhead(
+        rounds,
+        |_, _| {
+            format!(
+                "cd {}; exec node --experimental-strip-types --test src/*.test.ts",
+                shop.display()
+            )
+        },
+        |_, _| {},
+    );
+    o.report("victim-shop tests", rounds);
+    assert!(
+        o.pct(o.captured) <= 5.0,
+        "capture overhead {:.1}% exceeds 5%",
+        o.pct(o.captured)
+    );
+    assert!(
+        o.pct(o.unregistered) <= 5.0,
+        "attached-but-filtered overhead {:.1}% exceeds 5%",
+        o.pct(o.unregistered)
+    );
+}
+
 /// Worst case, not the plan's target workload: a syscall-dense script
 /// (~20 k effects/s, several times a real build). The cost every
 /// unregistered process pays stays within the 5 % budget. Captured runs are
