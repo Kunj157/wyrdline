@@ -128,11 +128,17 @@ const DRAIN_BOUND: Duration = Duration::from_secs(5);
 struct Drain {
     token: u64,
     since: Instant,
+    /// Events that arrived after the agent exited.
+    received: u64,
 }
 
 impl Drain {
     fn confirmed_by(&self, msg: &ServerMsg) -> bool {
-        matches!(msg, ServerMsg::Flushed { token } if *token == self.token)
+        let done = matches!(msg, ServerMsg::Flushed { token } if *token == self.token);
+        if done {
+            tracing::info!(events = self.received, "sensor confirmed delivery");
+        }
+        done
     }
 
     fn expired(&self, now: Instant) -> bool {
@@ -379,6 +385,7 @@ impl Ctx {
         let d = Drain {
             token: wyrd_cell::mono_ns(),
             since: Instant::now(),
+            received: 0,
         };
         if let Some(c) = client.as_ref()
             && let Err(e) = c.send_flush(d.token)
@@ -391,7 +398,8 @@ impl Ctx {
     }
 
     /// The bound passed without the barrier's answer: say so, never silently.
-    fn drain_unconfirmed(&self, batch: &mut Vec<Event>) {
+    fn drain_unconfirmed(&self, d: &Drain, batch: &mut Vec<Event>) {
+        tracing::warn!(events = d.received, "sensor did not confirm delivery");
         self.append(std::mem::take(batch));
         self.lost(&format!(
             "wyrd-sensord did not confirm delivery within {} s after the agent exited; \
@@ -434,8 +442,8 @@ impl Ctx {
             if drain.is_none() && self.stop.load(Ordering::SeqCst) {
                 drain = Some(self.start_drain(&mut client, &mut batch));
             }
-            if drain.as_ref().is_some_and(|d| d.expired(Instant::now())) {
-                self.drain_unconfirmed(&mut batch);
+            if let Some(d) = drain.as_ref().filter(|d| d.expired(Instant::now())) {
+                self.drain_unconfirmed(d, &mut batch);
                 break;
             }
             let Some(c) = client.as_mut() else {
@@ -456,6 +464,10 @@ impl Ctx {
                     process,
                     body,
                 })) => {
+                    drain = drain.map(|d| Drain {
+                        received: d.received + 1,
+                        ..d
+                    });
                     let drops =
                         u32::try_from(std::mem::take(&mut pending_drops)).unwrap_or(u32::MAX);
                     let guard = self.guard_for(&body);
@@ -516,7 +528,11 @@ mod tests {
     #[test]
     fn drain_ends_on_its_own_flush_answer_or_the_bound() {
         let since = Instant::now();
-        let d = Drain { token: 7, since };
+        let d = Drain {
+            token: 7,
+            since,
+            received: 0,
+        };
         assert!(d.confirmed_by(&ServerMsg::Flushed { token: 7 }));
         assert!(!d.confirmed_by(&ServerMsg::Flushed { token: 8 }));
         assert!(!d.confirmed_by(&ServerMsg::Drops { total: 0 }));
