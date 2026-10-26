@@ -118,8 +118,27 @@ impl EffectGuard {
 const BATCH: usize = 500;
 const FLUSH_EVERY: Duration = Duration::from_millis(50);
 const RECONNECT_EVERY: Duration = Duration::from_secs(1);
-/// After the agent exits, keep reading this long for in-flight events.
-const DRAIN: Duration = Duration::from_millis(300);
+/// After the agent exits, wait at most this long for the sensor to confirm
+/// that every queued event was delivered.
+const DRAIN_BOUND: Duration = Duration::from_secs(5);
+
+/// The end of capture: a flush barrier sent to the sensor when the agent
+/// exited, answered once every event queued before it has been delivered.
+#[derive(Debug)]
+struct Drain {
+    token: u64,
+    since: Instant,
+}
+
+impl Drain {
+    fn confirmed_by(&self, msg: &ServerMsg) -> bool {
+        matches!(msg, ServerMsg::Flushed { token } if *token == self.token)
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        now.duration_since(self.since) >= DRAIN_BOUND
+    }
+}
 
 /// Handle to the capture thread.
 #[derive(Debug)]
@@ -355,6 +374,41 @@ impl Ctx {
         })
     }
 
+    /// The agent exited: ask the sensor for a delivery barrier.
+    fn start_drain(&self, client: &mut Option<SensorClient>, batch: &mut Vec<Event>) -> Drain {
+        let d = Drain {
+            token: wyrd_cell::mono_ns(),
+            since: Instant::now(),
+        };
+        if let Some(c) = client.as_ref()
+            && let Err(e) = c.send_flush(d.token)
+        {
+            self.append(std::mem::take(batch));
+            self.lost(&format!("lost the sensor connection: {e}"));
+            *client = None;
+        }
+        d
+    }
+
+    /// The bound passed without the barrier's answer: say so, never silently.
+    fn drain_unconfirmed(&self, batch: &mut Vec<Event>) {
+        self.append(std::mem::take(batch));
+        self.lost(&format!(
+            "wyrd-sensord did not confirm delivery within {} s after the agent exited; \
+             its last effects may be missing",
+            DRAIN_BOUND.as_secs()
+        ));
+    }
+
+    fn reconnect(&self) -> Option<SensorClient> {
+        let c = self.connect().ok()?;
+        self.append(vec![meta(EventBody::SensorResumed(SensorResumed {
+            dropped: 0,
+        }))]);
+        let _ = Session::mark_recovered(&self.data, &self.session_id);
+        Some(c)
+    }
+
     fn run(self, ready: &mpsc::SyncSender<()>) {
         let mut client = match self.connect() {
             Ok(c) => Some(c),
@@ -372,31 +426,26 @@ impl Ctx {
         let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
         let mut last_flush = Instant::now();
         let mut last_attempt = Instant::now();
-        let mut stopping: Option<Instant> = None;
+        let mut drain: Option<Drain> = None;
         let mut refreshed = Instant::now();
         let mut current = self.egress.as_ref().map(|e| e.rules(&resolve));
         loop {
             self.refresh_egress(client.as_ref(), &mut refreshed, &mut current);
-            if stopping.is_none() && self.stop.load(Ordering::SeqCst) {
-                stopping = Some(Instant::now());
+            if drain.is_none() && self.stop.load(Ordering::SeqCst) {
+                drain = Some(self.start_drain(&mut client, &mut batch));
             }
-            if stopping.is_some_and(|t| t.elapsed() >= DRAIN) {
+            if drain.as_ref().is_some_and(|d| d.expired(Instant::now())) {
+                self.drain_unconfirmed(&mut batch);
                 break;
             }
             let Some(c) = client.as_mut() else {
-                if stopping.is_some() {
+                if drain.is_some() {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
                 if last_attempt.elapsed() >= RECONNECT_EVERY {
                     last_attempt = Instant::now();
-                    if let Ok(c) = self.connect() {
-                        self.append(vec![meta(EventBody::SensorResumed(SensorResumed {
-                            dropped: 0,
-                        }))]);
-                        let _ = Session::mark_recovered(&self.data, &self.session_id);
-                        client = Some(c);
-                    }
+                    client = self.reconnect();
                 }
                 continue;
             };
@@ -431,6 +480,7 @@ impl Ctx {
                     }
                     drops_total = Some(total);
                 }
+                Ok(Some(msg)) if drain.as_ref().is_some_and(|d| d.confirmed_by(&msg)) => break,
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     self.append(std::mem::take(&mut batch));
@@ -462,6 +512,17 @@ impl Ctx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drain_ends_on_its_own_flush_answer_or_the_bound() {
+        let since = Instant::now();
+        let d = Drain { token: 7, since };
+        assert!(d.confirmed_by(&ServerMsg::Flushed { token: 7 }));
+        assert!(!d.confirmed_by(&ServerMsg::Flushed { token: 8 }));
+        assert!(!d.confirmed_by(&ServerMsg::Drops { total: 0 }));
+        assert!(!d.expired(since + DRAIN_BOUND.saturating_sub(Duration::from_millis(1))));
+        assert!(d.expired(since + DRAIN_BOUND));
+    }
 
     #[test]
     fn egress_rules_combine_prefixes_with_resolved_hosts() {
