@@ -19,7 +19,7 @@ pub mod session;
 pub mod state;
 
 pub use paths::{DataDir, SessionDir};
-pub use session::{RunOptions, Session};
+pub use session::{ImportSource, ImportSpec, RunOptions, Session};
 
 use std::path::PathBuf;
 
