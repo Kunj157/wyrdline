@@ -52,6 +52,31 @@ const FAMILIES: &[(&str, &str, &str)] = &[
         "gauge",
         "1 when the database is connected and migrated.",
     ),
+    (
+        "wyrd_hub_sync_connections_total",
+        "counter",
+        "Annotation sync connections accepted, by role.",
+    ),
+    (
+        "wyrd_hub_sync_messages_total",
+        "counter",
+        "Annotation sync messages by direction and outcome (ok, read_only, too_large, invalid).",
+    ),
+    (
+        "wyrd_hub_sync_clients",
+        "gauge",
+        "Annotation sync clients connected right now.",
+    ),
+    (
+        "wyrd_hub_sync_documents",
+        "gauge",
+        "Annotation documents open in the relay.",
+    ),
+    (
+        "wyrd_hub_sync_document_bytes",
+        "gauge",
+        "Changes held by the largest open annotation document, in bytes.",
+    ),
 ];
 
 type Labels = Vec<(&'static str, String)>;
@@ -76,6 +101,7 @@ pub struct Gauges {
     pub ready: bool,
     pub db_idle: u64,
     pub db_busy: u64,
+    pub sync: wyrd_sync::SyncMetrics,
 }
 
 fn labels(pairs: &[(&'static str, &str)]) -> Labels {
@@ -133,6 +159,15 @@ impl Metrics {
                 "wyrd_hub_db_pool_connections" => {
                     let _ = writeln!(out, "{name}{{state=\"idle\"}} {}", gauges.db_idle);
                     let _ = writeln!(out, "{name}{{state=\"busy\"}} {}", gauges.db_busy);
+                }
+                "wyrd_hub_sync_clients" => {
+                    let _ = writeln!(out, "{name} {}", gauges.sync.connected);
+                }
+                "wyrd_hub_sync_documents" => {
+                    let _ = writeln!(out, "{name} {}", gauges.sync.documents);
+                }
+                "wyrd_hub_sync_document_bytes" => {
+                    let _ = writeln!(out, "{name} {}", gauges.sync.largest_document_bytes);
                 }
                 _ => {}
             }
@@ -199,6 +234,11 @@ mod tests {
             ready: true,
             db_idle: 3,
             db_busy: 1,
+            sync: wyrd_sync::SyncMetrics {
+                connected: 2,
+                largest_document_bytes: 512,
+                ..wyrd_sync::SyncMetrics::default()
+            },
         });
         assert!(text.contains(
             "wyrd_hub_http_requests_total{method=\"GET\",route=\"/healthz\",class=\"2xx\"} 2"
@@ -214,6 +254,8 @@ mod tests {
         );
         assert!(text.contains("wyrd_hub_ready 1"));
         assert!(text.contains("wyrd_hub_db_pool_connections{state=\"busy\"} 1"));
+        assert!(text.contains("wyrd_hub_sync_clients 2"));
+        assert!(text.contains("wyrd_hub_sync_document_bytes 512"));
     }
 
     #[test]

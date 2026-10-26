@@ -4,6 +4,7 @@ mod auth;
 pub(crate) mod bundles;
 mod health;
 mod orgs;
+mod sync;
 
 use std::sync::Arc;
 
@@ -16,4 +17,5 @@ pub fn router(max_upload_bytes: u64) -> Router<Arc<AppState>> {
         .merge(bundles::router(max_upload_bytes))
         .merge(auth::router())
         .merge(orgs::router())
+        .merge(sync::router())
 }

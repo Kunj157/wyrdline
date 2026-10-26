@@ -16,6 +16,7 @@ pub mod problem;
 pub mod retention;
 mod routes;
 pub mod storage;
+pub mod sync;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -38,23 +39,27 @@ pub static REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 #[derive(Debug)]
 pub struct AppState {
     pub config: Config,
-    db: OnceLock<PgPool>,
+    db: Arc<OnceLock<PgPool>>,
     pub storage: Storage,
     /// `None` when no OIDC provider is configured (login disabled).
     pub oidc: Option<oidc::Provider>,
     pub metrics: metrics::Metrics,
+    /// The annotation sync relay (`/api/v1/sync`).
+    pub sync: Arc<sync::Relay>,
 }
 
 impl AppState {
     /// A Hub whose database is not connected yet (see [`AppState::set_db`]).
     pub fn new(config: Config, storage: Storage) -> Self {
         let oidc = config.oidc.clone().map(oidc::Provider::new);
+        let db = Arc::new(OnceLock::new());
         AppState {
             config,
-            db: OnceLock::new(),
+            db: Arc::clone(&db),
             storage,
             oidc,
             metrics: metrics::Metrics::default(),
+            sync: sync::relay(db),
         }
     }
 
@@ -70,15 +75,18 @@ impl AppState {
             .ok_or_else(|| Problem::unavailable("the database is not connected yet"))
     }
 
-    fn gauges(&self) -> metrics::Gauges {
-        self.db.get().map_or_else(metrics::Gauges::default, |p| {
+    async fn gauges(&self) -> metrics::Gauges {
+        let mut g = self.db.get().map_or_else(metrics::Gauges::default, |p| {
             let idle = u64::try_from(p.num_idle()).unwrap_or(0);
             metrics::Gauges {
                 ready: true,
                 db_idle: idle,
                 db_busy: u64::from(p.size()).saturating_sub(idle),
+                ..metrics::Gauges::default()
             }
-        })
+        });
+        g.sync = self.sync.metrics().await;
+        g
     }
 }
 

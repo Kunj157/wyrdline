@@ -80,12 +80,25 @@ export default async function globalSetup() {
     env,
   });
   writeFileSync(join(studio, "e2e-offline.jsonl"), exported);
+  // A signed bundle of it for bundle mode, and a copy with one byte of the
+  // compressed stream flipped.
+  execFileSync(
+    join(bin, "wyrd"),
+    ["export", sid, "-o", join(studio, "e2e.wyrd"), "--redact", "standard"],
+    { env, stdio: "ignore" },
+  );
+  const bundle = readFileSync(join(studio, "e2e.wyrd"));
+  const tampered = Buffer.from(bundle);
+  const at = Math.floor(tampered.length / 2);
+  tampered[at] = (tampered[at] ?? 0) ^ 0x01;
+  writeFileSync(join(studio, "e2e-tampered.wyrd"), tampered);
   process.env.WYRD_E2E_BASE = base;
   process.env.WYRD_E2E_TOKEN = token;
   process.env.WYRD_E2E_SID = sid;
   process.env.WYRD_E2E_LIVE_SID = liveSid;
   process.env.WYRD_E2E_DATA = data;
   process.env.WYRD_E2E_FIXTURE = join(bin, "examples/e2e_fixture");
+  process.env.WYRD_E2E_STUDIO = studio;
   return () => {
     daemon.kill("SIGTERM");
     rmSync(dir, { recursive: true, force: true });

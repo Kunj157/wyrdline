@@ -3,8 +3,10 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import type { Event } from "@wyrdline/schemas";
 import type * as api from "@wyrdline/schemas/generated-api";
 import { type Client, createClient } from "@wyrdline/schemas/client";
+import { useSyncExternalStore } from "react";
 
 import { takeTokenFromUrl } from "./auth";
+import type { BundleInfo } from "./bundle";
 
 let client: Client | null = null;
 let token: string | null = null;
@@ -29,11 +31,37 @@ export function setApiClient(c: Client): void {
 }
 
 let offlineName: string | null = null;
+let bundleInfo: BundleInfo | null = null;
 
-/** Switch Studio to a read-only replay of an exported session. */
-export function setOffline(name: string, c: Client): void {
+/**
+ * Switch Studio to a read-only replay of an exported session, or of a
+ * verified bundle (`bundle`).
+ */
+export function setOffline(name: string, c: Client, bundle: BundleInfo | null = null): void {
   offlineName = name;
+  bundleInfo = bundle;
   client = c;
+  offlineState = { name, bundle };
+  for (const l of listeners) l();
+}
+
+let offlineState: { name: string; bundle: BundleInfo | null } | null = null;
+const listeners = new Set<() => void>();
+
+/** The offline file and bundle, re-rendering when Studio switches to one. */
+export function useOffline(): { name: string; bundle: BundleInfo | null } | null {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => offlineState,
+  );
+}
+
+/** The open bundle in bundle mode (verified), else `null`. */
+export function offlineBundle(): BundleInfo | null {
+  return bundleInfo;
 }
 
 /** The replayed file's name in offline mode, else `null`. */

@@ -14,7 +14,7 @@ use wyrd_schema::{
 
 use crate::asks::{Answer, Asks};
 use crate::mcp::{McpState, PINNING_POLICY};
-use crate::{Adapter, Direction, Request, Response};
+use crate::{Adapter, Direction, Request, Response, SessionQuery};
 
 /// Redaction level applied to everything before it reaches the ledger.
 pub const INGEST_LEVEL: Level = Level::Standard;
@@ -52,6 +52,12 @@ pub trait Sink: Send + Sync {
     fn before_tool_call(&self) {}
     /// A tool call finished: schedule a checkpoint attributed to it.
     fn after_tool_call(&self, _call_id: &str) {}
+}
+
+/// Answers [`SessionQuery`]s for the session the intent socket belongs
+/// to. Errors are reported to the caller as messages.
+pub trait SessionViews: Send + Sync + std::fmt::Debug {
+    fn answer(&self, query: &SessionQuery) -> Result<Value, String>;
 }
 
 /// Pre-execution policy until Wasm policies arrive (Phase 9): deny tools by
@@ -104,6 +110,7 @@ pub struct Ingest<S> {
     policy: StaticPolicy,
     tool_policy: Option<Arc<dyn ToolPolicy>>,
     asks: Option<Arc<Asks>>,
+    views: Option<Arc<dyn SessionViews>>,
     denials: AtomicU32,
     turn: Mutex<u32>,
     mcp: Mutex<McpState>,
@@ -136,6 +143,7 @@ impl<S: Sink> Ingest<S> {
             policy,
             tool_policy: None,
             asks: None,
+            views: None,
             denials: AtomicU32::new(0),
             turn: Mutex::new(turn),
             mcp: Mutex::new(McpState::default()),
@@ -154,6 +162,14 @@ impl<S: Sink> Ingest<S> {
     #[must_use]
     pub fn with_asks(mut self, asks: Arc<Asks>) -> Self {
         self.asks = Some(asks);
+        self
+    }
+
+    /// Answer session views and rewind requests (`wyrd mcp`); without
+    /// this, they are refused.
+    #[must_use]
+    pub fn with_views(mut self, views: Arc<dyn SessionViews>) -> Self {
+        self.views = Some(views);
         self
     }
 
@@ -258,6 +274,15 @@ impl<S: Sink> Ingest<S> {
                 }
                 _ => Response::Error {
                     message: "not authorised".into(),
+                },
+            },
+            Request::Session { query } => match &self.views {
+                Some(v) => match v.answer(&query) {
+                    Ok(result) => Response::View { result },
+                    Err(message) => Response::Error { message },
+                },
+                None => Response::Error {
+                    message: "this session does not serve session views".into(),
                 },
             },
             Request::Hook { adapter, payload } => match Adapter::from_name(&adapter) {
