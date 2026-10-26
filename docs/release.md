@@ -4,6 +4,11 @@ Every `v*` tag runs `.github/workflows/release.yml`, which builds, signs,
 attests, smoke-installs, and publishes the release. Nothing is built or
 signed on a developer machine.
 
+The packaging is done by the scripts in `scripts/release/`, not by cargo-dist:
+the `.deb` needs the sensor's systemd unit and AppArmor profile, a postinst
+that reloads AppArmor, and fixed archive metadata, and the scripts keep that
+in one reviewable place. cargo-dist is therefore not used for release builds.
+
 ## Assets
 
 | Asset | What it is |
@@ -54,7 +59,7 @@ home, from the release profile in `Cargo.toml` (`strip = "symbols"`,
 `codegen-units = 1`). The `reproducible` job builds `wyrd`, `wyrdd`, and
 `wyrd-sensord` twice from a clean target directory and fails, listing the
 differing files, if the two builds are not byte-identical. It also compares
-them with the binaries the build job shipped and warns on a mismatch.
+them with the binaries the build job shipped and fails on a mismatch too.
 
 The tarball and the `.deb` are built by `scripts/release/package.sh` with
 fixed ownership, order, and timestamps, so repackaging identical binaries

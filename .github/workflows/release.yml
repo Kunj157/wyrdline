@@ -203,11 +203,9 @@ jobs:
           path: release-bins
       - name: The release binaries match this independent build
         run: |
-          if scripts/release/compare-builds.sh build-1 release-bins local-build release-job | tee -a "$GITHUB_STEP_SUMMARY"; then
-            echo "release binaries reproduced on an independent runner" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::the release job's binaries differ from an independent rebuild (see the job log); the two builds on this runner are identical"
-          fi
+          # A mismatch fails the job and lists the differing files (#167).
+          scripts/release/compare-builds.sh build-1 release-bins local-build release-job | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "release binaries reproduced on an independent runner" >> "$GITHUB_STEP_SUMMARY"
 
   sbom:
     name: SBOM (CycloneDX)
