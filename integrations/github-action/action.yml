@@ -1,0 +1,193 @@
+name: Wyrdline
+description: >-
+  Run an AI coding agent under Wyrdline: kernel-level capture in a Cell,
+  a signed .wyrd bundle as a workflow artifact, and one PR comment that
+  summarises where the agent's claims and its real effects diverge.
+author: Kunj157
+branding:
+  icon: git-commit
+  color: green
+
+inputs:
+  command:
+    description: >-
+      The agent command, e.g. `claude -p 'fix the failing test'`. Split into
+      words with shell quoting but no expansion; use `bash -c '…'` for
+      shell features. Runs inside the Cell as the runner user.
+    required: true
+  agent:
+    description: Adapter (claude-code, codex, gemini-cli, fakeagent, generic); detected from the program when empty.
+    default: ""
+  policy:
+    description: Wasm policy component (.wasm) deciding tool calls and kernel rules; none when empty.
+    default: ""
+  workspace:
+    description: Directory the agent works in (sandboxed copy-on-write).
+    default: "."
+  name:
+    description: Session name.
+    default: ""
+  ask-timeout:
+    description: Seconds a tool call the policy asks about waits for an answer; nobody answers in CI, so it is then denied.
+    default: "5"
+  redact:
+    description: Bundle redaction, standard or strict.
+    default: strict
+  apply:
+    description: Write the agent's changes from the Cell to the real workspace afterwards (true/false).
+    default: "false"
+  fail-on:
+    description: >-
+      Fail the step on open divergences: comma-separated rule ids (D003) and/or
+      a severity threshold (low, medium, high, critical). Empty never fails.
+    default: ""
+  allow-degraded:
+    description: Run even when kernel capture cannot start or is lost (the reports say so). Otherwise that fails the step.
+    default: "false"
+  comment:
+    description: Post or update one PR comment with the divergence summary (true/false).
+    default: "true"
+  comment-key:
+    description: Identifies this action's comment, so each job keeps one; defaults to the job id.
+    default: ""
+  github-token:
+    description: Token for the PR comment (needs pull-requests write). Never passed to the agent.
+    default: ${{ github.token }}
+  artifact-name:
+    description: Workflow artifact name for the bundle; defaults to wyrdline-<job id>.
+    default: ""
+  artifact-retention-days:
+    description: Days to keep the bundle artifact.
+    default: "14"
+  wyrd-version:
+    description: Release tag of Wyrdline to install, or `latest`.
+    default: latest
+  wyrd-repository:
+    description: Repository the release comes from.
+    default: Kunj157/wyrdline
+  wyrd-path:
+    description: Directory with prebuilt `wyrd` and `wyrd-sensord` binaries; skips the release download.
+    default: ""
+  verify-signature:
+    description: >-
+      Release signature check: `auto` verifies the cosign signature over SHA256SUMS
+      when the release has one, `required` refuses unsigned releases, `skip` does not
+      check. The checksum is always verified.
+    default: auto
+  hub-url:
+    description: >-
+      Wyrdline Hub to upload the bundle to with the job's GitHub OIDC token (needs
+      `id-token: write`). Reserved: the upload is not available in this version.
+    default: ""
+
+outputs:
+  session-id:
+    description: Wyrdline session id.
+    value: ${{ steps.run.outputs.session-id }}
+  bundle-path:
+    description: Path of the exported .wyrd bundle on the runner.
+    value: ${{ steps.run.outputs.bundle-path }}
+  divergence-count:
+    description: Number of open divergences.
+    value: ${{ steps.run.outputs.divergence-count }}
+  agent-exit-code:
+    description: The agent command's exit code.
+    value: ${{ steps.run.outputs.agent-exit-code }}
+  artifact-url:
+    description: URL of the bundle artifact.
+    value: ${{ steps.upload.outputs.artifact-url }}
+  sensor:
+    description: Kernel capture state at start, running or degraded.
+    value: ${{ steps.sensord.outputs.sensor }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign (release signature check)
+      if: inputs.wyrd-path == '' && inputs.verify-signature != 'skip'
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+    - name: Install wyrd
+      id: install
+      shell: bash
+      env:
+        WYRD_VERSION: ${{ inputs.wyrd-version }}
+        WYRD_REPOSITORY: ${{ inputs.wyrd-repository }}
+        WYRD_PATH: ${{ inputs.wyrd-path }}
+        WYRD_VERIFY_SIGNATURE: ${{ inputs.verify-signature }}
+      run: '"$GITHUB_ACTION_PATH/scripts/install.sh"'
+
+    - name: Start the kernel sensor
+      id: sensord
+      shell: bash
+      env:
+        WYRD_BIN_DIR: ${{ steps.install.outputs.bin-dir }}
+        WYRD_SENSORD_UNIT: ${{ github.action_path }}/../../deploy/systemd/wyrd-sensord.service
+        WYRD_ALLOW_DEGRADED: ${{ inputs.allow-degraded }}
+      run: '"$GITHUB_ACTION_PATH/scripts/sensord.sh"'
+
+    - name: Run the agent under Wyrdline
+      id: run
+      shell: bash
+      env:
+        WYRD_COMMAND: ${{ inputs.command }}
+        WYRD_AGENT: ${{ inputs.agent }}
+        WYRD_POLICY: ${{ inputs.policy }}
+        WYRD_WORKSPACE: ${{ inputs.workspace }}
+        WYRD_NAME: ${{ inputs.name }}
+        WYRD_ASK_TIMEOUT: ${{ inputs.ask-timeout }}
+        WYRD_REDACT: ${{ inputs.redact }}
+        WYRD_APPLY: ${{ inputs.apply }}
+        WYRD_SENSOR: ${{ steps.sensord.outputs.sensor }}
+      run: '"$GITHUB_ACTION_PATH/scripts/run.sh"'
+
+    - name: Upload the bundle
+      id: upload
+      if: always() && steps.run.outputs.bundle-path != ''
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name || format('wyrdline-{0}', github.job) }}
+        path: ${{ steps.run.outputs.bundle-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: error
+
+    - name: Upload the bundle to the Hub
+      if: always() && inputs.hub-url != '' && steps.run.outputs.bundle-path != ''
+      shell: bash
+      run: |
+        echo "::warning::wyrdline: hub-url is set, but Hub upload (GitHub OIDC token exchange) is not available in this version of the action; the bundle is only a workflow artifact"
+
+    - name: Divergence summary and PR comment
+      if: always() && steps.run.outputs.session-id != ''
+      shell: bash
+      env:
+        WYRD_DIVERGENCES_JSON: ${{ steps.run.outputs.divergences-json }}
+        WYRD_WARNINGS_FILE: ${{ steps.run.outputs.warnings-file }}
+        WYRD_SESSION_ID: ${{ steps.run.outputs.session-id }}
+        WYRD_AGENT_EXIT_CODE: ${{ steps.run.outputs.agent-exit-code }}
+        WYRD_SENSOR: ${{ steps.sensord.outputs.sensor }}
+        WYRD_ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        WYRD_FAIL_ON: ${{ inputs.fail-on }}
+        WYRD_COMMENT: ${{ inputs.comment }}
+        WYRD_COMMENT_KEY: ${{ inputs.comment-key }}
+        WYRD_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "$GITHUB_ACTION_PATH/scripts/report.mjs"
+
+    - name: Agent result and capture completeness
+      if: always() && steps.run.outputs.session-id != ''
+      shell: bash
+      env:
+        CODE: ${{ steps.run.outputs.agent-exit-code }}
+        COMPLETE: ${{ steps.run.outputs.complete }}
+        ALLOW_DEGRADED: ${{ inputs.allow-degraded }}
+      run: |
+        status=0
+        if [ "$CODE" != 0 ]; then
+          echo "::error::wyrdline: the agent exited with $CODE"
+          status=1
+        fi
+        if [ "$COMPLETE" != true ] && [ "$ALLOW_DEGRADED" != true ]; then
+          echo "::error::wyrdline: capture was incomplete (see the summary); set allow-degraded: true to accept that"
+          status=1
+        fi
+        exit "$status"
