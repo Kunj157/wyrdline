@@ -48,7 +48,8 @@ jobs:
             | sudo tar -xz -C /usr/local/bin kubeconform
       - name: helm lint --strict
         run: |
-          helm lint --strict "$CHART"
+          # Lint with values that satisfy the required keys, so templates render.
+          # Without them helm lint warns and skips the templates.
           helm lint --strict "$CHART" -f "$CHART/ci/kind-values.yaml"
       - name: Render and validate (defaults with required values, kind values, OIDC, autoscaling, ingress)
         run: |
