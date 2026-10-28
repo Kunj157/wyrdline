@@ -74,21 +74,29 @@ survive restarts.
 
 ## Conformance
 
-Checked with the MCP inspector 2.10.1 in CLI mode against a recorded
-Cell session. The inspector reads `--session` as its own option, so the
-session is passed in the server's environment:
+Checked with the MCP inspector 2.10.1 in CLI mode, against a finished
+`wyrd run` Cell session (the inspector ran outside the Cell and read the
+session from the data directory). The inspector reads `--session` as its
+own option, so the session is passed in the server's environment, and
+`WYRD_DATA_DIR` points at the data directory when it is not the default:
 
 ```
 npx @modelcontextprotocol/inspector@2.10.1 --cli wyrd mcp \
   -e WYRD_SESSION_ID=<id> --method tools/list --strict
 npx @modelcontextprotocol/inspector@2.10.1 --cli wyrd mcp \
+  -e WYRD_SESSION_ID=<id> --method tools/call --tool-name list_checkpoints
+npx @modelcontextprotocol/inspector@2.10.1 --cli wyrd mcp \
   -e WYRD_SESSION_ID=<id> --method tools/call --tool-name request_rewind \
   --tool-arg checkpoint_id=c1 'reason=tests broke'
+wyrd rewind <id> --requests
 ```
 
-`initialize` negotiates 2025-06-18, `tools/list --strict` reports no
-schema portability problems, every tool answers, unknown checkpoints and
-seqs come back as tool errors (`isError`), and after `request_rewind`
-the session is unchanged until a human decides. The same protocol
-behaviour is tested in `crates/wyrd-cli/tests/mcp.rs` by driving the
-binary over stdio.
+Recorded results: `tools/list --strict` lists all five tools with their
+input schemas and annotations (four read-only, `request_rewind` not
+read-only and not destructive). `list_checkpoints` answers with the
+checkpoint `c1`. `request_rewind` answers `pending human confirmation`
+with `isError: false`, the request is listed as `pending` by
+`wyrd rewind <id> --requests`, and the session is unchanged until a human
+decides. Unknown checkpoints and seqs come back as tool errors
+(`isError: true`); that path, and the rest of the protocol behaviour, is
+tested in `crates/wyrd-cli/tests/mcp.rs` by driving the binary over stdio.
