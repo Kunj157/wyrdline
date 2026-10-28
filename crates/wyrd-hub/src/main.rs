@@ -38,6 +38,10 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .await;
         background.set_db(pool);
     });
+    wyrd_hub::retention::spawn(
+        state.clone(),
+        std::time::Duration::from_secs(config.limits.retention_interval_secs),
+    );
     let bucket = state.clone();
     tokio::spawn(async move {
         let mut attempt = 0u32;
