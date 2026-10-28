@@ -215,17 +215,18 @@ export function SessionPage() {
                 label: "Transcript",
                 panel: <Transcript events={list} onSelect={setSelected} />,
               },
-              ...(offlineSource() === null
-                ? [
-                    {
-                      id: "backtest",
-                      label: "Backtest",
-                      panel: (
-                        <BacktestPanel sid={sid} onReport={setBacktest} onSelect={setSelected} />
-                      ),
-                    },
-                  ]
-                : []),
+              {
+                id: "backtest",
+                label: "Backtest",
+                panel: (
+                  <BacktestPanel
+                    sid={sid}
+                    events={list.length}
+                    onReport={setBacktest}
+                    onSelect={setSelected}
+                  />
+                ),
+              },
             ]}
           />
         </Card>
