@@ -141,7 +141,12 @@ job's GitHub OIDC token for a short-lived upload token. This needs:
    default and can only upload.
 
 The script `integrations/github-action/scripts/hub-upload.sh` wraps those
-steps. The Action's `hub-url` input is reserved and does not upload yet.
+steps. It sets two outputs for both a new upload and a bundle the
+organisation already has: `hub-bundle-id` (the bundle's id) and
+`hub-bundle-url`, the bundle's API resource, `<hub>/api/v1/bundles/<id>`.
+The Hub has no page per bundle, so the URL is an API address. These outputs
+are fixed in #216 (the answer is `{"duplicate", "bundle": {...}}`). The
+Action's `hub-url` input is reserved and does not upload yet.
 
 ## Browse, download, search
 

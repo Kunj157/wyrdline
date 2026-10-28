@@ -35,7 +35,9 @@ attestation. The GitHub Action's installer relies on the archive and
 that lacks `SHA256SUMS` is refused by it. The `.deb` does not enable the
 sensor; the step below does.
 
-The Hub's container image and Helm chart are described in [the Hub](hub.md).
+How the assets are built, signed, and checked for reproducibility, and how
+to verify them by hand, is in [releases](release.md). The Hub's container
+image and Helm chart are described in [the Hub](hub.md).
 
 ### 1. Download and verify
 
