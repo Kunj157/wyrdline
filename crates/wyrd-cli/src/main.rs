@@ -1,4 +1,5 @@
 //! `wyrd` — the Wyrdline command-line interface.
+#![forbid(unsafe_code)]
 
 mod cmd;
 
@@ -91,6 +92,9 @@ enum Command {
     Policy(cmd::policy::PolicyCmd),
     /// Proxy a stdio MCP server, recording and checking its traffic.
     McpProxy(cmd::mcp_proxy::Args),
+    /// Serve a session's inspection tools and rewind requests over stdio
+    /// MCP (for the agent; rewinds still need a human).
+    Mcp(cmd::mcp::Args),
     /// Internal: stage two of a Cell launch.
     #[command(name = "__cell-exec", hide = true)]
     CellExec { spec: std::path::PathBuf },
@@ -136,6 +140,7 @@ fn main() -> ExitCode {
         Command::Import(a) => cmd::bundle::import(&a),
         Command::Hook(a) => cmd::hook::run(&a),
         Command::McpProxy(a) => cmd::mcp_proxy::run(&a),
+        Command::Mcp(a) => cmd::mcp::run(&a),
         Command::Policy(c) => cmd::policy::run(&c),
         Command::Ask(a) => cmd::ask::run(&a),
         Command::CellExec { spec } => cmd::session::cell_exec(&spec),

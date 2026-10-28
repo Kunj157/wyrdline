@@ -147,8 +147,9 @@ evidence against everyone else, not against the key holder
 
 Export it (`wyrd export <session> -o x.wyrd`, strict redaction by
 default) and give them the file. Any `wyrd` verifies it
-([bundle format](bundle-format.md)); Studio replays an events export
-offline today, and opens bundles directly once #151 and #193 land. The
+([bundle format](bundle-format.md)); Studio opens the bundle
+offline (`wyrd open`, or its file picker and drag-and-drop), as well as
+an events export. The
 Hub (Phase 12, in progress) is the team server for bundles: roles,
 search, and shared annotations.
 
@@ -160,8 +161,8 @@ and the cosign signature, its sensor script installs and starts
 `wyrd-sensord` on the runner and refuses to run the agent unprotected
 unless told otherwise, and its reporter renders the divergences as a
 job summary and one pull-request comment. The composite action that
-ties them around `wyrd run` is #160; the Hub upload through the job's
-OIDC token (no secret to store) is #161.
+ties them around `wyrd run` is in place (#160); the Hub upload through
+the job's OIDC token (no secret to store) is open as #161.
 
 ### What does it not do?
 

@@ -51,6 +51,7 @@ fn tempfile_probe(root: &Path) -> bool {
 /// Doctor report for this machine. The Landlock ABI is probed through
 /// `wyrd __probe-landlock` in a child, since restricting is irreversible.
 pub fn doctor_report(wyrd_bin: &Path) -> wyrd_doctor::Report {
+    // nosemgrep: wyrd-no-shell-out-in-wyrdd -- fixed sibling binary and argument, probed in a child because restricting is irreversible.
     let landlock_abi = Command::new(wyrd_bin)
         .arg("__probe-landlock")
         .output()

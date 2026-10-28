@@ -50,3 +50,12 @@ Exact versions are pinned in `Cargo.lock`, `pnpm-lock.yaml`, and
   browser correlator.
 - **libbpf (C) programs** — well-trodden, but adds C and clang to the
   toolchain; Aya keeps the eBPF code in Rust and shares structs.
+
+## Amendment (release packaging, #167)
+
+The delivery row above names cargo-dist. Release packaging does not use it:
+the `.deb` needs the sensor's systemd unit and AppArmor profile, an AppArmor
+reload in postinst, and fixed archive metadata for reproducibility. These are
+produced by `scripts/release/package.sh` in the release workflow instead,
+which keeps them in one reviewable place. cargo-dist remains a candidate for
+installer generation later; see `docs/release.md`.
