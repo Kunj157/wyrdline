@@ -31,8 +31,12 @@ fn control(st: &AppState, sid: &str) -> Result<Option<(std::path::PathBuf, Strin
 fn call(socket: &std::path::Path, req: &Request) -> Result<Option<Response>, Problem> {
     match wyrd_adapters::protocol::call(socket, req, super::ingest::TIMEOUT) {
         Ok(r) => Ok(Some(r)),
-        // The run ended between reading the token and connecting.
-        Err(wyrd_adapters::protocol::ProtocolError::Io(_)) => Ok(None),
+        // The session ended mid-request: an I/O error or a connection closed
+        // without an answer. Same as no session.
+        Err(
+            wyrd_adapters::protocol::ProtocolError::Io(_)
+            | wyrd_adapters::protocol::ProtocolError::NoResponse,
+        ) => Ok(None),
         Err(e) => Err(Problem::internal(e.to_string())),
     }
 }
@@ -47,7 +51,9 @@ pub async fn list(
         };
         match call(&socket, &Request::Asks { token })? {
             Some(Response::Asks { asks }) => Ok(Json(PendingAsks { asks })),
-            None => Ok(Json(PendingAsks { asks: Vec::new() })),
+            // The session refused the token it was read with, or is still
+            // starting. Nothing is waiting for an answer right now.
+            None | Some(Response::Error { .. }) => Ok(Json(PendingAsks { asks: Vec::new() })),
             Some(other) => Err(Problem::internal(format!("unexpected answer {other:?}"))),
         }
     })

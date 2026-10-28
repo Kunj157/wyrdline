@@ -235,3 +235,52 @@ async fn asks_need_the_daemon_token() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn a_token_read_mid_write_lists_nothing_instead_of_failing() {
+    let e = env();
+    let _ingest = live(&e);
+    let app = app(&e);
+    let path = format!("/v1/sessions/{}/asks", e.id);
+    let (s, v) = send(&app, "GET", &path, None).await;
+    assert_eq!((s, v), (StatusCode::OK, json!({"asks": []})));
+
+    // A poll that reads the control token while a plain truncate-and-write is
+    // in progress sees it empty. The session refuses that token; the list
+    // must still answer, with nothing waiting.
+    let session = Session::open(&e.data, &e.id).unwrap();
+    std::fs::write(session.dir().root().join(CONTROL_TOKEN_FILE), "").unwrap();
+    let (s, v) = send(&app, "GET", &path, None).await;
+    assert_eq!(
+        (s, v),
+        (StatusCode::OK, json!({"asks": []})),
+        "no 500 mid-write"
+    );
+
+    // Once the token is back, the session is reachable again.
+    std::fs::write(session.dir().root().join(CONTROL_TOKEN_FILE), CONTROL).unwrap();
+    let (s, v) = send(&app, "GET", &path, None).await;
+    assert_eq!((s, v), (StatusCode::OK, json!({"asks": []})));
+}
+
+#[tokio::test]
+async fn a_session_that_closes_a_request_without_answering_has_no_asks() {
+    let e = env();
+    let s = Session::open(&e.data, &e.id).unwrap();
+    std::fs::write(s.dir().root().join(CONTROL_TOKEN_FILE), CONTROL).unwrap();
+    // A session that reads the request and goes away: the connection closes
+    // with no answer, as when the session exits mid-request.
+    let path = wyrd_adapters::server::socket_path(s.dir().root(), &e.id);
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut line = String::new();
+            let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(&stream), &mut line);
+            drop(stream);
+        }
+    });
+    let app = app(&e);
+    let (status, v) = send(&app, "GET", &format!("/v1/sessions/{}/asks", e.id), None).await;
+    assert_eq!((status, v), (StatusCode::OK, json!({"asks": []})), "no 500");
+    let _ = std::fs::remove_file(&path);
+}
