@@ -65,7 +65,7 @@ request):
 → {"type":"register","cgroup":"/sys/fs/cgroup/…/wyrd-<id>-r1.scope","workspace":"/home/u/repo"}
 ← {"type":"registered","cgroup_id":12345,"attached":6,"skipped":[]}
 ← {"type":"event","ts_mono_ns":…,"process":{…},"body":{"kind":"effect.file.rename","payload":{…}}}
-← {"type":"drops","total":0}
+← {"type":"drops","total":0,"queue_dropped":0}
 ```
 
 - The cgroup must be a cgroup v2 directory owned by the caller's uid
@@ -73,6 +73,11 @@ request):
 - `registered` is sent only after the cgroup is in the kernel map, so a
   client may release its workload immediately without losing events.
 - Closing the connection unregisters the cgroup.
+- `drops` reports `total` (ring-buffer drops since the daemon started) and
+  `queue_dropped`: events this connection's queue refused because the client
+  was not reading fast enough. Both are cumulative. A client that falls
+  behind sees the count in the next report; the report sent just before each
+  `flushed` answer carries the final count.
 
 ## Deployment
 
