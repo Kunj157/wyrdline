@@ -149,20 +149,19 @@ Export it (`wyrd export <session> -o x.wyrd`, strict redaction by
 default) and give them the file. Any `wyrd` verifies it
 ([bundle format](bundle-format.md)); Studio opens the bundle
 offline (`wyrd open`, or its file picker and drag-and-drop), as well as
-an events export. The
-Hub (Phase 12, in progress) is the team server for bundles: roles,
-search, and shared annotations.
+an events export. To share a session with a whole team, upload the
+bundle to the Hub: see [the Hub](hub.md).
 
 ### Does it run in CI?
 
-A GitHub Action is being assembled in `integrations/github-action`
-(Phase 13): its installer downloads a release and verifies the checksum
-and the cosign signature, its sensor script installs and starts
-`wyrd-sensord` on the runner and refuses to run the agent unprotected
-unless told otherwise, and its reporter renders the divergences as a
-job summary and one pull-request comment. The composite action that
-ties them around `wyrd run` is in place (#160); the Hub upload through
-the job's OIDC token (no secret to store) is open as #161.
+Yes. The GitHub Action in `integrations/github-action` runs `wyrd run`
+around your agent on a runner. Its installer downloads a release and
+verifies the checksum and the cosign signature; its sensor script
+installs and starts `wyrd-sensord` on the runner and refuses to run the
+agent unprotected unless `WYRD_ALLOW_DEGRADED=true` is set; and its
+reporter renders the divergences as a job summary and one pull-request
+comment. A job can also upload its bundle to a Hub with the job's OIDC
+token, so no secret is stored ([the Hub](hub.md)).
 
 ### What does it not do?
 

@@ -125,8 +125,8 @@ Limits to keep in mind:
 ## The sandbox a policy runs in
 
 Policies are untrusted code ([ADR-007](../adr/007-wasm-policy-host.md)):
-every call gets a fresh instance with a fuel budget (~8 ms) and 32 MiB of
-memory; every import other than `log` traps, so a policy has no
+every call gets a fresh instance with a fixed fuel budget (200 million
+units per call, `FUEL_PER_CALL` in `wyrd-policy`) and 32 MiB of memory; every import other than `log` traps, so a policy has no
 filesystem, network, clock, or randomness. A trap, an exhausted budget, or
 a malformed result is a deny; a `kernel-rules` that fails stops the
 session from starting. `log` keeps 32 lines of 512 bytes per call.

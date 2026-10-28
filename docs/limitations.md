@@ -5,7 +5,7 @@ when the machine lacks a capability. Everything here is also stated
 where it applies (the threat model, the policy guide, `wyrd doctor`);
 this page collects it.
 
-## Not in the first release
+## Out of scope for 1.0
 
 By decision (plan scope, not for lack of time):
 
@@ -102,7 +102,8 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
 - **Attribution has confidence levels.** `direct` (1.0) comes from a
   matched exec or a touched target path; `window` (0.8) from a single
   open call window; `ambiguous` lists candidates and picks none. The
-  kernel keeps 8 arguments of 64 bytes each per exec, so a wrapped
+  kernel keeps the first 8 arguments of each exec, up to 63 bytes of
+  each, so a wrapped
   command (`bash -c -l "source …; eval '<cmd>'"`) is matched by its
   window rather than its text. The published precision and recall
   ([attribution](results/attribution.md)) are on synthetic sessions
@@ -133,17 +134,21 @@ The short version: Claude Code is wired automatically and verified
 against recorded payloads and real runs; Codex CLI and Gemini CLI need
 a one-time hook registration and have **not been verified in a live
 run** on the development machine; a generic MCP client is covered only
-for the servers you wrap with `wyrd mcp-proxy`; OTLP covers
-`execute_tool` spans. Kernel effects are captured for every agent
+for the servers you wrap with `wyrd mcp-proxy`; `wyrd mcp` lets an agent
+read its own session and request a rewind, which a person must confirm;
+OTLP covers `execute_tool` spans. Kernel effects are captured for every agent
 regardless.
 
 ## Studio
 
 - WebGPU is used when the browser offers it, with Canvas2D and SVG
-  fallbacks and a table view. The 60 fps target at 200 000 events on a
-  laptop GPU has not been measured on real hardware
-  ([studio performance](results/studio-perf.md)); Canvas2D holds 60 fps
-  at 200 000 events in headless Chromium.
+  fallbacks and a table view. The committed measurements
+  ([studio performance](results/studio-perf.md)) are: Canvas2D at 60 fps
+  (p95 frame 16.8 ms) with 200 000 events in headless Chromium; WebGPU
+  on a CPU software rasteriser (SwiftShader) at 30 fps (p95 frame
+  33.2 ms) with the same events. The 60 fps target on a real GPU has not
+  been measured: there is no GPU on the development machine or the CI
+  runners.
 - Monotonic timestamps above 2^53 ns (about 104 days of uptime) lose
   precision in the browser; ordering always uses `seq`.
 - Offline replay (`?offline=`) accepts an events export from the same

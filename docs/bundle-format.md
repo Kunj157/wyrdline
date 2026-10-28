@@ -63,7 +63,7 @@ cas/<hex blake3>       # checkpoint content, sorted by name (absent with --no-co
 claims.json
 divergences.json
 ledger.cbor-seq
-annotations.automerge  # reserved for Phase 12 (collaboration); not written yet
+annotations.automerge  # reserved for annotation sync; not written by this version
 ```
 
 No other path is valid. A path is relative, has no empty, `.` or `..`

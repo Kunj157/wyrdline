@@ -41,28 +41,31 @@ From that it can:
 
 ## Status
 
-Pre-alpha. Work proceeds phase by phase; see the [roadmap](#roadmap).
-Phases 0–9 are done: `wyrd doctor`, the hash-chained ledger and
-content-addressed store, the Cell (checkpoint, rewind, fork, diff, apply),
-the intent plane — agent hooks, an MCP gateway (stdio and Streamable
-HTTP servers), OTLP traces, redaction, and a checkpoint after every tool
-call — the effect plane: an eBPF sensor (`wyrd-sensord`) that records
-every exec, file write, rename, delete, and connect of the agent's
-process tree, with drops counted in the ledger — the correlator, which
-attributes each kernel effect to the tool call that caused it, natively
-and in WebAssembly — and `wyrdd`, the per-user daemon with an
-authenticated HTTP API, a resumable live event stream, and an
-[OpenAPI contract](docs/api/openapi.json) — and **Studio**, the web UI
-the daemon serves: the Causal River (WebGPU, with Canvas2D and SVG
-fallbacks), an inspector for every event, live mode, rewind, fork, diff,
-and apply, and offline replay of exported sessions with the correlator
-running in the browser ([performance](docs/results/studio-perf.md)) — and the
-**Guard**: policies as sandboxed WebAssembly components that decide every
-tool call (allow, deny, or ask a human), with their rules enforced in the
-kernel — Landlock for files and ports, cgroup BPF for network egress, an
-exec observer that stops forbidden programs — and backtests of recorded
-sessions ([policy guide](docs/policies/README.md),
-[escape suite and latency](docs/results/enforcement.md)):
+Pre-1.0: the 1.0 user documentation is in [`docs/`](#documentation). The
+roadmap is [below](#roadmap); what 1.0 does not do is in
+[limitations](docs/limitations.md). The capabilities, in short:
+
+- **Capture:** `wyrd run` sandboxes an agent in a Cell, records its tool
+  calls (hooks for Claude Code, an MCP gateway, OTLP), and records every
+  exec, write, rename, delete, and connect of its process tree through
+  an eBPF sensor, with drops counted in the ledger
+  ([adapter coverage](docs/adapter-coverage.md)).
+- **Analysis:** the correlator attributes each kernel effect to the tool
+  call that caused it, natively and in WebAssembly; divergence rules
+  compare what the agent said with what happened.
+- **Control:** checkpoints after every tool call, with rewind, fork,
+  diff, and apply; policies written as WebAssembly components decide each
+  tool call (allow, deny, or ask a human) and their kernel rules are
+  enforced by Landlock and cgroup BPF ([policy guide](docs/policies/README.md),
+  [enforcement results](docs/results/enforcement.md)).
+- **Agents can ask, not act:** `wyrd mcp` lets an agent inspect its own
+  session and request a rewind; a person confirms or rejects it.
+- **Studio:** the web UI served by `wyrdd`: the Causal River, an
+  inspector for every event, live sessions, rewind and apply, and offline
+  replay of exported sessions and verified `.wyrd` bundles in the browser
+  ([performance](docs/results/studio-perf.md)).
+- **Sharing:** signed, redacted `.wyrd` bundles that anyone can verify
+  with `wyrd verify`, and a team Hub for uploading and searching them.
 
 ```
 wyrd run -- claude -p "fix the failing cart test"   # hooks injected, workspace sandboxed
@@ -80,9 +83,21 @@ wyrd ask <session>                                   # answer what the policy as
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
+wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
+wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
+wyrd push session.wyrd --hub https://hub.example --org acme  # share it on a team Hub (token in WYRD_HUB_TOKEN)
 ```
 
-Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).
+Capture adds +0.8 % to a debug `cargo build` on a workstation and +1.5 %
+on a hosted runner ([measurements](docs/results/perf-sensor.md)).
+
+## Performance
+
+> **PLACEHOLDER (1.0).** The 1.0 performance numbers come from
+> `docs/results/perf-v1.0.md` (#165), which is not committed yet. This
+> section will be filled from that report only; until then the committed
+> measurements are linked from the sections above and from
+> [limitations](docs/limitations.md).
 
 ## How it compares
 
@@ -105,8 +120,8 @@ Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sen
 - **Studio:** React 19, TypeScript, Vite, TanStack, Tailwind v4, WebGPU,
   Automerge, Rust correlator compiled to Wasm
 - **Hub:** Axum, PostgreSQL, S3-compatible storage, DuckDB, Helm
-- **Delivery:** GitHub Actions, kernel-matrix VM tests, cargo-dist, cosign,
-  SLSA provenance, CycloneDX SBOM
+- **Delivery:** GitHub Actions, kernel-matrix VM tests, reproducible builds,
+  cosign, SLSA provenance, CycloneDX SBOM
 
 ## Requirements
 
@@ -138,7 +153,8 @@ reports exactly what is available and what degrades without it.
 
 - **Using Wyrdline:** [install](docs/install.md), [quick start](docs/quick-start.md)
   (install to a recorded, inspected, exported session), [adapter coverage](docs/adapter-coverage.md)
-  (what each agent reports), [limitations](docs/limitations.md), [FAQ](docs/faq.md)
+  (what each agent reports), [the Hub](docs/hub.md) (team uploads, search, and
+  analytics), [limitations](docs/limitations.md), [FAQ](docs/faq.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),

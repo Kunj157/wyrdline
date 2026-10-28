@@ -21,18 +21,21 @@ Linux only, x86_64 or aarch64 ([requirements](#kernel-requirements)).
 Each GitHub release carries, for every architecture:
 
 ```
-wyrdline-x86_64-unknown-linux-gnu.tar.gz     the binaries
-wyrdline-aarch64-unknown-linux-gnu.tar.gz
+wyrdline-<arch>-unknown-linux-gnu.tar.gz    wyrdline/bin/{wyrd,wyrdd,wyrd-sensord,wyrd-hub},
+                                            wyrdline/share/wyrdline/studio, deploy/ (sensor unit, AppArmor profile)
+wyrdline_<version>_<amd64|arm64>.deb         /usr/bin binaries, the sensor unit and AppArmor profile, the Studio
+wyrdline-<binary>-<target>.cdx.json          CycloneDX SBOM per binary and target
 SHA256SUMS                                   sha256sum lines for every asset
 SHA256SUMS.sigstore.json                     cosign keyless signature over SHA256SUMS
 ```
 
-This is the contract the GitHub Action's installer relies on
-(`integrations/github-action/scripts/install.sh`); a release that lacks
-`SHA256SUMS` is refused by it. The release pipeline that produces these
-assets, the `.deb`, the SBOM, and the build provenance is tracked in
-issue #167; check the release notes of the version you install for the
-exact asset list.
+`<arch>` is `x86_64` or `aarch64`. Each asset also has a build-provenance
+attestation. The GitHub Action's installer relies on the archive and
+`SHA256SUMS` (`integrations/github-action/scripts/install.sh`); a release
+that lacks `SHA256SUMS` is refused by it. The `.deb` does not enable the
+sensor; the step below does.
+
+The Hub's container image and Helm chart are described in [the Hub](hub.md).
 
 ### 1. Download and verify
 
@@ -61,17 +64,17 @@ before you install: `wyrd-sensord` runs as root.
 ### 2. Install the binaries
 
 ```sh
-mkdir -p wyrdline && tar -xzf wyrdline-$(uname -m)-unknown-linux-gnu.tar.gz -C wyrdline
-sudo install -m 0755 wyrdline/wyrd wyrdline/wyrdd /usr/local/bin/
-sudo install -m 0755 wyrdline/wyrd-sensord /usr/local/bin/wyrd-sensord
+tar -xzf wyrdline-$(uname -m)-unknown-linux-gnu.tar.gz
+sudo install -m 0755 wyrdline/bin/wyrd wyrdline/bin/wyrdd wyrdline/bin/wyrd-sensord wyrdline/bin/wyrd-hub /usr/local/bin/
+sudo cp -R wyrdline/share/wyrdline /usr/local/share/
 wyrd --version
 ```
 
-Anywhere on `PATH` works for `wyrd` and `wyrdd` (the agent's hooks run
-`wyrd hook …`, so the agent must find `wyrd` too). `wyrdd` looks for the
-built Studio at `<prefix>/share/wyrdline/studio` next to its own
-`<prefix>/bin/wyrdd`; see [Studio](#studio) if the archive you installed
-has it somewhere else.
+`wyrd` must be on `PATH` for the agent too (the agent's hooks run
+`wyrd hook …`). `wyrdd` looks for the built Studio at
+`<prefix>/share/wyrdline/studio` next to its own `<prefix>/bin/wyrdd`,
+which is what the last command sets up for `/usr/local`; see
+[Studio](#studio) for other layouts.
 
 ### 3. Install the sensor
 
@@ -123,8 +126,8 @@ the directory to `GITHUB_PATH`.
 
 ### `.deb`
 
-A Debian package is part of the release pipeline (#167); its name and
-contents are listed in the release notes of each version. Verify its
+Each release ships a Debian package; its name and contents are listed in
+the release notes of that version. Verify its
 checksum against the signed `SHA256SUMS` as above before
 `sudo dpkg -i <file>.deb`, then check `wyrd doctor`: if the package
 did not enable the sensor, finish with step 3.
