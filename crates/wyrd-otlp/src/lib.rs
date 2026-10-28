@@ -8,6 +8,7 @@
 //! counted but not recorded: event schema v1 has no kind for model usage.
 //! The HTTP receiver (and protobuf decoding) arrives with the daemon API in
 //! Phase 7; OTLP is never required.
+#![forbid(unsafe_code)]
 
 use serde_json::Value;
 use wyrd_bundle::redact::{Level, redact_json, redact_str};
