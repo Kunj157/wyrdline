@@ -39,7 +39,8 @@ The source is `apps/studio/src/lib/annotations/`.
 ## Sync with the Hub
 
 The sync client (`apps/studio/src/lib/annotations/client.ts`) is attached to
-the replica only when the page names a bundle: `?bundle=<bundle id>`. Without
+the replica only when the page names a bundle: `?hub=<bundle id>`
+(`?bundle=` opens a bundle file in bundle mode, so it is not reused). Without
 it, annotations stay on this device.
 
 - The local copy is keyed by the bundle (`bundle:<id>`), so the same session
@@ -77,11 +78,17 @@ The relay (`crates/wyrd-sync`) keeps one room per open document and persists
 it per bundle. `wyrd_hub_sync_*` metrics count connections, messages,
 clients, documents and document bytes.
 
-## Bundles
+## Bundles and export
 
-`wyrd export --annotations <file>` writes the saved document as
-`annotations.automerge` in a `standard` bundle. A `strict` bundle never
+The annotations panel has a **Download annotations** action. It saves the
+replica's document as `<session>.annotations.automerge`, the file
+`wyrd export --annotations <file>` takes. Export then writes it into a
+`standard` bundle as `annotations.automerge`. A `strict` bundle never
 includes it. See [the bundle format](../bundle-format.md#annotationsautomerge).
+
+The `wyrd export` flag replaced the wyrdd directory read from the original
+commit (`a24dc5e`). That commit does not compile on its own, and `ca2150b`
+is the fix.
 
 ## Tests
 
@@ -98,7 +105,17 @@ includes it. See [the bundle format](../bundle-format.md#annotationsautomerge).
   persistence).
 - `crates/wyrd-cli/tests/bundle.rs`: annotations are included in standard
   bundles only.
+- `apps/studio/src/lib/annotations/export.test.ts`: the downloaded file loads
+  back with its comments.
+- `tests/e2e/hub/annotations-hub.spec.ts` (`make test-e2e-hub`, CI only):
+  three browser contexts on one bundle. Two members sync live, one goes
+  offline and edits, and the edits merge; a viewer sees the panel read-only
+  and no form; a fresh browser reads the merged document from the Hub; the
+  download action saves the file.
 
-Not yet covered: a Hub-backed browser test with two contexts. It needs the
-Hub, its database and an identity provider in CI, and the Studio session page
-still reads session data from `wyrdd`, so it is a follow-up.
+The browser test runs Studio, the session API and the Hub behind one
+same-origin proxy (`tests/e2e/hub/global-setup.ts`). The session data comes
+from the wyrdd fixture, because the Studio session page still reads it from
+`wyrdd`. The annotation sync uses the Hub. The teammates' sessions and the
+bundle row are seeded with psql, since the Hub's upload endpoint is #198 and
+the sync endpoint reads only the bundle row.
