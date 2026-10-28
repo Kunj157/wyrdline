@@ -70,7 +70,9 @@ pub enum ServerMsg {
         #[serde(default)]
         queue_dropped: u64,
     },
-    /// Answer to [`ClientMsg::Flush`]: every earlier event was sent before it.
+    /// Answer to [`ClientMsg::Flush`]. Every event the kernel had queued before
+    /// the request was either sent before this message or counted in the
+    /// `drops` report sent just before it (`queue_dropped`).
     Flushed {
         token: u64,
     },

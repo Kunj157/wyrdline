@@ -78,6 +78,12 @@ request):
   was not reading fast enough. Both are cumulative. A client that falls
   behind sees the count in the next report; the report sent just before each
   `flushed` answer carries the final count.
+- Each client has a fixed number of event slots. A full queue never blocks
+  the sensor: events are counted as dropped, and heartbeats are skipped.
+  Flush answers and the loss report sent with them use a reserved set of
+  slots, so a full event queue cannot lose the barrier. Every event queued
+  before a `flushed` is either delivered before it or counted in the loss
+  report just before it.
 
 ## Deployment
 
