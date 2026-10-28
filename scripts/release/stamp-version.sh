@@ -21,6 +21,9 @@ if [ "$current" = "$version" ]; then
   exit 0
 fi
 
+# A clean runner has no registry index: fetch the locked packages first, so the
+# offline update can resolve the workspace entries from the cache.
+cargo fetch --locked --quiet
 sed -i "/^\[workspace\.package\]/,/^\[/s/^version = \"$current\"$/version = \"$version\"/" Cargo.toml
 cargo update --workspace --offline --quiet
 cargo metadata --locked --offline --format-version 1 >/dev/null
