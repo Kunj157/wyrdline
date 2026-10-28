@@ -26,6 +26,9 @@ browser / wyrd CLI ──HTTPS──▶ wyrd-hub (Axum)
 | `WYRD_HUB_S3_ACCESS_KEY_ID`, `WYRD_HUB_S3_SECRET_ACCESS_KEY` | required | credentials |
 | `WYRD_HUB_OIDC_ISSUER`, `WYRD_HUB_OIDC_CLIENT_ID`, `WYRD_HUB_OIDC_CLIENT_SECRET` | unset | OIDC login; unset disables browser login |
 | `WYRD_HUB_DATA_DIR` | `wyrd-hub-data` | local scratch (upload spooling, analytics projections) |
+| `WYRD_HUB_MAX_UPLOAD_BYTES` | 256 MiB | largest bundle accepted |
+| `WYRD_HUB_QUOTA_BYTES`, `WYRD_HUB_QUOTA_BUNDLES` | 10 GiB, 10 000 | quota of new organisations |
+| `WYRD_HUB_RETENTION_INTERVAL_SECS` | `3600` | retention sweep interval (0 disables) |
 | `WYRD_LOG` | `info` | log filter; logs are JSON lines on stderr |
 
 Secrets are wrapped so they never appear in `Debug` output or logs.
@@ -65,6 +68,102 @@ migration, undo all of them, and apply them again.
 | `bundles` | verified manifest metadata, uploader-supplied repo, divergence rules, size, object key |
 | `audit_logs` | actor, action, target, request id, details; append-only (a trigger rejects `UPDATE`, `DELETE`, `TRUNCATE`) |
 
+## Authentication
+
+**Browser login** is OpenID Connect, authorization code with PKCE:
+
+1. `GET /api/v1/auth/oidc/login?return_to=/path` stores a pending login
+   (hashed `state`, `nonce`, PKCE verifier; 10 minutes) bound to the
+   browser by an HttpOnly `wyrd_login` cookie, and redirects to the
+   provider.
+2. The provider redirects to `GET /api/v1/auth/oidc/callback?code&state`
+   (a client that handles the redirect itself may `POST` `{code, state}`
+   as JSON). The state is consumed once; the browser binding, expiry, the
+   code exchange (client secret + verifier), and the ID token (signature
+   against the provider's JWKS: RS256, ES256 or EdDSA, refreshed on an
+   unknown `kid` for key rotation; `iss`, `aud`/`azp`, `exp` with 60 s
+   leeway, `nonce`) are checked. Any failure answers 401 "Login failed"
+   without detail and is logged with its reason and counted in
+   `wyrd_hub_logins_total{outcome}`; an unreachable provider is 503.
+3. The user is found or created by `(issuer, subject)`, a **new** session
+   id is issued (no session fixation), and `wyrd_session` is set:
+   HttpOnly, SameSite=Lax, Path=/, 7 days; on HTTPS also `Secure` with the
+   `__Host-` prefix. Only `return_to` paths on the Hub itself are honoured.
+
+GitHub is the production identity provider through Dex's GitHub
+connector (GitHub's own OAuth does not issue ID tokens).
+
+**API tokens** (`Authorization: Bearer wyrdhub_…`) are created from a
+signed-in session with `POST /api/v1/tokens {name, org?, expires_in_days?}`
+(default 90, at most 365 days); the secret is shown once. A token acts as
+its user, optionally only in one organisation; tokens cannot create
+tokens. Removing a membership deletes the user's tokens for that org.
+
+Session ids, tokens, and login state are stored only as SHA-256 hashes.
+**CSRF:** a cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` must carry
+the Hub's own `Origin` (or `Sec-Fetch-Site: same-origin`), else 403;
+bearer-token requests are not subject to this.
+
+**Roles** per organisation: `viewer` < `member` < `admin`. Any signed-in
+user may create an organisation and becomes its admin; admins add,
+change, and remove members (by user id or email; the user must have
+signed in once) and cannot remove or demote the last admin (409).
+
+**Audit log:** every mutation writes an `audit_logs` row in the same
+transaction (actor, action, target, request id, details). Actions so far:
+`auth.login`, `auth.logout`, `org.create`, `org.member.set`,
+`org.member.remove`, `token.create`, `token.revoke`, `org.update`,
+`bundle.upload`, `bundle.delete`, `bundle.expire`. Admins read their
+organisation's log with `GET /api/v1/audit-logs?org=<slug>&limit=&before=`
+(newest first).
+
+## Bundles
+
+`POST /api/v1/orgs/{org}/bundles` (member) takes `multipart/form-data`
+with a `bundle` file and an optional `repo` label, and:
+
+1. streams the file to a spool file under `WYRD_HUB_DATA_DIR/uploads`,
+   refusing it with 413 as soon as it passes `WYRD_HUB_MAX_UPLOAD_BYTES`
+   (nothing is buffered in memory; the spool file is always removed);
+2. verifies it with `wyrd-bundle`'s reader (archive structure and size
+   limits, signature over the manifest, manifest, every file hash, the
+   ledger hash chain). A failure is **422** `bundle-rejected` with
+   `failed_check` and the full `checks` list;
+3. locks the organisation, answers 200 with the existing bundle if the
+   same manifest was uploaded before, and checks the quota: bundle count
+   (**429** `quota-bundles`) and stored bytes (**413** `quota-bytes`);
+4. stores the object at `bundles/<org id>/<bundle id>.wyrd`, then inserts
+   the row (session id, name, agent, signer fingerprint, event count,
+   divergence rules raised, size, repo) and the `bundle.upload` audit
+   entry in one transaction. If storage is down the answer is 503 and no
+   row exists; if the insert fails the object is deleted again.
+
+`GET /api/v1/orgs/{org}/bundles?repo=&rule=&since=&before=&limit=` lists
+newest first (`since` is an RFC 3339 time or date, `before` a bundle id
+for paging); `GET /api/v1/bundles/{bid}` shows one;
+`…/download` streams it back byte for byte; `DELETE` (admin) removes the
+row with a `bundle.delete` audit entry, then the object.
+
+**Retention:** admins set `PATCH /api/v1/orgs/{org} {"retention_days":
+N}` (1–3650, or `null` for none; audited as `org.update`). Every
+`WYRD_HUB_RETENTION_INTERVAL_SECS` the Hub deletes bundles older than
+that, each audited as `bundle.expire` by `system`.
+
+**Quotas:** every organisation starts with `WYRD_HUB_QUOTA_BYTES` and
+`WYRD_HUB_QUOTA_BUNDLES`. There is no self-service endpoint (an org admin
+would raise their own limit); the operator changes `orgs.quota_bytes` and
+`orgs.quota_bundles` in the database.
+
+**From the CLI:** `wyrd push file.wyrd --hub <url> --org <slug> [--repo
+owner/name]` with an API token in `WYRD_HUB_TOKEN`. It verifies the file
+locally first, then streams it. Exit codes: 0 uploaded (or already
+there), 1 usage or refused, 3 verification failed, 4 over quota, 5 Hub
+unreachable.
+
+Metrics: `wyrd_hub_uploads_total{outcome}` (`accepted`, `duplicate`,
+`rejected`, `too_large`, `over_quota`, `storage_error`, `error`),
+`wyrd_hub_bundle_verify_seconds`, `wyrd_hub_retention_sweeps_total`.
+
 ## API (`/api/v1`)
 
 Roles: `viewer` (read), `member` (+ upload, annotate), `admin` (+ delete,
@@ -82,7 +181,7 @@ belong to answers **404**, exactly like one that does not exist.
 | `GET /api/v1/audit-logs?org=` | admin | #156 |
 | `POST /api/v1/orgs/{org}/bundles`, `GET …/bundles?repo=&rule=&since=` | member / viewer | #157 |
 | `GET /api/v1/bundles/{bid}`, `GET …/download`, `DELETE …` | viewer / viewer / admin | #157 |
-| `PATCH /api/v1/orgs/{org}` (quota, retention) | admin | #157 |
+| `PATCH /api/v1/orgs/{org}` (retention) | admin | #157 |
 | `GET /api/v1/orgs/{org}/stats`, `GET …/search?q=` | viewer | #158 |
 | `GET /api/v1/sync?bundle={bid}` (WebSocket) | viewer read-only, member+ write | #159 |
 

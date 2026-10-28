@@ -274,13 +274,46 @@ fn privileged_drops_are_counted_with_a_tiny_ring_buffer() {
     let start = Instant::now();
     let mut drops = 0;
     while start.elapsed() < Duration::from_secs(15) && drops == 0 {
-        if let Ok(Some(ServerMsg::Drops { total })) = client.recv() {
+        if let Ok(Some(ServerMsg::Drops { total, .. })) = client.recv() {
             drops = total;
         }
     }
     assert!(
         drops > 0,
         "a 4 KiB ring buffer must overflow under 3000 creates"
+    );
+}
+
+#[test]
+fn privileged_a_stalled_client_sees_its_own_queue_drops() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    // A 16-event client queue: a client that stops reading overflows it.
+    let d = daemon(tmp.path(), &["--client-queue", "16"]);
+    let g = gated(
+        tmp.path(),
+        "stall",
+        &format!(
+            "cd {}; i=0; while [ $i -lt 3000 ]; do : > f$i; i=$((i+1)); done; sleep 2",
+            ws.display()
+        ),
+    );
+    let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
+    g.release();
+    // Stop reading while the workload runs, then read until the loss shows.
+    std::thread::sleep(Duration::from_secs(3));
+    client.set_timeout(Some(Duration::from_secs(10))).unwrap();
+    let start = Instant::now();
+    let mut lost = 0;
+    while start.elapsed() < Duration::from_secs(20) && lost == 0 {
+        if let Ok(Some(ServerMsg::Drops { queue_dropped, .. })) = client.recv() {
+            lost = queue_dropped;
+        }
+    }
+    assert!(
+        lost > 0,
+        "a client that stopped reading must see its own queue drops"
     );
 }
 
