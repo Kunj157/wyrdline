@@ -13,6 +13,7 @@ import {
   type TriageState,
   unpinCheckpoint,
 } from "../lib/annotations/doc";
+import type { StatusReport } from "../lib/annotations/client";
 import { useAnnotations } from "../lib/annotations/use-annotations";
 
 const NAME_KEY = "wyrd.annotator";
@@ -43,12 +44,34 @@ export interface AnnotationsPanelProps {
   /** Where the annotations are kept or synced (shown above the list). */
   status?: ReactNode;
   readOnly?: boolean;
+  /** The Hub bundle to sync with; null keeps annotations on this device. */
+  bundle?: string | null;
+}
+
+/** What the sync state means to the reader, or null when not synced. */
+function syncText(sync: StatusReport | null): string | null {
+  if (!sync) return null;
+  if (sync.role === "viewer")
+    return "Shared with you: read-only (you are a viewer of this bundle).";
+  switch (sync.status) {
+    case "live":
+      return "Synced with the Hub.";
+    case "connecting":
+    case "reconnecting":
+      return "Reconnecting. Your edits are kept on this device and will sync.";
+    case "offline":
+      return "Offline. Your edits are kept on this device and will sync when you are back online.";
+    case "closed":
+      return null;
+  }
 }
 
 /**
  * Team annotations of a session: comments anchored to seq ranges, the
  * team's triage of each divergence and pinned checkpoints. Edits go to the
- * local Automerge replica first and reach teammates through sync.
+ * local Automerge replica first and reach teammates through sync. A viewer
+ * of the bundle sees the panel read-only; a change the Hub refuses is
+ * rolled back and explained.
  */
 export function AnnotationsPanel({
   sid,
@@ -57,10 +80,12 @@ export function AnnotationsPanel({
   divergences,
   checkpoints,
   status,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
+  bundle = null,
 }: AnnotationsPanelProps) {
   const id = useId();
-  const { replica, snapshot, error } = useAnnotations(sid);
+  const { replica, snapshot, error, sync } = useAnnotations(sid, bundle);
+  const readOnly = readOnlyProp || sync?.role === "viewer";
   const view = snapshot?.view;
   const [name, setName] = useState(storedName);
   const initial = selected === null ? "" : String(selected);
@@ -117,8 +142,14 @@ export function AnnotationsPanel({
     <section aria-label="Annotations" className="flex flex-col gap-4 text-sm">
       <p role="status" className="text-xs text-text-muted">
         {snapshot?.saved ? "Saved on this device" : "Saving…"}
+        {syncText(sync) && <> · {syncText(sync)}</>}
         {status}
       </p>
+      {sync?.error && sync.role !== "viewer" && (
+        <p role="alert" className="text-verdict-denied">
+          The Hub did not accept your last change and it was undone: {sync.error}
+        </p>
+      )}
       {problem && (
         <p role="alert" className="text-verdict-denied">
           {problem}

@@ -25,6 +25,7 @@ import {
   useSession,
   useVerify,
 } from "../lib/api";
+import { bundleFromLocation } from "../lib/annotations/use-annotations";
 import { evidenceSeqs } from "../lib/divergences";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
@@ -221,6 +222,7 @@ export function SessionPage() {
                     onSelect={setSelected}
                     divergences={divergences.data?.divergences ?? []}
                     checkpoints={checkpoints.data?.checkpoints ?? []}
+                    bundle={bundleFromLocation()}
                   />
                 ),
               },

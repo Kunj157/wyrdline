@@ -4,7 +4,7 @@ import { SyncPeer } from "./sync";
 
 /**
  * The WebSocket side of annotation sync: one [`SyncPeer`] over a socket to
- * the Hub (or wyrdd) with reconnection and backoff. Local edits are applied
+ * the Hub with reconnection and backoff. Local edits are applied
  * to the document at once and sent when the socket is open; while it is
  * not, they wait in the document and the protocol sends them on reconnect,
  * so nothing is lost. A change the server refuses (a viewer's edit, an
@@ -34,13 +34,17 @@ export interface SocketLike {
   onerror: ((ev: unknown) => void) | null;
 }
 
-export type SocketFactory = (url: string, protocols: string[]) => SocketLike;
+export type SocketFactory = (url: string) => SocketLike;
 
 export interface SyncClientOptions<T> {
+  /** Same-origin path from [`syncPath`]; resolved against the page. */
   url: string;
-  /** Subprotocols; wyrdd takes the bearer as `wyrd-token.<token>`. */
-  protocols?: string[];
   doc: A.Doc<T>;
+  /**
+   * The document the Hub is known to hold before it has said anything: the
+   * shared root. Refusals roll back to it. Defaults to `doc`.
+   */
+  base?: A.Doc<T>;
   onChange: (doc: A.Doc<T>) => void;
   onStatus: (report: StatusReport) => void;
   socket?: SocketFactory;
@@ -52,7 +56,16 @@ export interface SyncClientOptions<T> {
 
 const OPEN = 1;
 
-/** The ws(s) form of a daemon URL, absolute against the page. */
+/**
+ * The sync socket of one bundle on the Hub: `GET /api/v1/sync?bundle=…`.
+ * The Hub authenticates the upgrade with the session cookie and checks the
+ * Origin, so Studio must be served from the Hub's own origin.
+ */
+export function syncPath(bundle: string): string {
+  return `/api/v1/sync?bundle=${encodeURIComponent(bundle)}`;
+}
+
+/** The ws(s) form of a same-origin path, absolute against the page. */
 export function wsUrl(url: string, base = globalThis.location?.href): string {
   const u = new URL(url, base);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
@@ -80,8 +93,10 @@ export class SyncClient<T> {
 
   constructor(private readonly options: SyncClientOptions<T>) {
     this.peer = new SyncPeer(options.doc);
-    this.confirmed = options.doc;
-    this.make = options.socket ?? ((url, protocols) => new WebSocket(url, protocols));
+    this.confirmed = options.base ?? options.doc;
+    // The browser's WebSocket matches SocketLike except for the typed-array
+    // flavour of `send`, which is the same at runtime.
+    this.make = options.socket ?? ((url) => new WebSocket(url) as unknown as SocketLike);
     this.backoff = options.backoff ?? { initial: 500, max: 10_000 };
     this.random = options.random ?? Math.random;
     globalThis.addEventListener?.("online", this.online);
@@ -120,7 +135,7 @@ export class SyncClient<T> {
     this.timer = null;
     let socket: SocketLike;
     try {
-      socket = this.make(this.options.url, this.options.protocols ?? []);
+      socket = this.make(wsUrl(this.options.url));
     } catch {
       this.scheduleReconnect();
       return;
@@ -220,6 +235,10 @@ export class SyncClient<T> {
       this.peer.doc = this.confirmed;
       this.options.onChange(this.peer.doc);
       this.report(this.status);
+      // A viewer's first connection to a bundle with no shared document
+      // yet sends the root change, which the Hub refuses as a write. Every
+      // reconnect would do the same, so stop here; the page shows why.
+      if (n.error === "read_only") this.close();
     }
   }
 }

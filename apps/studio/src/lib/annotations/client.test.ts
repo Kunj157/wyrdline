@@ -18,7 +18,6 @@ class FakeSocket implements SocketLike {
   onerror: SocketLike["onerror"] = null;
   constructor(
     readonly url: string,
-    readonly protocols: string[],
     private readonly relay: FakeRelay,
   ) {}
   send(data: Uint8Array): void {
@@ -54,8 +53,8 @@ class FakeRelay {
   /** Every rejection the relay answered. */
   rejected: string[] = [];
 
-  socket = (url: string, protocols: string[]): FakeSocket => {
-    const s = new FakeSocket(url, protocols, this);
+  socket = (url: string): FakeSocket => {
+    const s = new FakeSocket(url, this);
     this.sockets.push(s);
     return s;
   };
@@ -83,7 +82,9 @@ class FakeRelay {
     if (!peer) return;
     if (this.role === "viewer" && A.decodeSyncMessage(data).changes.length > 0) {
       this.rejected.push("read_only");
-      s.deliver(JSON.stringify({ error: "read_only", message: "viewers cannot change annotations" }));
+      s.deliver(
+        JSON.stringify({ error: "read_only", message: "viewers cannot change annotations" }),
+      );
       s.end();
       return;
     }
@@ -106,12 +107,13 @@ class FakeRelay {
   }
 }
 
-function start(relay: FakeRelay, doc = createAnnotations("s1")) {
+function start(relay: FakeRelay, doc = createAnnotations("s1"), base?: A.Doc<Annotations>) {
   const statuses: StatusReport[] = [];
   const changes: A.Doc<Annotations>[] = [];
   const client = new SyncClient<Annotations>({
     url: "ws://hub.test/api/v1/sync?bundle=b1",
     doc,
+    base,
     onChange: (d) => changes.push(d),
     onStatus: (r) => statuses.push(r),
     socket: relay.socket,
@@ -199,14 +201,38 @@ describe("annotation sync client", () => {
     expect(texts(client.doc)).toEqual(["shared"]);
     expect(texts(changes.at(-1) ?? client.doc)).toEqual(["shared"]);
     expect(statuses.at(-1)?.error).toBe("viewers cannot change annotations");
-    expect(statuses.at(-1)?.status).toBe("reconnecting");
-    // The next connection carries nothing refused.
-    vi.advanceTimersByTime(100);
-    relay.last.open();
+    // A refusal from the Hub ends the connection for good: nothing retries.
+    expect(statuses.at(-1)?.status).toBe("closed");
+    vi.advanceTimersByTime(60_000);
+    expect(relay.sockets).toHaveLength(1);
     expect(relay.rejected).toEqual(["read_only"]);
     expect(relay.comments()).toEqual(["shared"]);
-    // The error clears with the next local change attempt.
     client.close();
+  });
+
+  it("does not loop when a viewer's first connection to an empty bundle is refused", () => {
+    // The bundle has no shared document yet, so the root change this
+    // replica starts from is new to the Hub, and the Hub refuses it.
+    const relay = new FakeRelay();
+    relay.role = "viewer";
+    relay.doc = A.init<Annotations>();
+    const root = createAnnotations("s1");
+    const { client, statuses } = start(
+      relay,
+      addComment(root, { from: 0, to: 0, text: "mine", author: "ana" }),
+      root,
+    );
+    relay.last.open();
+    expect(relay.rejected).toEqual(["read_only"]);
+    expect(statuses.at(-1)).toMatchObject({
+      status: "closed",
+      error: "viewers cannot change annotations",
+    });
+    // Rolled back to the shared root, not to the local comment.
+    expect(texts(client.doc)).toEqual([]);
+    vi.advanceTimersByTime(60_000);
+    expect(relay.sockets).toHaveLength(1);
+    expect(relay.rejected).toEqual(["read_only"]);
   });
 
   it("drops a socket that sends garbage and resyncs on the next one", () => {
@@ -232,7 +258,7 @@ describe("annotation sync client", () => {
     client.close();
   });
 
-  it("builds ws urls from daemon urls", () => {
+  it("builds ws urls from same-origin paths", () => {
     expect(wsUrl("/v1/sync?session=s1", "http://127.0.0.1:7717/sessions/s1")).toBe(
       "ws://127.0.0.1:7717/v1/sync?session=s1",
     );

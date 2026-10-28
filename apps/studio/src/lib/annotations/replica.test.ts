@@ -14,7 +14,7 @@ describe("annotation replica", () => {
     let notified = 0;
     let sent = 0;
     r.subscribe(() => notified++);
-    r.onLocalChange = () => sent++;
+    r.onLocalChange(() => sent++);
     r.change((d) => addComment(d, { from: 1, to: 2, text: "note", author: "ana" }, "c1"));
     expect([notified, sent]).toEqual([1, 1]);
     await r.flush();
@@ -27,5 +27,18 @@ describe("annotation replica", () => {
     await store.save("s1", new Uint8Array([1, 2, 3]));
     const r = await AnnotationReplica.open("s1", store);
     expect(r.view().comments).toEqual([]);
+  });
+
+  it("keeps one local copy per key: a bundle never sees another bundle's notes", async () => {
+    const store = memoryStore();
+    const a = await AnnotationReplica.open("s1", store, "bundle:a");
+    a.change((d) => addComment(d, { from: 1, to: 1, text: "only in a", author: "ana" }, "c1"));
+    await a.flush();
+    const b = await AnnotationReplica.open("s1", store, "bundle:b");
+    const local = await AnnotationReplica.open("s1", store);
+    expect(b.view().comments).toEqual([]);
+    expect(local.view().comments).toEqual([]);
+    const again = await AnnotationReplica.open("s1", store, "bundle:a");
+    expect(again.view().comments.map((c) => c.text)).toEqual(["only in a"]);
   });
 });

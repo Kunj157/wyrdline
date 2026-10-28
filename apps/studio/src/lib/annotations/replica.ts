@@ -23,16 +23,26 @@ export class AnnotationReplica {
   private cached: AnnotationSnapshot | null = null;
   private dirty = false;
   /** Called after local edits only (the sync client sends them). */
-  onLocalChange: (() => void) | null = null;
+  private localListeners = new Set<() => void>();
 
   private constructor(
     readonly session: string,
+    private readonly key: string,
     private current: AnnotationDoc,
     private store: AnnotationStore,
   ) {}
 
-  static async open(session: string, store: AnnotationStore): Promise<AnnotationReplica> {
-    const saved = await store.load(session).catch(() => null);
+  /**
+   * Open the replica of `session`, stored under `key` (default: the session
+   * id). A page synced with a Hub bundle keys by the bundle, so annotations
+   * made against another bundle, or on this device alone, never reach it.
+   */
+  static async open(
+    session: string,
+    store: AnnotationStore,
+    key: string = session,
+  ): Promise<AnnotationReplica> {
+    const saved = await store.load(key).catch(() => null);
     // The root change is shared by every replica, so a fresh document
     // merges with what other replicas already hold.
     let doc = createAnnotations(session);
@@ -43,7 +53,7 @@ export class AnnotationReplica {
         // A corrupt local copy is dropped; the Hub has the shared state.
       }
     }
-    return new AnnotationReplica(session, doc, store);
+    return new AnnotationReplica(session, key, doc, store);
   }
 
   get doc(): AnnotationDoc {
@@ -63,7 +73,7 @@ export class AnnotationReplica {
   /** Apply a local edit (one of the `doc.ts` operations). */
   change(edit: (d: AnnotationDoc) => AnnotationDoc): void {
     this.replace(edit(this.current));
-    this.onLocalChange?.();
+    for (const l of this.localListeners) l();
   }
 
   /** Take a document that already contains this one's changes (sync). */
@@ -73,6 +83,12 @@ export class AnnotationReplica {
     this.dirty = true;
     this.scheduleSave();
     this.notify();
+  }
+
+  /** Run `listener` after every local edit (not after `replace`); returns the unsubscribe. */
+  onLocalChange(listener: () => void): () => void {
+    this.localListeners.add(listener);
+    return () => this.localListeners.delete(listener);
   }
 
   subscribe(listener: () => void): () => void {
@@ -97,7 +113,7 @@ export class AnnotationReplica {
 
   private async save() {
     const doc = this.current;
-    await this.store.save(this.session, A.save(doc));
+    await this.store.save(this.key, A.save(doc));
     // Still saved only if nothing changed while the write was in flight.
     if (doc === this.current && this.dirty) {
       this.dirty = false;
