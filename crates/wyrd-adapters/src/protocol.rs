@@ -45,6 +45,32 @@ pub enum Request {
         allow: bool,
         by: String,
     },
+    /// A read-only view of this session, or a rewind request (`wyrd mcp`
+    /// in the Cell). The agent may send these: none changes the Cell, and
+    /// a rewind request only waits for a human to confirm it.
+    Session {
+        query: SessionQuery,
+    },
+}
+
+/// What [`Request::Session`] asks. There is deliberately no query that
+/// confirms, rejects, or carries out a rewind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "query", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SessionQuery {
+    /// Branches and checkpoints.
+    ListCheckpoints,
+    /// Files changed from a checkpoint to the current branch's head.
+    ChangesSince { checkpoint_id: String },
+    /// One kernel effect: its process chain and attributed tool call.
+    ExplainEffect { seq: u64 },
+    /// Divergences with their triage state.
+    ListDivergences,
+    /// Ask a human to rewind to a checkpoint.
+    RequestRewind {
+        checkpoint_id: String,
+        reason: String,
+    },
 }
 
 /// Which way an MCP message travelled through the gateway.
@@ -74,6 +100,10 @@ pub enum Response {
     /// Pending asks, oldest first.
     Asks {
         asks: Vec<crate::asks::PendingAsk>,
+    },
+    /// The answer to a [`Request::Session`] query.
+    View {
+        result: serde_json::Value,
     },
 }
 

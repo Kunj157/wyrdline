@@ -111,7 +111,9 @@ pub fn run(adapter: Adapter, input: &str, socket: Option<&Path>, mode: CaptureMo
             warning: None,
         },
         Ok(Response::Error { message }) => fail(format!("wyrdline rejected the hook: {message}")),
-        Ok(Response::Asks { .. }) => fail("wyrdline sent an unexpected answer".into()),
+        Ok(Response::Asks { .. } | Response::View { .. }) => {
+            fail("wyrdline sent an unexpected answer".into())
+        }
         Err(e) => fail(format!("wyrdline unavailable: {e}")),
     }
 }

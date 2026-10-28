@@ -74,6 +74,8 @@ enum Command {
     Import(cmd::bundle::ImportArgs),
     /// Open Studio in a browser (served by the running daemon).
     Studio(cmd::studio::Args),
+    /// Open a `.wyrd` bundle in Studio, without the daemon.
+    Open(cmd::open::Args),
     /// Manage the daemon token.
     #[command(subcommand)]
     Token(cmd::daemon::TokenCmd),
@@ -115,6 +117,7 @@ fn main() -> ExitCode {
         Command::Show(a) => cmd::inspect::show(&a),
         Command::Tail(a) => cmd::inspect::tail(&a),
         Command::Studio(a) => cmd::studio::run(&a),
+        Command::Open(a) => cmd::open::run(&a),
         Command::Token(c) => cmd::daemon::token(&c),
         Command::Daemon(c) => cmd::daemon::daemon(&c),
         Command::Graph(a) => cmd::graph::graph(&a),

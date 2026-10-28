@@ -113,3 +113,27 @@ async fn retrying_connect_keeps_the_hub_up() {
     assert!(!task.is_finished(), "still retrying");
     task.abort();
 }
+
+#[tokio::test]
+async fn sync_needs_the_database_and_says_so() {
+    // Authentication needs the database: an upgrade attempt before it is
+    // connected is 503, never an open relay.
+    let r = common::send(
+        &offline(),
+        Request::get("/api/v1/sync?bundle=b1")
+            .header("authorization", "Bearer wyrdhub_nope")
+            .header("connection", "upgrade")
+            .header("upgrade", "websocket")
+            .header("sec-websocket-version", "13")
+            .header(
+                "sec-websocket-key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE, "{}", r.text());
+    let text = common::get(&offline(), "/metrics").await.text();
+    assert!(text.contains("wyrd_hub_sync_clients 0"), "{text}");
+}
