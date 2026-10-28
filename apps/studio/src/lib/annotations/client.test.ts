@@ -111,7 +111,7 @@ function start(relay: FakeRelay, doc = createAnnotations("s1"), base?: A.Doc<Ann
   const statuses: StatusReport[] = [];
   const changes: A.Doc<Annotations>[] = [];
   const client = new SyncClient<Annotations>({
-    url: "ws://hub.test/api/v1/sync?bundle=b1",
+    url: "wss://hub.test/api/v1/sync?bundle=b1",
     doc,
     base,
     onChange: (d) => changes.push(d),
@@ -258,11 +258,11 @@ describe("annotation sync client", () => {
     client.close();
   });
 
-  it("builds ws urls from same-origin paths", () => {
-    expect(wsUrl("/v1/sync?session=s1", "http://127.0.0.1:7717/sessions/s1")).toBe(
-      "ws://127.0.0.1:7717/v1/sync?session=s1",
+  it("builds wss urls from same-origin paths", () => {
+    expect(wsUrl("/api/v1/sync?bundle=b1", "https://hub.test/sessions/s1")).toBe(
+      "wss://hub.test/api/v1/sync?bundle=b1",
     );
-    expect(wsUrl("https://hub.test/api/v1/sync?bundle=b1", "http://x/")).toBe(
+    expect(wsUrl("https://hub.test/api/v1/sync?bundle=b1", "https://x/")).toBe(
       "wss://hub.test/api/v1/sync?bundle=b1",
     );
   });

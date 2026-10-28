@@ -9,8 +9,8 @@ describe("Hub sync addressing", () => {
     expect(wsUrl(syncPath("01JBUNDLE"), "https://hub.example.internal/sessions")).toBe(
       "wss://hub.example.internal/api/v1/sync?bundle=01JBUNDLE",
     );
-    expect(wsUrl(syncPath("a b"), "http://127.0.0.1:7730/")).toBe(
-      "ws://127.0.0.1:7730/api/v1/sync?bundle=a%20b",
+    expect(wsUrl(syncPath("a b"), "https://hub.example.internal/")).toBe(
+      "wss://hub.example.internal/api/v1/sync?bundle=a%20b",
     );
   });
 
