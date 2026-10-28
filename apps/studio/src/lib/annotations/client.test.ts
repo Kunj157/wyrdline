@@ -3,6 +3,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import { type Role, type SocketLike, type StatusReport, SyncClient, wsUrl } from "./client";
 import { addComment, type Annotations, createAnnotations, viewAnnotations } from "./doc";
+import { AnnotationReplica } from "./replica";
+import { memoryStore } from "./store";
 import { SyncPeer } from "./sync";
 import { loadAutomergeForTests } from "./test-wasm";
 
@@ -265,5 +267,34 @@ describe("annotation sync client", () => {
     expect(wsUrl("https://hub.test/api/v1/sync?bundle=b1", "https://x/")).toBe(
       "wss://hub.test/api/v1/sync?bundle=b1",
     );
+  });
+  it("hands the replica the newest document after every sync message, even one with no changes", async () => {
+    // Automerge returns a new document object for each sync message. A
+    // message with no changes still makes the old object unusable, so the
+    // replica must be moved on each time, or its next local edit throws.
+    const relay = new FakeRelay();
+    relay.doc = addComment(relay.doc, { from: 0, to: 0, text: "shared", author: "bo" });
+    const replica = await AnnotationReplica.open("s1", memoryStore());
+    const client = new SyncClient<Annotations>({
+      url: "wss://hub.test/api/v1/sync?bundle=b1",
+      doc: replica.doc,
+      onChange: (d) => replica.replace(d),
+      onStatus: () => undefined,
+      socket: relay.socket,
+      backoff: { initial: 100, max: 1000 },
+      random: () => 0.5,
+    });
+    replica.onLocalChange(() => client.change(() => replica.doc));
+    relay.last.open();
+    expect(texts(replica.doc)).toEqual(["shared"]);
+    // Local edits after the exchange: each one needs a live document, even
+    // when the Hub's answer to the first carried no changes.
+    for (const text of ["mine", "and mine again"]) {
+      expect(() =>
+        replica.change((d) => addComment(d, { from: 1, to: 1, text, author: "ana" })),
+      ).not.toThrow();
+    }
+    expect(relay.comments().sort()).toEqual(["and mine again", "mine", "shared"]);
+    client.close();
   });
 });

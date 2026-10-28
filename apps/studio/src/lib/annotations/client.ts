@@ -198,7 +198,10 @@ export class SyncClient<T> {
       data instanceof ArrayBuffer ? new Uint8Array(data) : ArrayBuffer.isView(data) ? data : null;
     if (!bytes) return;
     const msg = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const before = A.getHeads(this.peer.doc);
+    // Automerge returns a new document object for every sync message, even
+    // one with no changes, and the old object can no longer be changed. The
+    // owner must always get the newest object, not only when the heads move.
+    const previous = this.peer.doc;
     let theirs: string[];
     try {
       theirs = A.decodeSyncMessage(msg).heads;
@@ -212,7 +215,7 @@ export class SyncClient<T> {
     // The server holds everything we hold: a safe point to roll back to.
     if (sameHeads(theirs, after)) this.confirmed = this.peer.doc;
     this.flush();
-    if (!sameHeads(before, after)) this.options.onChange(this.peer.doc);
+    if (this.peer.doc !== previous) this.options.onChange(this.peer.doc);
   }
 
   /** A text frame: the role on connect, or why a change was refused. */
