@@ -114,7 +114,7 @@ WYRD_VERSION=v1.0.0 WYRD_INSTALL_DIR=$HOME/.local/bin \
 | `WYRD_VERSION` | `latest` | release tag |
 | `WYRD_REPOSITORY` | `Kunj157/wyrdline` | repository to download from |
 | `WYRD_INSTALL_DIR` | `$RUNNER_TEMP/wyrdline/bin` (or `/tmp/wyrdline/bin`) | where the binaries go |
-| `WYRD_VERIFY_SIGNATURE` | `auto` | `auto`: verify when `SHA256SUMS.sigstore.json` exists; `required`: fail without it; `skip` |
+| `WYRD_VERIFY_SIGNATURE` | `required` | `required`: fail unless `SHA256SUMS.sigstore.json` verifies (the default); `auto`: verify when it exists, warn otherwise; `skip` (or `false`): no signature check, with a warning |
 | `WYRD_SIGNER_IDENTITY` | the release workflow of `WYRD_REPOSITORY` on a `v*` tag | regexp for `cosign --certificate-identity-regexp` |
 | `WYRD_PATH` | unset | a directory with prebuilt `wyrd` and `wyrd-sensord`: install those, download nothing |
 

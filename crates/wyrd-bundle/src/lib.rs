@@ -4,6 +4,7 @@
 //! its source: ingest into the ledger (`Standard`) and bundle export
 //! (`Strict`). A bundle (see `docs/bundle-format.md`) is a deterministic
 //! zstd-compressed ustar archive ([`archive`]).
+#![forbid(unsafe_code)]
 
 pub mod archive;
 pub mod export;
