@@ -6,6 +6,7 @@
 //! operations, talks to MCP servers through `wyrd mcp-proxy`, and prints
 //! a transcript. It is the backbone of the scenario tests. `serve-mcp`
 //! runs a toy MCP server for those scenarios.
+#![forbid(unsafe_code)]
 
 mod agent;
 mod mcp_client;

@@ -11,6 +11,7 @@
 //!
 //! When the intent socket cannot be reached, `tools/call` is denied in
 //! Cell mode and forwarded in observe mode; other messages always pass.
+#![forbid(unsafe_code)]
 
 use std::io::{BufRead as _, BufReader, Read, Write};
 use std::path::PathBuf;

@@ -40,6 +40,10 @@ pub enum ClientMsg {
     /// Replace the session's egress rules (after registration, on the same
     /// connection), e.g. when allowed host names resolve differently.
     Egress { rules: crate::loader::EgressRules },
+    /// Ask for a [`ServerMsg::Flushed`] with the same token once every event
+    /// the kernel had queued for this session when the request arrived has
+    /// been sent on this connection.
+    Flush { token: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,9 +62,19 @@ pub enum ServerMsg {
         process: ProcessRef,
         body: EventBody,
     },
-    /// Total ring-buffer drops since the daemon started.
+    /// Total ring-buffer drops since the daemon started, and the events this
+    /// connection lost because its queue was full (the client was not reading
+    /// fast enough). Both are cumulative.
     Drops {
         total: u64,
+        #[serde(default)]
+        queue_dropped: u64,
+    },
+    /// Answer to [`ClientMsg::Flush`]. Every event the kernel had queued before
+    /// the request was either sent before this message or counted in the
+    /// `drops` report sent just before it (`queue_dropped`).
+    Flushed {
+        token: u64,
     },
     Error {
         message: String,
@@ -158,6 +172,15 @@ impl SensorClient {
         Ok(())
     }
 
+    /// Ask the daemon for a delivery barrier (see [`ClientMsg::Flush`]).
+    pub fn send_flush(&self, token: u64) -> Result<(), ClientError> {
+        let mut line = serde_json::to_vec(&ClientMsg::Flush { token })?;
+        line.push(b'\n');
+        let mut s: &UnixStream = self.reader.get_ref();
+        s.write_all(&line)?;
+        Ok(())
+    }
+
     /// Bound how long `recv` may block (`None` = forever).
     pub fn set_timeout(&self, t: Option<Duration>) -> Result<(), ClientError> {
         Ok(self.reader.get_ref().set_read_timeout(t)?)
@@ -170,4 +193,31 @@ fn read_msg(r: &mut BufReader<UnixStream>) -> Result<Option<ServerMsg>, ClientEr
         return Ok(None);
     }
     Ok(Some(serde_json::from_str(&line)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drops_from_an_older_daemon_read_as_no_queue_loss() {
+        let old: ServerMsg = serde_json::from_str(r#"{"type":"drops","total":4}"#).unwrap();
+        assert_eq!(
+            old,
+            ServerMsg::Drops {
+                total: 4,
+                queue_dropped: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn drops_round_trip_with_the_queue_count() {
+        let msg = ServerMsg::Drops {
+            total: 1,
+            queue_dropped: 9,
+        };
+        let text = serde_json::to_string(&msg).unwrap();
+        assert_eq!(serde_json::from_str::<ServerMsg>(&text).unwrap(), msg);
+    }
 }

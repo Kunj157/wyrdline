@@ -147,9 +147,9 @@ regardless.
 - Monotonic timestamps above 2^53 ns (about 104 days of uptime) lose
   precision in the browser; ordering always uses `seq`.
 - Offline replay (`?offline=`) accepts an events export from the same
-  origin as Studio only. Opening `.wyrd` bundles in the browser
-  (verified in WebAssembly before anything is shown) is landing with
-  #151 and #193.
+  origin as Studio only. `.wyrd` bundles open in the browser through
+  `wyrd open` or Studio's file picker and drag-and-drop; they are
+  verified before anything is shown, and the view is read-only.
 
 ## Operational
 

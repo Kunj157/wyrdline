@@ -96,12 +96,18 @@ pub fn sensord_bin() -> PathBuf {
 }
 
 pub fn sensord(e: &Env) -> Sensord {
+    sensord_with(e, &[])
+}
+
+/// As [`sensord`], with extra daemon arguments.
+pub fn sensord_with(e: &Env, extra: &[&str]) -> Sensord {
     let socket = e.outside.join("sensord.sock");
     let child = Command::new("sudo")
         .args(["-n", "--"])
         .arg(sensord_bin())
         .args(["--exit-on-stdin-eof", "--socket"])
         .arg(&socket)
+        .args(extra)
         .stdin(std::process::Stdio::piped())
         .spawn()
         .unwrap();

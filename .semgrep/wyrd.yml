@@ -1,0 +1,70 @@
+# Custom Semgrep rules for the security review (docs/threat-model/review-2026.md).
+# Run in CI by the security job; `paths.include` keeps each rule to the code it guards.
+rules:
+  - id: wyrd-no-unwrap-on-input-paths
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      unwrap()/expect() on a path that handles input (bundle bytes, uploads,
+      requests, manifests). A malformed input must become an error value, not a
+      panic. Return a typed error, or justify the exception with a nosemgrep
+      comment that names the invariant.
+    patterns:
+      - pattern-either:
+          - pattern: $X.unwrap()
+          - pattern: $X.expect(...)
+      - pattern-not-inside: |
+          mod tests { ... }
+    paths:
+      include:
+        - "crates/wyrd-bundle/src/**"
+        - "crates/wyrd-cas/src/**"
+        - "crates/wyrd-hub/src/**"
+        - "crates/wyrd-sync/src/**"
+        - "crates/wyrdd/src/**"
+        - "crates/wyrd-sensord/src/**"
+        - "crates/wyrd-gateway/src/**"
+        - "crates/wyrd-adapters/src/**"
+      exclude:
+        - "**/tests/**"
+        - "**/examples/**"
+        - "**/benches/**"
+
+  - id: wyrd-no-lint-allow-for-unwrap-on-input-paths
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      A clippy allow for unwrap_used or expect_used in code that handles input.
+      The workspace denies both lints; an allow here turns the panic back on.
+      Remove the allow, or keep it with a nosemgrep comment that names the invariant.
+    pattern-regex: '#!?\[allow\([^\]]*\b(unwrap_used|expect_used)\b'
+    paths:
+      include:
+        - "crates/wyrd-bundle/src/**"
+        - "crates/wyrd-cas/src/**"
+        - "crates/wyrd-hub/src/**"
+        - "crates/wyrd-sync/src/**"
+        - "crates/wyrdd/src/**"
+        - "crates/wyrd-sensord/src/**"
+        - "crates/wyrd-gateway/src/**"
+        - "crates/wyrd-adapters/src/**"
+
+  - id: wyrd-no-shell-out-in-wyrdd
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      wyrdd must not spawn processes. The daemon is the trusted core; running
+      a command here is a shell-out that the Cell cannot account for. Move the
+      operation into a client crate, or add a justified nosemgrep.
+    patterns:
+      - pattern-either:
+          - pattern: std::process::Command::new(...)
+          - pattern: tokio::process::Command::new(...)
+          - pattern: Command::new(...)
+      - pattern-not-inside: |
+          mod tests { ... }
+    paths:
+      include:
+        - "crates/wyrdd/src/**"
+      exclude:
+        - "**/tests/**"

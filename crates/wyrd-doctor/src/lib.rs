@@ -3,6 +3,7 @@
 //! Every check reads files below a configurable root so tests can run
 //! against fake `/sys` and `/proc` trees. Values that need a syscall (the
 //! Landlock ABI, the current UID) are passed in through [`Probes`].
+#![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::fs;

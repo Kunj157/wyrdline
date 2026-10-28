@@ -80,6 +80,7 @@ wyrd ask <session>                                   # answer what the policy as
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
+wyrd push session.wyrd --hub https://hub.example --org acme  # share it on a team Hub (token in WYRD_HUB_TOKEN)
 ```
 
 Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).
@@ -105,8 +106,8 @@ Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sen
 - **Studio:** React 19, TypeScript, Vite, TanStack, Tailwind v4, WebGPU,
   Automerge, Rust correlator compiled to Wasm
 - **Hub:** Axum, PostgreSQL, S3-compatible storage, DuckDB, Helm
-- **Delivery:** GitHub Actions, kernel-matrix VM tests, cargo-dist, cosign,
-  SLSA provenance, CycloneDX SBOM
+- **Delivery:** GitHub Actions, kernel-matrix VM tests, reproducible builds,
+  cosign, SLSA provenance, CycloneDX SBOM
 
 ## Requirements
 
@@ -136,6 +137,9 @@ reports exactly what is available and what degrades without it.
 
 ## Documentation
 
+- **Using Wyrdline:** [install](docs/install.md), [quick start](docs/quick-start.md)
+  (install to a recorded, inspected, exported session), [adapter coverage](docs/adapter-coverage.md)
+  (what each agent reports), [limitations](docs/limitations.md), [FAQ](docs/faq.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
@@ -146,6 +150,7 @@ reports exactly what is available and what degrades without it.
 - [Writing a policy](docs/policies/README.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Threat model](docs/threat-model/scope.md)
+- [Releases: assets, verification, reproducibility](docs/release.md)
 
 ## Contributing
 
