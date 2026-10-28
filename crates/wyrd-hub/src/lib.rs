@@ -2,15 +2,19 @@
 //! Bundles are stored in S3-compatible object storage, their metadata,
 //! organisations, users, and the audit log in PostgreSQL.
 //! `docs/architecture/hub.md` describes the API and the deployment.
+#![forbid(unsafe_code)]
 
+pub mod access;
 pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod ingest;
 pub mod jwt;
 pub mod metrics;
 pub mod oidc;
 pub mod problem;
+pub mod retention;
 mod routes;
 pub mod storage;
 pub mod sync;
@@ -89,7 +93,7 @@ impl AppState {
 
 /// The Hub's router.
 pub fn app(state: Arc<AppState>) -> Router {
-    routes::router()
+    routes::router(state.config.limits.max_upload_bytes)
         .layer(middleware::from_fn_with_state(state.clone(), observe))
         .layer(middleware::from_fn(secure_headers))
         .with_state(state)

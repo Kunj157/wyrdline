@@ -9,6 +9,7 @@
 //! Integer fields are exported to TypeScript as `number`. Values above
 //! 2^53 (only monotonic nanosecond timestamps after ~104 days of uptime)
 //! lose precision in the browser; ordering always uses `seq`.
+#![forbid(unsafe_code)]
 
 mod body;
 pub mod chain;

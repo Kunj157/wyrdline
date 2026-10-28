@@ -6,6 +6,7 @@
 //! as a trap, so a policy has no filesystem, network, clock, or entropy, and
 //! its decisions are a pure function of its inputs. Any failure (trap, fuel
 //! exhausted, memory cap, malformed component) becomes a deny.
+#![forbid(unsafe_code)]
 
 pub mod backtest;
 pub mod conformance;

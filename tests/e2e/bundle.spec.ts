@@ -86,3 +86,32 @@ test("a bundle dropped on Studio opens", async ({ page }) => {
   await zone.dispatchEvent("drop", { dataTransfer: drop });
   await expectVerifiedSession(page);
 });
+
+test("the backtest overlay works in bundle mode from the CLI's report", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto(`${env().base}/?bundle=/e2e.wyrd`);
+  await expectVerifiedSession(page);
+  await page.getByRole("tab", { name: "Backtest" }).click();
+  await expect(page.getByText("wyrd policy backtest")).toBeVisible();
+  const load = page.getByLabel("Load a backtest report");
+  // A report of another session is refused.
+  const report = JSON.parse(readFileSync(join(studio(), "e2e-backtest.json"), "utf8"));
+  await load.setInputFiles({
+    name: "other.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify({ ...report, session_id: "01other" })),
+  });
+  await expect(page.getByRole("alert")).toContainText("not this one");
+  await load.setInputFiles(join(studio(), "e2e-backtest.json"));
+  const status = page.getByRole("status").filter({ hasText: "would have stopped" });
+  await expect(status).toContainText(/hostile would have stopped [1-9]\d* of \d+ events/);
+  // The fixture's connect to 203.0.113.9 is outside the policy's egress list.
+  const finding = status.getByRole("button", { name: /kernel deny.*203\.0\.113\.9/ });
+  await expect(finding).toBeVisible();
+  await finding.click();
+  await page.getByRole("button", { name: "Clear overlay" }).click();
+  await expect(status).toBeHidden();
+  void consoleErrors;
+});

