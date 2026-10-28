@@ -1,0 +1,14 @@
+# Build context for deploy/docker/hub.Dockerfile (BuildKit reads this file
+# because it sits next to the Dockerfile). Keep the Rust workspace intact.
+.git
+**/target
+**/node_modules
+.github
+apps
+packages
+docs
+demo
+fuzz
+integrations
+deploy
+rust-toolchain.toml
