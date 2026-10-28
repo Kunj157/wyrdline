@@ -14,6 +14,7 @@ import {
   unpinCheckpoint,
 } from "../lib/annotations/doc";
 import type { StatusReport } from "../lib/annotations/client";
+import { downloadAnnotations } from "../lib/annotations/export";
 import { useAnnotations } from "../lib/annotations/use-annotations";
 
 const NAME_KEY = "wyrd.annotator";
@@ -155,6 +156,11 @@ export function AnnotationsPanel({
           {problem}
         </p>
       )}
+      <div>
+        <Button variant="ghost" size="sm" onClick={() => downloadAnnotations(replica.doc, sid)}>
+          Download annotations
+        </Button>
+      </div>
 
       <section aria-labelledby={`${id}-comments`} className="flex flex-col gap-2">
         <h3 id={`${id}-comments`} className="font-semibold">

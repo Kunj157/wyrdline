@@ -13,11 +13,12 @@ function defaultStore(): AnnotationStore {
 }
 
 /**
- * The Hub bundle this page's annotations sync with, from `?bundle=<id>`.
+ * The Hub bundle this page's annotations sync with, from `?hub=<id>`
+ * (`?bundle=` is taken: it opens a bundle file in bundle mode).
  * Null when the page is not Hub-backed (annotations stay on this device).
  */
 export function bundleFromLocation(search = globalThis.location?.search ?? ""): string | null {
-  const id = new URLSearchParams(search).get("bundle");
+  const id = new URLSearchParams(search).get("hub");
   return id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
 }
 

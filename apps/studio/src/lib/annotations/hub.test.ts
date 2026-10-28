@@ -15,10 +15,10 @@ describe("Hub sync addressing", () => {
   });
 
   it("reads the bundle id from the page query, and refuses anything odd", () => {
-    expect(bundleFromLocation("?bundle=01JBUNDLE")).toBe("01JBUNDLE");
+    expect(bundleFromLocation("?hub=01JBUNDLE")).toBe("01JBUNDLE");
     expect(bundleFromLocation("")).toBeNull();
-    expect(bundleFromLocation("?bundle=")).toBeNull();
-    expect(bundleFromLocation("?bundle=../../admin")).toBeNull();
-    expect(bundleFromLocation(`?bundle=${"x".repeat(65)}`)).toBeNull();
+    expect(bundleFromLocation("?hub=")).toBeNull();
+    expect(bundleFromLocation("?hub=../../admin")).toBeNull();
+    expect(bundleFromLocation(`?hub=${"x".repeat(65)}`)).toBeNull();
   });
 });
