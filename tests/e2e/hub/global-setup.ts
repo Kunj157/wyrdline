@@ -1,6 +1,13 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { createServer as httpServer, request as httpRequest } from "node:http";
 import { connect, createServer as netServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,9 +20,9 @@ import wyrddSetup from "../global-setup";
  * the session API, from the fixture) and the Hub (`/api/…`), so the Hub's
  * Origin check and session cookie behave as they do behind a reverse proxy.
  *
- * The Hub's bundle upload is #198 and not on dev yet, so the harness seeds
- * the rows the annotation sync reads (org, users, memberships, sessions, one
- * bundle) with psql. The sync endpoint reads no bundle object.
+ * Users, memberships and sessions are seeded with psql (the Hub has no
+ * sign-in in this test). The bundle is uploaded through the Hub's API, as a
+ * member, the way the CLI and the action do.
  *
  * Needs (CI provides them): WYRD_E2E_HUB_BIN (the wyrd-hub binary),
  * WYRD_E2E_HUB_DATABASE_URL (an empty database), WYRD_E2E_HUB_S3_ENDPOINT,
@@ -107,10 +114,6 @@ export default async function globalSetup() {
 
   const teardownWyrdd = await wyrddSetup();
   const wyrddBase = process.env.WYRD_E2E_BASE ?? "";
-  const sid = process.env.WYRD_E2E_SID ?? "";
-  // The id goes into SQL below: only the characters a session id can hold.
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(sid))
-    throw new Error("the fixture session id is not a plain id");
   const wyrddPort = Number(new URL(wyrddBase).port);
 
   const port = await freePort();
@@ -175,14 +178,26 @@ export default async function globalSetup() {
     INSERT INTO users (id, issuer, subject, name) VALUES ${users.join(", ")};
     INSERT INTO memberships (org_id, user_id, role) VALUES ${members.join(", ")};
     INSERT INTO sessions (id_hash, user_id, expires_at) VALUES ${sessions.join(", ")};
-    INSERT INTO bundles (id, org_id, uploaded_by, manifest_hash, signer, session_id,
-      session_name, agent, events, repo, size_bytes, storage_key)
-    VALUES ('bnd_e2e', 'org_e2e', 'u_alice', 'b3:e2e', 'e2e', '${sid}',
-      'e2e greeting fix', 'fakeagent', 0, 'e2e/demo', 0, 'bundles/bnd_e2e');
   `);
 
+  // The fixture's standard bundle (the parent setup wrote it next to Studio),
+  // uploaded by alice through the Hub's API.
+  const bundle = readFileSync(join(env("WYRD_E2E_STUDIO"), "e2e.wyrd"));
+  const form = new FormData();
+  form.append("repo", "e2e/demo");
+  form.append("bundle", new Blob([bundle]), "e2e.wyrd");
+  const up = await fetch(`${origin}/api/v1/orgs/e2e/bundles`, {
+    method: "POST",
+    headers: { cookie: `wyrd_session=${secrets.alice}`, origin },
+    body: form,
+  });
+  const uploaded = (await up.json()) as { bundle?: { id?: string } };
+  if (!up.ok || !uploaded.bundle?.id) {
+    throw new Error(`the bundle upload failed: HTTP ${up.status} ${JSON.stringify(uploaded)}`);
+  }
+
   process.env.WYRD_E2E_BASE = origin;
-  process.env.WYRD_E2E_HUB_BUNDLE = "bnd_e2e";
+  process.env.WYRD_E2E_HUB_BUNDLE = uploaded.bundle.id;
   process.env.WYRD_E2E_HUB_SECRETS = JSON.stringify(secrets);
   return async () => {
     hub.kill("SIGTERM");
