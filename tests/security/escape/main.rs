@@ -196,13 +196,14 @@ fn privileged_escape_renamed_binary_is_detected_and_stopped() {
         "agent.sh",
         r#"cp "$(command -v curl)" ./fetcher
 ./fetcher --version > /dev/null
-sleep 5
+sleep 30
 echo survived > late.txt"#,
     );
     let t = std::time::Instant::now();
     let out = wyrd_with_sensor(&e, &d.socket, &["run", "--policy", &policy(), "--", &agent]);
+    // Stopped long before the sleep ends (with headroom for slow CI runners).
     assert!(
-        t.elapsed() < std::time::Duration::from_secs(5),
+        t.elapsed() < std::time::Duration::from_secs(20),
         "{:?}",
         t.elapsed()
     );
