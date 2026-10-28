@@ -655,3 +655,69 @@ fn a_stored_path_read_back_through_explain_effect_is_quoted_data() {
         "{out}"
     );
 }
+
+/// A session whose second checkpoint adds `n` files, for long-list tests.
+fn env_many(n: usize) -> Env {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    std::fs::write(ws.join("a.txt"), "a\n").unwrap();
+    let data = DataDir::new(tmp.path().join("data"));
+    let mut s = Session::create(
+        &data,
+        CreateOptions {
+            workspace: ws,
+            command: vec!["agent".into()],
+            observe: false,
+            name: None,
+            agent_kind: "fakeagent".into(),
+            deny_tools: Vec::new(),
+            policy: None,
+            kernel_release: "test".into(),
+            capabilities: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    s.checkpoint(None).unwrap();
+    for i in 0..n {
+        std::fs::write(s.dir().upper("a").join(format!("new-{i:04}.txt")), "x\n").unwrap();
+    }
+    s.checkpoint(None).unwrap();
+    let id = s.record().id.clone();
+    Env { tmp, data, id }
+}
+
+#[test]
+fn a_very_long_list_is_capped_and_the_text_says_how_many_were_left_out() {
+    let e = env_many(260);
+    let mut s = mcp(&e);
+    s.initialize();
+    let r = s.call(1, "show_changes_since", &json!({"checkpoint_id": "c1"}));
+    let text = r["content"][0]["text"].as_str().unwrap();
+
+    // The fixed text names the count and the way to narrow the question.
+    assert!(text.contains("wyrdline left out 60 entries"), "{text}");
+    assert!(text.contains("show_changes_since from a later"), "{text}");
+    // One block, bounded by the 32 KiB limit on its JSON.
+    let start = text.find("<<<DATA").unwrap();
+    let end = text.rfind("DATA>>>").unwrap() + "DATA>>>".len();
+    let block_len = end - start;
+    assert!(block_len <= 32 * 1024 + 32, "{block_len}");
+    assert_eq!(text.matches("<<<DATA").count(), 1);
+
+    // The structured form keeps 200 items and says how many were left out.
+    let out = structured(&r);
+    assert_eq!(out["changes"].as_array().unwrap().len(), 200);
+    assert_eq!(out["wyrdline_omitted_entries"], 60);
+    assert_eq!(out["changes"][0]["path"], "new-0000.txt");
+
+    // A short answer carries no notice and no count.
+    let r = s.call(2, "list_checkpoints", &json!({}));
+    assert!(
+        !r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("left out")
+    );
+    assert!(structured(&r).get("wyrdline_omitted_entries").is_none());
+}

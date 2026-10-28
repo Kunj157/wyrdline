@@ -38,9 +38,17 @@ prose:
   block, so no data can close it early.
 - Each string is bounded at 1000 characters; a cut is marked
   `…[truncated: N more characters]`.
+- Each list keeps its first 200 items, and the JSON in the block is at most
+  32 KiB. When anything is left out, the fixed text says how many entries
+  were left out and that the tools take no paging arguments; the result
+  then carries `wyrdline_omitted_entries` in `structuredContent`. A short
+  result has neither.
 - `structuredContent` carries the same sanitized values.
-- Error messages that echo the agent's input (an unknown checkpoint id, a
-  method name) are quoted in the same block.
+- Protocol errors are fixed prose. An unknown tool is `unknown tool` and an
+  unknown method is `method not found`; the name the agent sent appears
+  only in the JSON-RPC `data`, as a quoted block.
+- A tool that fails (`isError: true`) returns its message as a quoted block
+  too, because the message can echo the agent's input.
 
 The same rule applies to a human reading a result: the block is data, and
 only the fixed text is wyrdline's own.
