@@ -1,6 +1,7 @@
 //! `wyrd-sensord`: the only privileged Wyrdline process. It loads the eBPF
 //! programs and streams each registered cgroup's events to the user who
 //! owns that cgroup. No network, no persistent storage.
+#![forbid(unsafe_code)]
 
 use rustix::thread::CapabilitySet;
 use std::collections::HashMap;

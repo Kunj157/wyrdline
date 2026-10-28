@@ -1,4 +1,5 @@
 //! `wyrd` — the Wyrdline command-line interface.
+#![forbid(unsafe_code)]
 
 mod cmd;
 
