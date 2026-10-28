@@ -140,7 +140,8 @@ reports exactly what is available and what degrades without it.
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
   [the eBPF sensor](docs/architecture/sensor.md), [the correlator](docs/architecture/correlator.md),
-  [the daemon and its API](docs/architecture/daemon.md), [the Hub](docs/architecture/hub.md)
+  [the daemon and its API](docs/architecture/daemon.md), [the Hub](docs/architecture/hub.md),
+  [collaborative annotations](docs/architecture/annotations.md)
 - [Ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md),
   [bundle format](docs/bundle-format.md)
 - [Writing a policy](docs/policies/README.md)

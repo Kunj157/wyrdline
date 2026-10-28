@@ -141,10 +141,11 @@ can rebuild both from the ledger.
 The session's collaborative annotation document (comments anchored to
 `seq` ranges, team triage, pinned checkpoints), as saved Automerge bytes
 ([collaborative annotations](architecture/annotations.md)). `wyrd export`
-includes it when the session has annotations and the redaction is
-`standard`; a `strict` bundle never contains it, because teammates' free
-text cannot be redacted reliably. Readers that predate it accept it
-already: the path was reserved from the first format version.
+includes it when given `--annotations <file>` with the document saved from
+Studio, and the redaction is `standard`; a `strict` bundle never contains
+it, because teammates' free text cannot be redacted reliably. Readers that
+predate it accept it already: the path was reserved from the first format
+version.
 
 ### `cas/`
 
