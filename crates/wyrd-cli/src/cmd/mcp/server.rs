@@ -9,6 +9,9 @@ use std::io::{BufRead, Read, Write};
 use serde_json::{Map, Value, json};
 use wyrd_adapters::SessionQuery;
 
+use super::untrusted::{self, PREAMBLE};
+use super::views::PENDING;
+
 /// Protocol revisions this server speaks, newest first.
 pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -181,31 +184,57 @@ fn parse_call(params: &Value) -> Result<SessionQuery, String> {
             checkpoint_id: string_arg(args, "checkpoint_id")?,
             reason: string_arg(args, "reason")?,
         }),
-        other => Err(format!("unknown tool {other}")),
+        other => Err(format!("unknown tool {}", untrusted::clean(other))),
     }
 }
 
-/// The text shown to the model: a rewind request leads with its status.
+/// The text shown to the model. Wyrdline's own sentences come first, as
+/// fixed text (a rewind request's status and message). The session's data
+/// follows in a marked block, so nothing from the session reads as prose.
+/// `v` is already sanitized.
 fn text_of(q: &SessionQuery, v: &Value) -> String {
-    let body = serde_json::to_string_pretty(v).unwrap_or_default();
-    match (q, v.get("message").and_then(Value::as_str)) {
-        (SessionQuery::RequestRewind { .. }, Some(m)) => {
-            format!("{}: {m}\n\n{body}", super::views::PENDING)
+    let mut data = v.clone();
+    let mut fixed = String::new();
+    if matches!(q, SessionQuery::RequestRewind { .. }) {
+        fixed.push_str("status: ");
+        fixed.push_str(PENDING);
+        fixed.push_str(" (set by wyrdline)\n");
+        let message = data.as_object_mut().and_then(|o| o.remove("message"));
+        if let Some(m) = message.as_ref().and_then(Value::as_str) {
+            fixed.push_str(m);
+            fixed.push('\n');
         }
-        _ => body,
     }
+    let lead = if fixed.is_empty() {
+        String::new()
+    } else {
+        format!("{fixed}\n")
+    };
+    format!("{lead}{PREAMBLE}\n\n{}", untrusted::envelope(&data))
+}
+
+/// The text of a tool that failed. The message can echo the agent's own
+/// input (an unknown checkpoint id), so it is quoted as data too.
+fn error_text(message: &str) -> String {
+    format!(
+        "{PREAMBLE}\n\n{}",
+        untrusted::envelope(&json!({ "error": untrusted::clean(message) }))
+    )
 }
 
 fn call_tool(backend: &dyn Backend, params: &Value) -> Result<Value, String> {
     let q = parse_call(params)?;
     Ok(match backend.query(&q) {
-        Ok(v) => json!({
-            "content": [{ "type": "text", "text": text_of(&q, &v) }],
-            "structuredContent": v,
-            "isError": false
-        }),
+        Ok(v) => {
+            let safe = untrusted::sanitize(&v);
+            json!({
+                "content": [{ "type": "text", "text": text_of(&q, &safe) }],
+                "structuredContent": safe,
+                "isError": false
+            })
+        }
         Err(message) => json!({
-            "content": [{ "type": "text", "text": message }],
+            "content": [{ "type": "text", "text": error_text(&message) }],
             "isError": true
         }),
     })
@@ -246,7 +275,11 @@ pub fn handle(backend: &dyn Backend, msg: &Value) -> Option<Value> {
             Ok(result) => ok(&id, result),
             Err(why) => error(&id, INVALID_PARAMS, &why),
         },
-        other => error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}")),
+        other => error(
+            &id,
+            METHOD_NOT_FOUND,
+            &format!("method not found: {}", untrusted::clean(other)),
+        ),
     })
 }
 
@@ -375,7 +408,9 @@ mod tests {
             "\n"
         ));
         assert_eq!(out[0]["result"]["isError"], true);
-        assert_eq!(out[0]["result"]["content"][0]["text"], "no such effect");
+        let text = out[0]["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with(PREAMBLE), "{text}");
+        assert!(text.contains("\"error\": \"no such effect\""), "{text}");
         for v in &out[1..] {
             assert_eq!(v["error"]["code"], INVALID_PARAMS, "{v}");
         }

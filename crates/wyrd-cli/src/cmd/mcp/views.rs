@@ -49,11 +49,13 @@ pub fn answer(data: &DataDir, session: &str, query: &SessionQuery) -> anyhow::Re
             Ok(json!({
                 "status": PENDING,
                 "request": request,
+                // Fixed text: it names only ids wyrdline minted. The checkpoint
+                // the agent asked for is data, in `request.checkpoint_id`.
                 "message": format!(
                     "Nothing was rewound. A human must confirm request {} \
                      (`wyrd rewind {id} --confirm {}` or Studio) before the session is \
-                     rewound to {}.",
-                    request.id, request.id, request.checkpoint_id
+                     rewound to the checkpoint named in request.checkpoint_id.",
+                    request.id, request.id
                 ),
             }))
         }
