@@ -1,16 +1,18 @@
 name: pull-request
 
+# The gate on every PR and push to dev/main; release.yml calls it on tags.
 on:
   pull_request:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-gate
   cancel-in-progress: true
 
 env:
@@ -210,6 +212,19 @@ jobs:
           ./gitleaks detect --no-banner --redact
       - name: Semgrep
         run: pipx run semgrep scan --config p/default --error --metrics off --exclude target --exclude node_modules .
+
+  release-scripts:
+    name: Release · packaging scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Packaging, reproducibility compare, version stamp
+        run: bash tests/release/scripts.test.sh
+      - name: shellcheck
+        run: shellcheck scripts/release/*.sh tests/release/*.sh
 
   workflows:
     name: Workflows · actionlint
