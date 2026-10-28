@@ -40,6 +40,10 @@ pub enum ClientMsg {
     /// Replace the session's egress rules (after registration, on the same
     /// connection), e.g. when allowed host names resolve differently.
     Egress { rules: crate::loader::EgressRules },
+    /// Ask for a [`ServerMsg::Flushed`] with the same token once every event
+    /// the kernel had queued for this session when the request arrived has
+    /// been sent on this connection.
+    Flush { token: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,6 +65,10 @@ pub enum ServerMsg {
     /// Total ring-buffer drops since the daemon started.
     Drops {
         total: u64,
+    },
+    /// Answer to [`ClientMsg::Flush`]: every earlier event was sent before it.
+    Flushed {
+        token: u64,
     },
     Error {
         message: String,
@@ -152,6 +160,15 @@ impl SensorClient {
         let mut line = serde_json::to_vec(&ClientMsg::Egress {
             rules: rules.clone(),
         })?;
+        line.push(b'\n');
+        let mut s: &UnixStream = self.reader.get_ref();
+        s.write_all(&line)?;
+        Ok(())
+    }
+
+    /// Ask the daemon for a delivery barrier (see [`ClientMsg::Flush`]).
+    pub fn send_flush(&self, token: u64) -> Result<(), ClientError> {
+        let mut line = serde_json::to_vec(&ClientMsg::Flush { token })?;
         line.push(b'\n');
         let mut s: &UnixStream = self.reader.get_ref();
         s.write_all(&line)?;
