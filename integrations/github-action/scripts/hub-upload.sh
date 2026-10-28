@@ -8,7 +8,8 @@
 # Tokens travel in curl config files, never on a command line.
 #
 # Env: WYRD_HUB_URL, WYRD_HUB_ORG, WYRD_BUNDLE (required), WYRD_REPO
-#      (default GITHUB_REPOSITORY). Outputs: hub-bundle-id, hub-bundle-url.
+#      (default GITHUB_REPOSITORY). Outputs: hub-bundle-id (bundle.id) and
+#      hub-bundle-url (the bundle's API resource, <hub>/api/v1/bundles/<id>).
 set -euo pipefail
 
 die() {
@@ -90,8 +91,16 @@ case "$status" in
   200 | 201) ;;
   *) die "the Hub refused the bundle (HTTP $status: $(problem upload))" ;;
 esac
-id=$(jq -r '.id // empty' "$work/upload.body")
-url=$(jq -r '.url // empty' "$work/upload.body")
+# The answer is {"duplicate": bool, "bundle": {"id": ...}} for both a new
+# upload (201) and a bundle the organisation already has (200). The Hub
+# answers no URL; the bundle's API resource is the stable address.
+id=$(jq -r '.bundle.id // empty' "$work/upload.body")
+[ -n "$id" ] || die "the Hub's upload answer has no bundle id"
+duplicate=$(jq -r '.duplicate // false' "$work/upload.body")
 output "hub-bundle-id=$id"
-output "hub-bundle-url=$url"
-echo "wyrdline: bundle uploaded to $hub (organisation $org)${id:+ as $id}"
+output "hub-bundle-url=$hub/api/v1/bundles/$id"
+if [ "$duplicate" = true ]; then
+  echo "wyrdline: $bundle is already on $hub (organisation $org) as $id"
+else
+  echo "wyrdline: bundle uploaded to $hub (organisation $org) as $id"
+fi

@@ -49,9 +49,15 @@ case "$url" in
       printf '{"type":"ci-not-trusted","title":"CI token refused","status":%s}' "$status" >"$out"
     fi ;;
   */api/v1/orgs/*/bundles)
+    # The Hub's real answer: {"duplicate", "bundle": {...}}; 201 for a new
+    # bundle, 200 when the organisation already has it.
     status=${FAKE_UPLOAD_STATUS:-201}
-    if [ "$status" = 201 ]; then
+    if [ "$status" = 201 ] && [ -n "${FAKE_OLD_SHAPE:-}" ]; then
       printf '{"id":"01BUNDLE","url":"https://hub.test/bundles/01BUNDLE"}' >"$out"
+    elif [ "$status" = 201 ]; then
+      printf '{"duplicate":false,"bundle":{"id":"01BUNDLE","org":"acme","repo":"acme-gh/app","size_bytes":12}}' >"$out"
+    elif [ "$status" = 200 ]; then
+      printf '{"duplicate":true,"bundle":{"id":"01BUNDLE","org":"acme","repo":"acme-gh/app","size_bytes":12}}' >"$out"
     else
       printf '{"type":"too-large","title":"Bundle too large","status":%s,"detail":"the limit is 50 MB"}' "$status" >"$out"
     fi ;;
@@ -125,8 +131,16 @@ lacks "$tmp/calls.log" "argv:.*runner-token" "no runner token on a curl command 
 contains "$LAST_OUT" "::add-mask::wyrdci_$secret" "upload token masked in the log"
 contains "$LAST_OUT" "::add-mask::jwt.payload.sig" "OIDC token masked in the log"
 contains "$tmp/gh-output" "hub-bundle-id=01BUNDLE" "bundle id output"
-contains "$tmp/gh-output" "hub-bundle-url=https://hub.test/bundles/01BUNDLE" "bundle url output"
+contains "$tmp/gh-output" "hub-bundle-url=https://hub.test/api/v1/bundles/01BUNDLE" "bundle url is the bundle's API resource"
 contains "$LAST_OUT" "uploaded to https://hub.test" "success reported"
+
+expect 0 "duplicate upload (200): the same outputs, reported as already on the Hub" FAKE_UPLOAD_STATUS=200
+contains "$tmp/gh-output" "hub-bundle-id=01BUNDLE" "duplicate: bundle id output"
+contains "$tmp/gh-output" "hub-bundle-url=https://hub.test/api/v1/bundles/01BUNDLE" "duplicate: bundle url output"
+contains "$LAST_OUT" "already on https://hub.test" "duplicate reported as already on the Hub"
+
+expect 1 "an answer without bundle.id (the old shape) is refused" FAKE_OLD_SHAPE=1
+contains "$LAST_OUT" "no bundle id" "the missing id is named"
 
 expect 1 "no id-token permission: refused before any request" ACTIONS_ID_TOKEN_REQUEST_URL=
 contains "$LAST_OUT" "id-token: write" "the fix is named"
