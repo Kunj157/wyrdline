@@ -155,22 +155,54 @@ impl<R: Reporter> Gateway<R> {
         }
     }
 
-    /// Record one line from the server (it is always relayed unchanged).
-    pub fn from_server(&self, line: &str) {
+    /// Record one line from the server and return what to relay for it.
+    ///
+    /// In Cell mode a response that could not be recorded is replaced by a
+    /// JSON-RPC error with the same id, so the agent never sees an answer the
+    /// ledger does not hold (for example, a tool listing whose pins could not
+    /// be saved). Notifications, and every response in observe mode, are
+    /// relayed unchanged.
+    pub fn from_server(&self, line: &str) -> String {
         let Some(reporter) = &self.reporter else {
-            return;
+            return line.to_string();
         };
         let Ok(v) = serde_json::from_str::<Value>(line) else {
-            return;
+            return line.to_string();
         };
+        let batch = matches!(v, Value::Array(_));
         let items = match v {
             Value::Array(items) => items,
             one => vec![one],
         };
+        let mut refused = false;
+        let mut relay = Vec::with_capacity(items.len());
         for item in items {
-            if let Err(e) = reporter.report(&self.server, Direction::ToClient, &item) {
-                tracing::warn!(server = %self.server, error = %e, "could not record an MCP response");
+            let failure = match reporter.report(&self.server, Direction::ToClient, &item) {
+                Ok(Response::Error { message }) => Some(message),
+                Ok(_) => None,
+                Err(e) => Some(e),
+            };
+            let Some(failure) = failure else {
+                relay.push(item);
+                continue;
+            };
+            let reason = format!("wyrdline could not record this response: {failure}");
+            tracing::warn!(server = %self.server, "{reason}");
+            match item.get("id").cloned() {
+                Some(id) if self.mode == CaptureMode::Cell => {
+                    refused = true;
+                    relay.push(denial(&id, &reason));
+                }
+                _ => relay.push(item),
             }
+        }
+        if !refused {
+            return line.to_string();
+        }
+        if batch {
+            Value::Array(relay).to_string()
+        } else {
+            relay.pop().unwrap_or(Value::Null).to_string()
         }
     }
 }
@@ -236,8 +268,8 @@ pub fn run_stdio<R: Reporter + 'static>(
 
     for line in BufReader::new(from_server).lines() {
         let line = line?;
-        gateway.from_server(&line);
-        write_line(&out, &line)?;
+        let relay = gateway.from_server(&line);
+        write_line(&out, &relay)?;
     }
     let status = child.wait()?;
     // The upstream thread ends when the agent closes stdin; a server that
