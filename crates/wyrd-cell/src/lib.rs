@@ -5,6 +5,7 @@
 //! upper layer per branch), and a Landlock ruleset that confines writes.
 //! Checkpoints are CAS manifests of the upper layer; rewind and fork
 //! materialise a checkpoint into a fresh branch. See ADR-005.
+#![forbid(unsafe_code)]
 
 pub mod apply;
 pub mod baseline;

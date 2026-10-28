@@ -1,6 +1,7 @@
 //! `wyrd-sensord`: the only privileged Wyrdline process. It loads the eBPF
 //! programs and streams each registered cgroup's events to the user who
 //! owns that cgroup. No network, no persistent storage.
+#![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};

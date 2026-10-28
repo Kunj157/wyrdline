@@ -7,6 +7,7 @@
 //! events that prove it. Claims come from [`claims::extract_all`] (regex)
 //! and optionally an LLM extractor; either way a claim whose quote is not
 //! verbatim in its turn is dropped before any rule sees it.
+#![forbid(unsafe_code)]
 
 pub mod case;
 pub mod claims;
