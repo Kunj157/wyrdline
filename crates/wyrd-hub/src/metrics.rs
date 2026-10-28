@@ -33,6 +33,21 @@ const FAMILIES: &[(&str, &str, &str)] = &[
         "OIDC logins by outcome.",
     ),
     (
+        "wyrd_hub_uploads_total",
+        "counter",
+        "Bundle uploads by outcome.",
+    ),
+    (
+        "wyrd_hub_bundle_verify_seconds",
+        "histogram",
+        "Time to verify an uploaded bundle.",
+    ),
+    (
+        "wyrd_hub_retention_sweeps_total",
+        "counter",
+        "Retention sweeps run.",
+    ),
+    (
         "wyrd_hub_ready",
         "gauge",
         "1 when the database is connected and migrated.",
