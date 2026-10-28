@@ -284,6 +284,42 @@ fn privileged_drops_are_counted_with_a_tiny_ring_buffer() {
     );
 }
 
+#[test]
+fn privileged_flush_is_answered_after_every_queued_event() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    // A lagging reader: events sit in the ring buffer well past the old
+    // fixed 300 ms drain.
+    let d = daemon(tmp.path(), &["--read-pause-ms", "800"]);
+    let mut g = gated(
+        tmp.path(),
+        "flush",
+        &format!("cd {}; echo x > last.txt; exit 5", ws.display()),
+    );
+    let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
+    g.release();
+    g.child.wait().unwrap();
+    client.send_flush(42).unwrap();
+    client.set_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut events = Vec::new();
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < Duration::from_secs(15), "no flush answer");
+        match client.recv().unwrap() {
+            Some(ServerMsg::Event { process, body, .. }) => events.push((process.pid, body)),
+            Some(ServerMsg::Flushed { token }) => {
+                assert_eq!(token, 42);
+                break;
+            }
+            Some(_) => {}
+            None => panic!("daemon closed the connection"),
+        }
+    }
+    let got = summary(&events, &ws);
+    assert_eq!(got, vec!["write last.txt", "exit 5"], "\nfull: {events:#?}");
+}
+
 /// Connect outcomes printed by the workload, one `name=result` per line.
 const CONNECTS: &str = r#"python3 -c "
 import socket

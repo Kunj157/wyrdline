@@ -136,6 +136,9 @@ reports exactly what is available and what degrades without it.
 
 ## Documentation
 
+- **Using Wyrdline:** [install](docs/install.md), [quick start](docs/quick-start.md)
+  (install to a recorded, inspected, exported session), [adapter coverage](docs/adapter-coverage.md)
+  (what each agent reports), [limitations](docs/limitations.md), [FAQ](docs/faq.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
