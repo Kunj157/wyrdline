@@ -104,7 +104,9 @@ echo "wyrdline: $asset checksum verified"
 mkdir -p "$work/x"
 tar -xzf "$work/$asset" -C "$work/x" --no-same-owner
 for b in wyrd wyrd-sensord; do
-  found=$(find "$work/x" -type f -name "$b" | head -n 1)
+  # Only the binaries in bin/: the tarball also holds deploy/apparmor/wyrd, which
+  # has the same name and was picked up on arm64 (find order is not fixed).
+  found=$(find "$work/x" -type f -path "*/bin/$b" | head -n 1)
   [ -n "$found" ] || die "$asset has no $b"
   install -m 0755 "$found" "$dest/$b"
 done

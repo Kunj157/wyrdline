@@ -208,12 +208,35 @@ pub struct Offsets {
     pub compat_mask: u32,
 }
 
+// Padding checks for the types that cross the kernel boundary (`aya::Pod`).
+// A type has no implicit padding exactly when its size equals the sum of its
+// field sizes, because fields never overlap. Each assertion lists the fields
+// in declaration order; adding or resizing a field without updating its
+// assertion fails the build, so a padding hole cannot appear unnoticed.
+const _: () =
+    assert!(size_of::<PortKey>() == size_of::<u64>() + size_of::<u16>() + size_of::<[u8; 6]>());
+const _: () = assert!(
+    size_of::<Offsets>() == 4 * size_of::<u32>() + size_of::<[u32; 6]>() + 2 * size_of::<u32>()
+);
+const _: () = assert!(
+    size_of::<RawEvent>()
+        == 4 * size_of::<u32>() // kind, tgid, tid, ppid
+            + 3 * size_of::<u64>() // cgroup_id, ts_ns, start_ns
+            + 4 * size_of::<i64>() // a0, a1, a2, ret
+            + 4 * size_of::<u16>() // len0, len1, argc, flags
+            + size_of::<[u8; 16]>() // comm
+            + 2 * size_of::<[u8; PATH_LEN]>() // s0, s1
+            + size_of::<[[u8; ARG_LEN]; MAX_ARGS]>() // argv
+);
+
 #[cfg(feature = "user")]
 mod user {
-    // SAFETY: plain-old-data with no padding-dependent invariants.
+    // SAFETY: `RawEvent`, `Offsets` and `PortKey` are `#[repr(C)]`, made only
+    // of integers and byte arrays, so every bit pattern is a valid value and
+    // none of them has implicit padding (checked at compile time above).
     unsafe impl aya::Pod for super::RawEvent {}
     // SAFETY: as above.
     unsafe impl aya::Pod for super::Offsets {}
-    // SAFETY: plain data; the padding is explicit and always zeroed.
+    // SAFETY: as above; the explicit `_pad` field is part of the size sum.
     unsafe impl aya::Pod for super::PortKey {}
 }

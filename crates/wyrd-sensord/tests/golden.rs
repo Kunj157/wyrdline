@@ -527,3 +527,95 @@ for host in ('10.255.255.1', '10.255.255.2'):
         "10.255.255.1 denied\n10.255.255.2 not-denied\n"
     );
 }
+
+/// The daemon started by `daemon()` for `socket`. Matched on the program name
+/// and on the socket path in its command line: `sudo` has another program
+/// name, and the other tests in this file run their own daemons on their own
+/// sockets, so a name match alone could pick the wrong process.
+fn daemon_pid(socket: &Path) -> u32 {
+    let wanted = socket.as_os_str().as_encoded_bytes();
+    for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+            continue;
+        };
+        let argv0 = cmdline.split(|b| *b == 0).next().unwrap_or_default();
+        let names_socket = cmdline.windows(wanted.len()).any(|w| w == wanted);
+        if argv0.ends_with(b"wyrd-sensord") && names_socket {
+            return pid;
+        }
+    }
+    panic!("no wyrd-sensord process for {}", socket.display());
+}
+
+/// `(thread id, CapEff, CapPrm, CapInh)` of every thread of `pid`. Capability
+/// sets are per thread, so a thread created before the drop would keep its
+/// old set: every thread is checked, not only the leader.
+fn thread_caps(pid: u32) -> Vec<(u32, u64, u64, u64)> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(format!("/proc/{pid}/task"))
+        .unwrap()
+        .flatten()
+    {
+        let tid: u32 = entry.file_name().to_str().unwrap().parse().unwrap();
+        let status = std::fs::read_to_string(entry.path().join("status")).unwrap();
+        out.push((
+            tid,
+            cap_mask(&status, "CapEff:"),
+            cap_mask(&status, "CapPrm:"),
+            cap_mask(&status, "CapInh:"),
+        ));
+    }
+    out
+}
+
+/// The capability mask in a `/proc/<pid>/status` line such as `CapEff:`.
+fn cap_mask(status: &str, field: &str) -> u64 {
+    let line = status
+        .lines()
+        .find(|l| l.starts_with(field))
+        .unwrap_or_else(|| panic!("{field} missing"));
+    let hex = line.split_whitespace().nth(1).unwrap();
+    u64::from_str_radix(hex, 16).unwrap()
+}
+
+#[test]
+fn privileged_runtime_capabilities_are_bpf_only() {
+    // CAP_BPF = 39 (linux/capability.h). The daemon keeps only what the
+    // runtime needs: see RUNTIME_CAPS in wyrd-sensord.
+    const RUNTIME: u64 = 1 << 39;
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let d = daemon(tmp.path(), &[]);
+    // Read after the daemon is listening, so the drop has run.
+    let pid = daemon_pid(&d.socket);
+    let threads = thread_caps(pid);
+    assert!(!threads.is_empty());
+    for (tid, eff, prm, inh) in &threads {
+        assert_eq!(*eff, RUNTIME, "thread {tid}: effective set after attach");
+        assert_eq!(*prm, RUNTIME, "thread {tid}: permitted set after attach");
+        assert_eq!(*inh, 0, "thread {tid}: inheritable set after attach");
+    }
+    // Capture still works with the reduced set: a session is registered and
+    // its scripted effects are reported (the golden sequence test covers the
+    // full sequence; this proves the path is live).
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let g = gated(
+        tmp.path(),
+        "caps",
+        &format!("cd {}; echo x > a.txt; exit 0", ws.display()),
+    );
+    let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
+    g.release();
+    let events = collect(&mut client, g.child.id());
+    assert!(
+        summary(&events, &ws).iter().any(|s| s == "write a.txt"),
+        "{events:#?}"
+    );
+}
