@@ -35,6 +35,11 @@ pub struct ExportArgs {
     /// Leave out checkpoint content (`cas/`): share metadata only.
     #[arg(long)]
     no_content: bool,
+    /// Saved Automerge annotation document for this session, to include as
+    /// `annotations.automerge`. Only standard redaction keeps it; strict
+    /// bundles leave it out.
+    #[arg(long, value_name = "FILE")]
+    annotations: Option<PathBuf>,
     /// Print the summary as JSON.
     #[arg(long)]
     json: bool,
@@ -218,13 +223,12 @@ pub fn export(a: &ExportArgs) -> anyhow::Result<u8> {
         status: rec.status,
         created_ms: rec.created_ms,
     };
-    // Annotations synced through Studio (wyrdd keeps them per session).
-    let annotations = match std::fs::read(data.annotations().join(format!("{}.automerge", rec.id)))
-    {
-        Ok(b) => Some(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(anyhow::Error::from(e).context("reading the session's annotations")),
-    };
+    let annotations = a
+        .annotations
+        .as_deref()
+        .map(std::fs::read)
+        .transpose()
+        .context("reading the annotation document")?;
     let signer = HostSigner(HostKey::load_or_create(&data.host_key())?);
     let out = wyrd_bundle::export(
         &ExportInput {
