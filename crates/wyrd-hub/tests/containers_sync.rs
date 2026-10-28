@@ -261,9 +261,10 @@ impl Client {
     }
 
     /// Push local changes until the Hub refuses them, and return what it sent
-    /// back, through its close. Each Hub frame is answered with another push,
-    /// since the protocol decides what a push carries from what the Hub has
-    /// said so far; the deadline bounds the wait.
+    /// back, through its close. Each Hub sync frame is answered with another
+    /// push, since the protocol decides what a push carries from what the Hub
+    /// has said so far; the deadline bounds the wait. Once the Hub answers
+    /// with anything else, it has refused and closed, so nothing more is sent.
     async fn push_until_refused(&mut self) -> Vec<Message> {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut out = Vec::new();
@@ -279,12 +280,11 @@ impl Client {
             if self.apply(&frame) {
                 continue;
             }
-            let closing = matches!(frame, Message::Close(_));
+            // Only the refusal (a text note) and the close come back other
+            // than as sync frames. Stop pushing now: the Hub has closed.
             out.push(frame);
-            if closing {
-                out.extend(self.drain().await);
-                return out;
-            }
+            out.extend(self.drain().await);
+            return out;
         }
     }
 
