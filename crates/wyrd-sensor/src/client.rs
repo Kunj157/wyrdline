@@ -62,11 +62,17 @@ pub enum ServerMsg {
         process: ProcessRef,
         body: EventBody,
     },
-    /// Total ring-buffer drops since the daemon started.
+    /// Total ring-buffer drops since the daemon started, and the events this
+    /// connection lost because its queue was full (the client was not reading
+    /// fast enough). Both are cumulative.
     Drops {
         total: u64,
+        #[serde(default)]
+        queue_dropped: u64,
     },
-    /// Answer to [`ClientMsg::Flush`]: every earlier event was sent before it.
+    /// Answer to [`ClientMsg::Flush`]. Every event the kernel had queued before
+    /// the request was either sent before this message or counted in the
+    /// `drops` report sent just before it (`queue_dropped`).
     Flushed {
         token: u64,
     },
@@ -187,4 +193,31 @@ fn read_msg(r: &mut BufReader<UnixStream>) -> Result<Option<ServerMsg>, ClientEr
         return Ok(None);
     }
     Ok(Some(serde_json::from_str(&line)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drops_from_an_older_daemon_read_as_no_queue_loss() {
+        let old: ServerMsg = serde_json::from_str(r#"{"type":"drops","total":4}"#).unwrap();
+        assert_eq!(
+            old,
+            ServerMsg::Drops {
+                total: 4,
+                queue_dropped: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn drops_round_trip_with_the_queue_count() {
+        let msg = ServerMsg::Drops {
+            total: 1,
+            queue_dropped: 9,
+        };
+        let text = serde_json::to_string(&msg).unwrap();
+        assert_eq!(serde_json::from_str::<ServerMsg>(&text).unwrap(), msg);
+    }
 }
