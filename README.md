@@ -165,6 +165,7 @@ reports exactly what is available and what degrades without it.
 - [Writing a policy](docs/policies/README.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Threat model](docs/threat-model/scope.md)
+- [Releases: assets, verification, reproducibility](docs/release.md)
 
 ## Contributing
 
