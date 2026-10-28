@@ -2,6 +2,7 @@
 //! decisions. Pure apart from the [`Sink`], so it is tested without a
 //! socket, a ledger, or a Cell.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +14,7 @@ use wyrd_schema::{
 };
 
 use crate::asks::{Answer, Asks};
-use crate::mcp::{McpState, PINNING_POLICY};
+use crate::mcp::{McpState, PINNING_POLICY, PinError};
 use crate::{Adapter, Direction, Request, Response, SessionQuery};
 
 /// Redaction level applied to everything before it reaches the ledger.
@@ -148,6 +149,14 @@ impl<S: Sink> Ingest<S> {
             turn: Mutex::new(turn),
             mcp: Mutex::new(McpState::default()),
         }
+    }
+
+    /// Keep MCP tool pins in `path` (a session's [`crate::mcp::PINS_FILE`]),
+    /// so a restarted session compares tools against their first listing.
+    /// A corrupt or unsafe pin file is an error.
+    pub fn with_mcp_pins(mut self, path: PathBuf) -> Result<Self, PinError> {
+        self.mcp = Mutex::new(McpState::with_store(path)?);
+        Ok(self)
     }
 
     /// Decide tool calls with `policy` after the static deny list.
@@ -321,6 +330,16 @@ impl<S: Sink> Ingest<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .observe(server, direction, message, std::time::Instant::now());
+        // Unsaved or unreadable pins: refuse the message rather than compare
+        // against memory that a restart would forget.
+        let observed = match observed {
+            Ok(o) => o,
+            Err(e) => {
+                return Response::Error {
+                    message: e.to_string(),
+                };
+            }
+        };
         let mut bodies = observed.events;
         for tool in &observed.rug_pulls {
             bodies.push(EventBody::GuardDecision(GuardDecision {
