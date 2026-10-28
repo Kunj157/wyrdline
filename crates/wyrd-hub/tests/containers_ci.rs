@@ -303,6 +303,51 @@ async fn exchange_mints_an_upload_only_token_of_the_trusting_org() {
 }
 
 #[tokio::test]
+async fn ci_token_uploads_to_its_own_org_only() {
+    let s = setup().await;
+    let app = s.hub.app();
+    add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "octo", "repository": "octo/app"}),
+    )
+    .await;
+    let r = exchange(&app, &s.gh.token("octo/app", Spoil::None), "acme").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let token = r.json()["token"].as_str().unwrap().to_string();
+
+    let (content_type, body) =
+        common::bundles::multipart(&common::bundles::bundle("ci", &["D001"]), Some("octo/app"));
+    let up = common::send(
+        &app,
+        Request::post("/api/v1/orgs/acme/bundles")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", content_type)
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(up.status, StatusCode::CREATED, "{}", up.text());
+    assert_eq!(up.json()["bundle"]["repo"], "octo/app");
+
+    // The same token is refused on another organisation's uploads.
+    let (content_type, body) =
+        common::bundles::multipart(&common::bundles::bundle("ci", &["D001"]), Some("octo/app"));
+    let other = common::send(
+        &app,
+        Request::post("/api/v1/orgs/other/bundles")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", content_type)
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(other.status, StatusCode::FORBIDDEN, "{}", other.text());
+    assert_eq!(other.json()["type"], "insufficient-scope");
+}
+
+#[tokio::test]
 async fn removing_the_rule_revokes_ci_access() {
     let s = setup().await;
     let app = s.hub.app();
