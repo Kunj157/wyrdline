@@ -57,6 +57,13 @@ enum Cmd {
         dir: PathBuf,
         rules: wyrd_sensor::EgressRules,
     },
+    /// Answer `Flushed { token }` on `conn` after the events already in the
+    /// ring buffer have been dispatched.
+    Flush {
+        conn: u64,
+        cgroup_id: u64,
+        token: u64,
+    },
     Unregister {
         conn: u64,
         cgroup_id: u64,
@@ -184,7 +191,7 @@ fn serve(
             workspace,
             egress,
         }) => (cgroup, workspace, egress),
-        Ok(ClientMsg::Egress { .. }) => {
+        Ok(ClientMsg::Egress { .. } | ClientMsg::Flush { .. }) => {
             let _ = send(
                 &mut stream,
                 &ServerMsg::Error {
@@ -255,16 +262,16 @@ fn serve(
     )
     .is_ok()
     {
-        updates(&stream, cmd_tx, cgroup_id, &canon);
+        updates(&stream, cmd_tx, conn, cgroup_id, &canon);
         forward(&mut stream, &rx);
     }
     let _ = cmd_tx.send(Cmd::Unregister { conn, cgroup_id });
     tracing::info!(cgroup_id, conn, "unregistered");
 }
 
-/// Egress rule updates from the client, on their own thread; they can
-/// only ever address the cgroup this connection registered.
-fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, cgroup_id: u64, dir: &Path) {
+/// Egress rule updates and flush requests from the client, on their own
+/// thread; they can only ever address the cgroup this connection registered.
+fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, conn: u64, cgroup_id: u64, dir: &Path) {
     let Ok(read) = stream.try_clone() else {
         return;
     };
@@ -287,6 +294,13 @@ fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, cgroup_id: u64, dir: &Path
                             cgroup_id,
                             dir: dir.clone(),
                             rules,
+                        });
+                    }
+                    Ok(ClientMsg::Flush { token }) => {
+                        let _ = cmd_tx.send(Cmd::Flush {
+                            conn,
+                            cgroup_id,
+                            token,
                         });
                     }
                     Ok(ClientMsg::Register { .. }) | Err(_) => {
@@ -319,6 +333,7 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
     let mut decoder = Decoder::new();
     let mut subs: Subscribers = HashMap::new();
     let mut last_drops = Instant::now();
+    let mut flushes: Vec<(u64, u64, u64)> = Vec::new();
     loop {
         while let Ok(cmd) = cmds.try_recv() {
             match cmd {
@@ -356,6 +371,11 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                         tracing::error!(cgroup_id, error = %e, "egress update failed");
                     }
                 }
+                Cmd::Flush {
+                    conn,
+                    cgroup_id,
+                    token,
+                } => flushes.push((conn, cgroup_id, token)),
                 Cmd::Unregister { conn, cgroup_id } => {
                     remove(&mut sensor, &mut decoder, &mut subs, cgroup_id, conn);
                 }
@@ -386,6 +406,16 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                     // A full queue means a stalled client: count it as a drop
                     // rather than blocking every session.
                     let _ = tx.try_send(msg.clone());
+                }
+            }
+        }
+        // `poll` drained the ring buffer, so everything the kernel queued
+        // before these requests arrived is now ahead of the answer in the
+        // connection's queue.
+        for (conn, cgroup_id, token) in flushes.drain(..) {
+            if let Some(list) = subs.get(&cgroup_id) {
+                for (_, tx) in list.iter().filter(|(c, _)| *c == conn) {
+                    let _ = tx.try_send(ServerMsg::Flushed { token });
                 }
             }
         }
