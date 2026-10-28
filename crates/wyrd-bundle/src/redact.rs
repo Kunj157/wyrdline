@@ -34,7 +34,9 @@ struct Rule {
 fn rule(kind: &'static str, pattern: &str, group: usize) -> Rule {
     // The patterns are constants; a failure here is a programming error
     // caught by every test run.
+    // nosemgrep: wyrd-no-lint-allow-for-unwrap-on-input-paths -- constant patterns; every rule is compiled by the tests.
     #[allow(clippy::expect_used)]
+    // nosemgrep: wyrd-no-unwrap-on-input-paths -- constant patterns; every rule is compiled by the tests.
     let re = Regex::new(pattern).expect("valid redaction pattern");
     Rule { kind, re, group }
 }
@@ -81,18 +83,24 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
 });
 
 static CANDIDATE: LazyLock<Regex> = LazyLock::new(|| {
+    // nosemgrep: wyrd-no-lint-allow-for-unwrap-on-input-paths -- constant patterns; every rule is compiled by the tests.
     #[allow(clippy::expect_used)]
+    // nosemgrep: wyrd-no-unwrap-on-input-paths -- constant pattern, compiled by the tests.
     Regex::new(r"[A-Za-z0-9+/=_-]{32,}").expect("valid pattern")
 });
 
 static HOME: LazyLock<Regex> = LazyLock::new(|| {
+    // nosemgrep: wyrd-no-lint-allow-for-unwrap-on-input-paths -- constant patterns; every rule is compiled by the tests.
     #[allow(clippy::expect_used)]
+    // nosemgrep: wyrd-no-unwrap-on-input-paths -- constant pattern, compiled by the tests.
     Regex::new(r"/home/([A-Za-z0-9._-]+)|/Users/([A-Za-z0-9._-]+)").expect("valid pattern")
 });
 
 /// A DNS name in a URL authority (after optional `user[:pass]@`).
 static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    // nosemgrep: wyrd-no-lint-allow-for-unwrap-on-input-paths -- constant patterns; every rule is compiled by the tests.
     #[allow(clippy::expect_used)]
+    // nosemgrep: wyrd-no-unwrap-on-input-paths -- constant pattern, compiled by the tests.
     Regex::new(
         r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^\s/@]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})\b",
     )
@@ -101,7 +109,9 @@ static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
 
 /// A DNS name after `user@` (e-mail addresses, `git@host:repo`, `ssh user@host`).
 static AT_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    // nosemgrep: wyrd-no-lint-allow-for-unwrap-on-input-paths -- constant patterns; every rule is compiled by the tests.
     #[allow(clippy::expect_used)]
+    // nosemgrep: wyrd-no-unwrap-on-input-paths -- constant pattern, compiled by the tests.
     Regex::new(r"(?i)\b[a-z0-9._%+-]+@([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})\b")
         .expect("valid pattern")
 });

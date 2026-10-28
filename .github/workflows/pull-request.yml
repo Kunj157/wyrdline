@@ -212,6 +212,8 @@ jobs:
           ./gitleaks detect --no-banner --redact
       - name: Semgrep
         run: pipx run semgrep scan --config p/default --error --metrics off --exclude target --exclude node_modules .
+      - name: Semgrep · Wyrdline rules (no unwrap on input paths, no shell-out in wyrdd)
+        run: pipx run semgrep scan --config .semgrep/wyrd.yml --error --metrics off --exclude target --exclude node_modules .
 
   release-scripts:
     name: Release · packaging scripts
