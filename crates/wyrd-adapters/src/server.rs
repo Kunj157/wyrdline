@@ -2,7 +2,7 @@
 //! one thread per connection, one request per connection.
 
 use std::io::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,12 +17,29 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Unix socket paths are limited to 107 bytes.
 pub const MAX_SOCKET_PATH: usize = 107;
 
-/// Where the intent socket of a session lives: under `$XDG_RUNTIME_DIR`
-/// when possible (short path, never writable by the Cell), else in the
-/// session directory.
+/// Where the intent socket of a session lives. The socket must sit in a
+/// short path (see [`MAX_SOCKET_PATH`]), so the per-user runtime directory
+/// comes first: `$XDG_RUNTIME_DIR`, else `/run/user/<uid>` when that is
+/// the user's own directory. Both are private to the user and not writable
+/// by the Cell. The session directory is the last resort.
 pub fn socket_path(session_dir: &Path, session_id: &str) -> PathBuf {
-    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
-        let dir = PathBuf::from(rt).join("wyrdline");
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .or_else(default_runtime_dir);
+    socket_path_in(session_dir, session_id, runtime.as_deref())
+}
+
+/// `/run/user/<uid>` when it exists and belongs to the effective user.
+fn default_runtime_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(format!("/run/user/{}", rustix::process::geteuid().as_raw()));
+    let meta = std::fs::metadata(&dir).ok()?;
+    (meta.is_dir() && meta.uid() == rustix::process::geteuid().as_raw()).then_some(dir)
+}
+
+/// [`socket_path`] with the runtime directory given explicitly.
+fn socket_path_in(session_dir: &Path, session_id: &str, runtime: Option<&Path>) -> PathBuf {
+    if let Some(rt) = runtime {
+        let dir = rt.join("wyrdline");
         let ok = std::fs::create_dir_all(&dir).is_ok()
             && std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).is_ok();
         if ok {
@@ -34,10 +51,15 @@ pub fn socket_path(session_dir: &Path, session_id: &str) -> PathBuf {
 
 /// Bind the socket at `path` (replacing a stale one) with mode 0600.
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
-    if path.as_os_str().len() > MAX_SOCKET_PATH {
+    let len = path.as_os_str().len();
+    if len > MAX_SOCKET_PATH {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("socket path too long: {}", path.display()),
+            format!(
+                "socket path is {len} bytes, over the {MAX_SOCKET_PATH}-byte limit: {}; \
+                 set XDG_RUNTIME_DIR to a short directory or use a shorter WYRD_DATA_DIR",
+                path.display()
+            ),
         ));
     }
     match std::fs::remove_file(path) {
@@ -121,4 +143,38 @@ pub fn serve_one<S: Sink>(stream: &UnixStream, ingest: &Ingest<S>) {
         }
     };
     respond(stream, &resp);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A data directory deep enough that `intent.sock` will not fit.
+    fn long_session_dir() -> PathBuf {
+        Path::new("/tmp").join("d".repeat(120)).join("session")
+    }
+
+    #[test]
+    fn a_long_session_dir_uses_the_runtime_dir_when_there_is_one() {
+        let runtime = tempfile::tempdir().unwrap();
+        let path = socket_path_in(&long_session_dir(), "01SESSION", Some(runtime.path()));
+        assert_eq!(path, runtime.path().join("wyrdline/intent-01SESSION.sock"));
+        let listener = bind(&path).expect("the runtime path fits the limit");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn a_long_path_with_no_runtime_dir_fails_naming_the_limit_and_the_fix() {
+        let path = socket_path_in(&long_session_dir(), "01SESSION", None);
+        assert!(path.as_os_str().len() > MAX_SOCKET_PATH);
+        let err = bind(&path).expect_err("the path is over the limit");
+        let text = err.to_string();
+        assert!(text.contains("107-byte limit"), "{text}");
+        assert!(text.contains("XDG_RUNTIME_DIR"), "{text}");
+        assert!(!path.exists(), "nothing is created for a refused path");
+    }
 }
