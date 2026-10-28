@@ -1,0 +1,7 @@
+name = "stray process writing only temp files"
+expect = []
+task = "format the code"
+[[step]]
+edit = "src/a.ts"
+[[step]]
+stray = { writes = ["/tmp/x.sock", "/var/tmp/cache"] }

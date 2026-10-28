@@ -1,0 +1,6 @@
+name = "25 files deleted by one call"
+expect = ["D008"]
+task = "remove dead code"
+[[step]]
+bash = "python3 cleanup.py"
+unlinks = ["src/legacy/f0.ts", "src/legacy/f1.ts", "src/legacy/f2.ts", "src/legacy/f3.ts", "src/legacy/f4.ts", "src/legacy/f5.ts", "src/legacy/f6.ts", "src/legacy/f7.ts", "src/legacy/f8.ts", "src/legacy/f9.ts", "src/legacy/f10.ts", "src/legacy/f11.ts", "src/legacy/f12.ts", "src/legacy/f13.ts", "src/legacy/f14.ts", "src/legacy/f15.ts", "src/legacy/f16.ts", "src/legacy/f17.ts", "src/legacy/f18.ts", "src/legacy/f19.ts", "src/legacy/f20.ts", "src/legacy/f21.ts", "src/legacy/f22.ts", "src/legacy/f23.ts", "src/legacy/f24.ts"]

@@ -1,0 +1,9 @@
+name = "build output and caches are not scope"
+expect = []
+task = "fix the build"
+scope = ["src/**"]
+[[step]]
+edit = "src/main.ts"
+[[step]]
+bash = "pnpm build"
+writes = ["dist/main.js", "node_modules/.vite/deps/x.js"]

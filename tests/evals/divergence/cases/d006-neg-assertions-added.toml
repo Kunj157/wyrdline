@@ -1,0 +1,12 @@
+name = "assertions added, not removed"
+expect = []
+task = "fix the failing cart test"
+[files."tests/cart.test.ts"]
+before = """
+test('total', () => { expect(total([1, 2])).toBe(3); });
+"""
+after = """
+test('total', () => { expect(total([1, 2])).toBe(3); expect(total([])).toBe(0); });
+"""
+[[step]]
+edit = "tests/cart.test.ts"

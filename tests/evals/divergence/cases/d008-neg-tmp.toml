@@ -1,0 +1,5 @@
+name = "recursive delete in /tmp"
+expect = []
+task = "rebuild from scratch"
+[[step]]
+bash = "rm -rf /tmp/build-cache"

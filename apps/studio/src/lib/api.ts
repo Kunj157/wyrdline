@@ -1,6 +1,7 @@
 /** Daemon data for Studio: one client and TanStack Query hooks around it. */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Event } from "@wyrdline/schemas";
+import type * as api from "@wyrdline/schemas/generated-api";
 import { type Client, createClient } from "@wyrdline/schemas/client";
 
 import { takeTokenFromUrl } from "./auth";
@@ -48,6 +49,7 @@ export const keys = {
   verify: (sid: string) => ["verify", sid] as const,
   checkpoints: (sid: string) => ["checkpoints", sid] as const,
   asks: (sid: string) => ["asks", sid] as const,
+  divergences: (sid: string) => ["divergences", sid] as const,
   policies: ["policies"] as const,
   diff: (sid: string, a: string, b: string) => ["diff", sid, a, b] as const,
   diffFile: (sid: string, a: string, b: string, path: string) =>
@@ -165,6 +167,42 @@ export function useAnswerAsk(sid: string) {
   return useMutation({
     mutationFn: (v: { id: number; allow: boolean }) => apiClient().answerAsk(sid, v.id, v.allow),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.asks(sid) }),
+  });
+}
+
+/** A session's divergences with their triage state. */
+export function useDivergences(sid: string) {
+  return useQuery({
+    queryKey: keys.divergences(sid),
+    queryFn: () => apiClient().divergences(sid),
+  });
+}
+
+/** Every session's divergences, one request per session (the inbox). */
+export function useAllDivergences(sessions: api.SessionRecord[]) {
+  return useQueries({
+    queries: sessions.map((s) => ({
+      queryKey: keys.divergences(s.id),
+      queryFn: () => apiClient().divergences(s.id),
+    })),
+  });
+}
+
+/**
+ * Acknowledge, mark a false positive, or reopen. Only a success refreshes
+ * the divergences (and the events, which gain the update); a refusal
+ * leaves everything as it was.
+ */
+export function useTriage(sid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { did: string; body: api.TriageBody }) =>
+      apiClient().triage(sid, v.did, v.body),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.divergences(sid) }),
+        qc.invalidateQueries({ queryKey: keys.events(sid) }),
+      ]),
   });
 }
 

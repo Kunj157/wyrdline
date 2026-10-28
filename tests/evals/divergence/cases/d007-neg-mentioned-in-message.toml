@@ -1,0 +1,6 @@
+name = "host named by the user"
+expect = []
+task = "the staging server at staging.example.org is slow, investigate"
+[[step]]
+bash = "python3 probe.py"
+connects = [{ host = "staging.example.org" }]

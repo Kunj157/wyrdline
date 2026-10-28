@@ -119,6 +119,7 @@ export function River2D({ layout, selected, onSelect, zoom }: River2DProps) {
               key={k.seq}
               data-seq={k.seq}
               data-lane={k.lane}
+              data-meaning={k.meaning}
               onClick={() => onSelect(k.seq)}
               className="cursor-pointer"
               opacity={dim ? 0.4 : 1}

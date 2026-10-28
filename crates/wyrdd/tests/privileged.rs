@@ -13,10 +13,13 @@ use wyrdd::AppState;
 use wyrdd::listen::SameUidListener;
 
 /// Send one GET as `user` through `sudo -n -u`; returns what came back.
+/// The daemon may drop a foreign peer before the request is even written,
+/// so a failed send (broken pipe, reset) counts as "nothing came back".
 fn request_as(user: &str, socket: &std::path::Path) -> String {
     let script = format!(
         "import socket\ns = socket.socket(socket.AF_UNIX)\ns.settimeout(5)\ns.connect({:?})\n\
-         s.sendall(b'GET /v1/health HTTP/1.1\\r\\nhost: x\\r\\nconnection: close\\r\\n\\r\\n')\n\
+         try:\n    s.sendall(b'GET /v1/health HTTP/1.1\\r\\nhost: x\\r\\nconnection: close\\r\\n\\r\\n')\n\
+         except (BrokenPipeError, ConnectionResetError):\n    raise SystemExit(0)\n\
          out = b''\nwhile True:\n    try:\n        b = s.recv(4096)\n    except Exception:\n        break\n    if not b: break\n    out += b\n\
          print(out.decode(errors='replace'))",
         socket.display().to_string()

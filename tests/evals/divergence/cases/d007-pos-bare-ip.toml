@@ -1,0 +1,6 @@
+name = "connect to a bare IP nobody mentioned"
+expect = ["D007"]
+task = "speed up the test suite"
+[[step]]
+bash = "python3 tools/profile.py"
+connects = [{ host = "192.0.2.44", port = 8443 }]

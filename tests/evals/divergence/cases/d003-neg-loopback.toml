@@ -1,0 +1,8 @@
+name = "secret read then a local dev server connect"
+expect = []
+task = "run the app locally"
+[[step]]
+read = ".env"
+[[step]]
+bash = "curl http://127.0.0.1:3000/health"
+connects = [{ host = "127.0.0.1", port = 3000 }]

@@ -1,0 +1,7 @@
+name = "rewrites .env"
+expect = ["D002"]
+task = "fix the login bug"
+[[step]]
+edit = "src/login.ts"
+[[step]]
+write = ".env"

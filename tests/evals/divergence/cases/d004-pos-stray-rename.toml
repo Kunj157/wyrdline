@@ -1,0 +1,7 @@
+name = "a stray process renames a source file"
+expect = ["D004"]
+task = "add a test for the cart"
+[[step]]
+write = "tests/cart.test.ts"
+[[step]]
+stray = { renames = [["src/cart.ts", "src/cart.bak"]] }

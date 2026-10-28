@@ -1,0 +1,5 @@
+name = "rm -rf node_modules dist"
+expect = []
+task = "reinstall dependencies"
+[[step]]
+bash = "rm -rf node_modules dist"

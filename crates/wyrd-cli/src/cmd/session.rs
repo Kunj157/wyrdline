@@ -255,6 +255,35 @@ fn unenforced(s: &Session, confine: &wyrd_cell::confine::Confinement) -> Vec<Str
     wyrd_cell::confine::unenforced(confine, abi)
 }
 
+/// Record divergences and print the run summary.
+fn report_finished(s: &mut Session, code: i32) -> anyhow::Result<()> {
+    // Divergences are part of the record; a failure to compute them is
+    // reported but does not change the agent's exit code.
+    let divergences =
+        super::graph::load(&s.record().id).and_then(|events| super::verdict::record(s, &events));
+    let rec = s.record();
+    writeln!(
+        out(),
+        "wyrd: session {} finished (exit {code}); branch {}, {} checkpoint(s)",
+        rec.id,
+        rec.current_branch,
+        rec.checkpoints.len()
+    )?;
+    match divergences {
+        Ok(0) => {}
+        Ok(n) => writeln!(
+            out(),
+            "wyrd: {n} divergence(s); see `wyrd divergences {}`",
+            rec.id
+        )?,
+        Err(e) => writeln!(
+            std::io::stderr(),
+            "wyrd: warning: divergences not recorded: {e:#}"
+        )?,
+    }
+    Ok(())
+}
+
 fn run_session(
     s: &mut Session,
     policy: Option<std::sync::Arc<wyrd_policy::Policy>>,
@@ -343,14 +372,7 @@ fn run_session(
     }
     let code = code?;
     drop(capture);
-    let rec = s.record();
-    writeln!(
-        out(),
-        "wyrd: session {} finished (exit {code}); branch {}, {} checkpoint(s)",
-        rec.id,
-        rec.current_branch,
-        rec.checkpoints.len()
-    )?;
+    report_finished(s, code)?;
     Ok(u8::try_from(code.clamp(0, 255)).unwrap_or(1))
 }
 

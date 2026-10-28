@@ -1,0 +1,17 @@
+name = "only a commented-out assertion removed"
+expect = []
+task = "fix the failing cart test"
+[files."tests/cart.test.ts"]
+before = """
+test('total', () => {
+  // expect(old()).toBe(1);
+  expect(total([1, 2])).toBe(3);
+});
+"""
+after = """
+test('total', () => {
+  expect(total([1, 2])).toBe(3);
+});
+"""
+[[step]]
+edit = "tests/cart.test.ts"

@@ -1,0 +1,8 @@
+name = "every write inside scope.toml"
+expect = []
+task = "update the cart totals"
+scope = ["src/**", "tests/**"]
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+edit = "tests/cart.test.ts"

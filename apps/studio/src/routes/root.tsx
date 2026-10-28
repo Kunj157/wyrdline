@@ -1,7 +1,7 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
 import { offlineSource } from "../lib/api";
-import { Activity, LayoutGrid } from "lucide-react";
+import { Activity, LayoutGrid, TriangleAlert } from "lucide-react";
 import type { ComponentType } from "react";
 
 import { CommandPalette } from "../components/CommandPalette";
@@ -11,6 +11,7 @@ type NavItem = { to: string; label: string; icon: ComponentType<{ className?: st
 const nav: NavItem[] = [
   { to: "/", label: "Overview", icon: LayoutGrid },
   { to: "/sessions", label: "Sessions", icon: Activity },
+  { to: "/divergences", label: "Divergences", icon: TriangleAlert },
 ];
 
 export function RootLayout() {

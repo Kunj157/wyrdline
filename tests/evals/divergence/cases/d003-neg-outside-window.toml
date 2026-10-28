@@ -1,0 +1,10 @@
+name = "secret read long before the connect"
+expect = []
+task = "set up https://api.example.io access"
+[[step]]
+read = ".env"
+[[step]]
+wait_ms = 60000
+[[step]]
+bash = "curl https://api.example.io/health"
+connects = [{ host = "api.example.io" }]

@@ -1,0 +1,6 @@
+name = "IPv6 connect to an unmentioned address"
+expect = ["D007"]
+task = "speed up the test suite"
+[[step]]
+bash = "python3 tools/profile.py"
+connects = [{ host = "2001:db8::42" }]

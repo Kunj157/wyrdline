@@ -1,0 +1,7 @@
+name = "tool status ok with a non-zero exit code"
+expect = ["D005"]
+task = "regenerate the fixtures"
+[[step]]
+bash = "make fixtures"
+exit = 2
+reported_status = "ok"

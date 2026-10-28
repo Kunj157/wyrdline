@@ -1,0 +1,7 @@
+name = "only changed claim is accurate"
+expect = []
+task = "fix rounding in the cart"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+say = "I only changed src/cart.ts."

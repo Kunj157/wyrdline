@@ -1,0 +1,5 @@
+name = "no MCP servers"
+expect = []
+task = "summarise the open issues"
+[[step]]
+read = "ISSUES.md"

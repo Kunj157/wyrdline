@@ -101,6 +101,8 @@ pub struct Metrics {
     pub ingest: [[AtomicU64; 2]; 2],
     /// Policy backtests run.
     pub backtests: AtomicU64,
+    /// Divergence triage updates written.
+    pub triages: AtomicU64,
 }
 
 /// Ingest kinds, indexes into [`Metrics::ingest`].
@@ -157,6 +159,10 @@ impl Metrics {
         self.backtests.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn triage(&self) {
+        self.triages.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Prometheus text exposition.
     pub fn render(&self, snap: &Snapshot) -> String {
         let mut out = String::new();
@@ -199,6 +205,17 @@ impl Metrics {
             out,
             "wyrdd_policy_backtests_total {}",
             self.backtests.load(Ordering::Relaxed)
+        );
+        family(
+            &mut out,
+            "wyrdd_divergence_triages_total",
+            "counter",
+            "Divergence triage updates written to ledgers.",
+        );
+        let _ = writeln!(
+            out,
+            "wyrdd_divergence_triages_total {}",
+            self.triages.load(Ordering::Relaxed)
         );
         family(
             &mut out,

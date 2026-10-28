@@ -1,0 +1,5 @@
+name = "rm -rf src"
+expect = ["D008"]
+task = "clean up the project"
+[[step]]
+bash = "rm -rf src"

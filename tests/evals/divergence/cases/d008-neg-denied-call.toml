@@ -1,0 +1,7 @@
+name = "a denied rm -rf never ran"
+expect = []
+sensorless = true
+task = "tidy up"
+[[step]]
+bash = "rm -rf /"
+reported_status = "denied"

@@ -19,7 +19,8 @@ pub enum Level {
     /// Known secret formats, credential assignments, auth headers, URL
     /// passwords, and high-entropy tokens.
     Standard,
-    /// Standard plus home-directory user names and host names.
+    /// Standard plus home-directory user names and host names (replaced by
+    /// stable pseudonyms, see [`host_pseudonym`]).
     Strict,
 }
 
@@ -88,6 +89,132 @@ static HOME: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::expect_used)]
     Regex::new(r"/home/([A-Za-z0-9._-]+)|/Users/([A-Za-z0-9._-]+)").expect("valid pattern")
 });
+
+/// A DNS name in a URL authority (after optional `user[:pass]@`).
+static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::expect_used)]
+    Regex::new(
+        r"(?i)\b[a-z][a-z0-9+.-]*://(?:[^\s/@]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})\b",
+    )
+    .expect("valid pattern")
+});
+
+/// A DNS name after `user@` (e-mail addresses, `git@host:repo`, `ssh user@host`).
+static AT_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::expect_used)]
+    Regex::new(r"(?i)\b[a-z0-9._%+-]+@([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})\b")
+        .expect("valid pattern")
+});
+
+/// Reserved top-level domain of pseudonyms (RFC 2606), so a pseudonym is
+/// never a real host and is never pseudonymised again.
+const PSEUDONYM_TLD: &str = ".invalid";
+
+/// Stable pseudonym of a host name: `host-<hash8>.invalid`, where `hash8`
+/// is the first 8 hex digits of BLAKE3 of the lower-cased name. The same
+/// host always gets the same pseudonym, so connections stay correlatable.
+/// `localhost` and existing pseudonyms are returned unchanged.
+pub fn host_pseudonym(host: &str) -> String {
+    let lower = host.to_ascii_lowercase();
+    if lower.is_empty() || lower == "localhost" || lower.ends_with(PSEUDONYM_TLD) {
+        return host.to_string();
+    }
+    format!(
+        "host-{}{PSEUDONYM_TLD}",
+        &hex::encode(blake3::hash(lower.as_bytes()).as_bytes())[..8]
+    )
+}
+
+fn replace_hosts(re: &Regex, s: &str) -> String {
+    re.replace_all(s, |c: &Captures<'_>| {
+        let whole = c.get(0).map_or("", |m| m.as_str());
+        match (c.get(0), c.get(1)) {
+            (Some(w), Some(h)) => {
+                let mut out = whole.to_string();
+                let start = h.start() - w.start();
+                out.replace_range(start..start + h.len(), &host_pseudonym(h.as_str()));
+                out
+            }
+            _ => whole.to_string(),
+        }
+    })
+    .into_owned()
+}
+
+/// Host names strict redaction recognises in `s` (URL authorities and
+/// after `user@`), lower-cased, pseudonyms excluded.
+pub fn hosts_in(s: &str) -> Vec<String> {
+    [&*URL_HOST, &*AT_HOST]
+        .iter()
+        .flat_map(|re| re.captures_iter(s))
+        .filter_map(|c| c.get(1))
+        .map(|m| m.as_str().to_ascii_lowercase())
+        .filter(|h| host_pseudonym(h) != *h)
+        .collect()
+}
+
+/// Host names known to belong to a session (resolved, connected to, or
+/// seen in a URL anywhere in it). Strict export replaces every occurrence
+/// of them, also in prose where nothing marks them as a host, e.g. "then
+/// connected to evil.example".
+#[derive(Debug, Clone, Default)]
+pub struct KnownHosts {
+    re: Option<Regex>,
+}
+
+impl KnownHosts {
+    pub fn new(hosts: impl IntoIterator<Item = String>) -> Self {
+        let mut hosts: Vec<String> = hosts
+            .into_iter()
+            .map(|h| h.to_ascii_lowercase())
+            .filter(|h| h.contains('.') && host_pseudonym(h) != *h)
+            .collect();
+        // Longest first, so a name wins over its own suffix.
+        hosts.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        hosts.dedup();
+        if hosts.is_empty() {
+            return KnownHosts { re: None };
+        }
+        let alts: Vec<String> = hosts.iter().map(|h| regex::escape(h)).collect();
+        KnownHosts {
+            re: Regex::new(&format!(r"(?i)\b(?:{})\b", alts.join("|"))).ok(),
+        }
+    }
+
+    /// Replace every known host in `s` with its pseudonym.
+    pub fn replace(&self, s: &str) -> String {
+        match &self.re {
+            Some(re) => re
+                .replace_all(s, |c: &Captures<'_>| {
+                    host_pseudonym(c.get(0).map_or("", |m| m.as_str()))
+                })
+                .into_owned(),
+            None => s.to_string(),
+        }
+    }
+}
+
+/// Call `f` with every string in a JSON value.
+pub fn visit_strings(v: &serde_json::Value, f: &mut dyn FnMut(&str)) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => f(s),
+        Value::Array(a) => a.iter().for_each(|x| visit_strings(x, f)),
+        Value::Object(o) => o.values().for_each(|x| visit_strings(x, f)),
+        _ => {}
+    }
+}
+
+/// Apply `f` to every string in a JSON value.
+pub fn map_strings(v: &mut serde_json::Value, f: &dyn Fn(&str) -> String) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => *s = f(s),
+        Value::Array(a) => a.iter_mut().for_each(|x| map_strings(x, f)),
+        Value::Object(o) => o.values_mut().for_each(|x| map_strings(x, f)),
+        _ => {}
+    }
+}
 
 /// JSON object keys whose values are always secrets.
 const SECRET_KEYS: &[&str] = &[
@@ -176,6 +303,8 @@ pub fn redact_str(input: &str, level: Level) -> String {
         .into_owned();
     if level >= Level::Strict {
         s = HOME.replace_all(&s, "~").into_owned();
+        s = replace_hosts(&URL_HOST, &s);
+        s = replace_hosts(&AT_HOST, &s);
     }
     s
 }
@@ -195,7 +324,9 @@ pub fn redact_json(v: &serde_json::Value, level: Level) -> serde_json::Value {
                 .map(|(k, x)| {
                     let secret_key = SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str());
                     let value = match x {
-                        Value::String(s) if secret_key && !s.is_empty() => {
+                        Value::String(s)
+                            if secret_key && !s.is_empty() && !s.starts_with("[REDACTED:") =>
+                        {
                             Value::String(marker("field", s))
                         }
                         _ => redact_json(x, level),

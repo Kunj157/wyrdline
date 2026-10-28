@@ -7,13 +7,22 @@ single implementation used at every exit point.
 | Level | Where | What is replaced |
 |---|---|---|
 | `standard` | ingest, before an event is appended | private-key blocks; AWS, GitHub, Anthropic, OpenAI, Slack, Google, Stripe keys; JWTs; `Authorization`/`Cookie`/API-key headers; URL passwords; `password=`-style assignments; high-entropy tokens (mixed case + digits, ≥ 32 chars, not hex) |
-| `strict` | bundle export (Phase 11) | standard + home-directory user names (`/home/alice` → `~`) |
+| `strict` | bundle export | standard + home-directory user names (`/home/alice` → `~`) + host names in URLs and after `user@` (→ `host-<hash8>.invalid`) |
 | `off` | tests only | nothing |
 
 A secret becomes `[REDACTED:<kind>:<hash8>]`, where `hash8` is the first
 eight hex digits of BLAKE3 of the secret, so two occurrences of the same
 secret stay recognisable as the same value without revealing it.
 Redaction is idempotent: markers are never redacted again.
+
+A host-name pseudonym is `host-<hash8>.invalid` (BLAKE3 of the lower-cased
+name; `.invalid` is reserved by RFC 2606, so a pseudonym is never a real
+host). The same host always maps to the same pseudonym, so connections stay
+correlatable in a shared bundle. `localhost`, IP literals, and single-label
+names (`db`) are kept; bare names in command text without a scheme or
+`user@` are only pseudonymised where the event field is a host name
+(`effect.net.dns_query`, `effect.net.connect.dns_name`, see
+`docs/bundle-format.md`).
 
 In JSON (tool arguments, MCP params), every string is redacted and values
 under secret-named keys (`password`, `token`, `api_key`, `authorization`,

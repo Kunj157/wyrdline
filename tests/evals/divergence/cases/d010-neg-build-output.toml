@@ -1,0 +1,10 @@
+name = "build output does not count as a change"
+expect = []
+task = "fix rounding in the cart"
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+bash = "pnpm build"
+writes = ["dist/cart.js"]
+[[step]]
+say = "I only changed src/cart.ts."
