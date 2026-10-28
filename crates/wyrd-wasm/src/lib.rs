@@ -1,6 +1,7 @@
 //! Browser entry points. The Studio's offline mode runs the same
 //! correlator the daemon uses and the same bundle reader as `wyrd verify`,
 //! compiled to WebAssembly.
+#![forbid(unsafe_code)]
 
 use wasm_bindgen::prelude::*;
 

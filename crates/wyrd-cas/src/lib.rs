@@ -10,6 +10,7 @@
 //! Without the default `store` feature only the formats are built
 //! ([`ChunkHash`], [`Manifest`]): that is what the Studio's WebAssembly
 //! bundle reader uses.
+#![forbid(unsafe_code)]
 
 mod manifest;
 #[cfg(feature = "store")]

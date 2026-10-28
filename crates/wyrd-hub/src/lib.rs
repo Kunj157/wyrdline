@@ -2,6 +2,7 @@
 //! Bundles are stored in S3-compatible object storage, their metadata,
 //! organisations, users, and the audit log in PostgreSQL.
 //! `docs/architecture/hub.md` describes the API and the deployment.
+#![forbid(unsafe_code)]
 
 pub mod audit;
 pub mod auth;
