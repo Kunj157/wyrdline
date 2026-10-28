@@ -197,7 +197,7 @@ jobs:
           for n in 1 2; do
             cargo clean
             cargo build --release --locked --target "$TARGET" \
-              -p wyrd-cli -p wyrdd -p wyrd-sensord --bin wyrd --bin wyrdd --bin wyrd-sensord
+              -p wyrd-cli -p wyrdd -p wyrd-sensord -p wyrd-hub --bins
             mkdir -p "build-$n"
             for b in wyrd wyrdd wyrd-sensord; do cp "target/$TARGET/release/$b" "build-$n/"; done
           done
@@ -359,8 +359,9 @@ jobs:
           wyrd doctor || true
           sudo systemctl stop wyrd-sensord
           # Not `command -v wyrd`: the earlier install.sh step put its own bin
-          # directory on GITHUB_PATH, so the tarball copy is found by name.
-          files=$(dpkg -L wyrdline | grep -E '/(wyrd|wyrdd|wyrd-sensord)$')
+          # directory on GITHUB_PATH, so the tarball copy is found by name. Only
+          # /usr paths: dpkg keeps conffiles such as /etc/apparmor.d/wyrd on remove.
+          files=$(dpkg -L wyrdline | grep -E '^/usr/.*/(wyrd|wyrdd|wyrd-sensord)$')
           test -n "$files"
           sudo apt-get remove -y wyrdline
           for f in $files; do
