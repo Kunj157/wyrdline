@@ -46,7 +46,7 @@ tokio-tungstenite = "0.29.0"
 
 [features]
 # Analytics over Parquet projections with embedded DuckDB (compiles DuckDB
-# from source; on in the Hub image, `make test-hub`, and the hub CI job).
+# from source; on in `make test-hub` and the hub CI job).
 analytics = ["dep:duckdb"]
 # Integration tests that start Postgres and MinIO with Testcontainers
 # (needs Docker; run by `make test-hub`).

@@ -172,9 +172,9 @@ Metrics: `wyrd_hub_uploads_total{outcome}` (`accepted`, `duplicate`,
 
 ## Analytics and search
 
-Built with the `analytics` feature (on in the Hub image, `make test-hub`,
-and CI; it compiles DuckDB from source, so plain workspace builds leave it
-out and the two endpoints answer 501 there).
+Built with the `analytics` feature (on in `make test-hub` and the CI hub
+job; it compiles DuckDB from source, so plain workspace builds leave it out
+and the two endpoints answer 501 there). A Hub image must enable it too.
 
 On upload the Hub writes a Parquet **projection** of the bundle to
 `WYRD_HUB_DATA_DIR/projections/<org>/<bundle>/`: `events.parquet` (seq,
