@@ -7,8 +7,13 @@
 //! was approved) is flagged.
 
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wyrd_bundle::redact::{redact_json, redact_str};
 use wyrd_schema::{CallStatus, EventBody, McpRequest, McpResponse, ToolCallFinished};
@@ -21,6 +26,155 @@ const SUMMARY_CHARS: usize = 400;
 
 /// Policy id of tool-description pinning decisions.
 pub const PINNING_POLICY: &str = "wyrdline.mcp-pinning";
+
+/// File, in a session directory, that keeps the session's tool pins across
+/// restarts of its gateway.
+pub const PINS_FILE: &str = "mcp-pins.json";
+
+const PINS_VERSION: u32 = 1;
+
+/// Why the pins could not be loaded or saved. Each one stops the session's
+/// MCP traffic: a pin that is not on disk cannot be compared after a restart.
+#[derive(Debug, thiserror::Error)]
+pub enum PinError {
+    #[error("cannot read the MCP tool pins at {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(
+        "the MCP tool pins at {} are corrupt ({reason}); refusing to continue. \
+         Remove the file only if you trust the MCP servers to be unchanged",
+        path.display()
+    )]
+    Corrupt { path: PathBuf, reason: String },
+    #[error(
+        "the MCP tool pins at {} are readable by other users (mode {mode:o}); \
+         refusing to load them",
+        path.display()
+    )]
+    Unsafe { path: PathBuf, mode: u32 },
+    #[error("cannot save the MCP tool pins to {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(
+        "an earlier failure to save the MCP tool pins makes them unsafe to use; restart the session"
+    )]
+    Broken,
+}
+
+/// On-disk form of the pins: `{"version": 1, "pins": [...]}`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinFile {
+    version: u32,
+    pins: Vec<PinEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinEntry {
+    server: String,
+    tool: String,
+    /// BLAKE3 of the tool's description and schema, hex.
+    blake3: String,
+}
+
+type Pins = HashMap<(String, String), blake3::Hash>;
+
+/// Read the pins at `path`. A missing file means no pins yet. Anything else
+/// that is not a well-formed, private file fails closed.
+fn load(path: &Path) -> Result<Pins, PinError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Pins::new()),
+        Err(source) => {
+            return Err(PinError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let corrupt = |reason: String| PinError::Corrupt {
+        path: path.to_path_buf(),
+        reason,
+    };
+    if !meta.is_file() {
+        return Err(corrupt("not a regular file".into()));
+    }
+    if meta.mode() & 0o077 != 0 {
+        return Err(PinError::Unsafe {
+            path: path.to_path_buf(),
+            mode: meta.mode() & 0o777,
+        });
+    }
+    let text = std::fs::read_to_string(path).map_err(|source| PinError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let file: PinFile = serde_json::from_str(&text).map_err(|e| corrupt(e.to_string()))?;
+    if file.version != PINS_VERSION {
+        return Err(corrupt(format!("unknown version {}", file.version)));
+    }
+    let mut pins = Pins::new();
+    for entry in file.pins {
+        let hash = blake3::Hash::from_hex(&entry.blake3)
+            .map_err(|e| corrupt(format!("{}/{}: bad hash: {e}", entry.server, entry.tool)))?;
+        let key = (entry.server, entry.tool);
+        if pins.insert(key.clone(), hash).is_some() {
+            return Err(corrupt(format!("{}/{} is pinned twice", key.0, key.1)));
+        }
+    }
+    Ok(pins)
+}
+
+/// Replace the pins at `path` atomically: a private temporary file, synced,
+/// then renamed over the old one. A crash leaves either the old or the new
+/// file, never a partial one.
+fn save(path: &Path, pins: &Pins) -> Result<(), PinError> {
+    let mut entries: Vec<PinEntry> = pins
+        .iter()
+        .map(|((server, tool), hash)| PinEntry {
+            server: server.clone(),
+            tool: tool.clone(),
+            blake3: hash.to_hex().to_string(),
+        })
+        .collect();
+    entries.sort_by(|a, b| (&a.server, &a.tool).cmp(&(&b.server, &b.tool)));
+    let text = serde_json::to_string_pretty(&PinFile {
+        version: PINS_VERSION,
+        pins: entries,
+    })
+    .map_err(|e| PinError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(e),
+    })?;
+    let tmp = path.with_extension("json.tmp");
+    let write = || -> std::io::Result<()> {
+        // A leftover temporary file keeps its old mode; start from nothing.
+        let _ = std::fs::remove_file(&tmp);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        if let Some(dir) = path.parent().and_then(|d| std::fs::File::open(d).ok()) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
+    };
+    write().map_err(|source| PinError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
 
 /// What one MCP message means for the session.
 #[derive(Debug, Default, PartialEq)]
@@ -46,7 +200,11 @@ struct InFlight {
 #[derive(Debug, Default)]
 pub struct McpState {
     in_flight: HashMap<(String, String), InFlight>,
-    pins: HashMap<(String, String), blake3::Hash>,
+    pins: Pins,
+    /// Where pins persist, if anywhere. Without it they live for one run.
+    store: Option<PathBuf>,
+    /// Set after a failed save: the pins on disk no longer match memory.
+    broken: bool,
 }
 
 /// Ledger name of an MCP tool, matching the agent's own naming
@@ -86,6 +244,18 @@ fn text_summary(result: &Value) -> Option<String> {
 }
 
 impl McpState {
+    /// State whose pins persist at `path` (a session's [`PINS_FILE`]), so a
+    /// restarted gateway compares tools against the first listing ever seen.
+    /// A corrupt or unsafe file is an error, never an empty pin set.
+    pub fn with_store(path: PathBuf) -> Result<Self, PinError> {
+        let pins = load(&path)?;
+        Ok(McpState {
+            pins,
+            store: Some(path),
+            ..McpState::default()
+        })
+    }
+
     /// Interpret one message. Batches (arrays) are observed element-wise
     /// by the caller.
     pub fn observe(
@@ -94,7 +264,10 @@ impl McpState {
         direction: Direction,
         msg: &Value,
         now: Instant,
-    ) -> Observed {
+    ) -> Result<Observed, PinError> {
+        if self.broken {
+            return Err(PinError::Broken);
+        }
         let mut out = Observed::default();
         let id = id_of(msg);
         let method = msg.get("method").and_then(Value::as_str);
@@ -132,7 +305,7 @@ impl McpState {
             // A response: pair it with its request.
             (None, Some(id)) => {
                 let Some(req) = self.in_flight.remove(&(server.to_string(), id.clone())) else {
-                    return out;
+                    return Ok(out);
                 };
                 let error = msg.get("error");
                 let result = msg.get("result").unwrap_or(&Value::Null);
@@ -153,7 +326,7 @@ impl McpState {
                     result_summary: summary.clone(),
                 }));
                 if req.method == "tools/list" && error.is_none() {
-                    out.rug_pulls = self.pin(server, result);
+                    out.rug_pulls = self.pin(server, result)?;
                 }
                 if let Some(cid) = req.call_id {
                     out.events
@@ -174,13 +347,15 @@ impl McpState {
             }
             _ => {}
         }
-        out
+        Ok(out)
     }
 
     /// Record each tool's description; return tools whose description
-    /// differs from the first one seen.
-    fn pin(&mut self, server: &str, result: &Value) -> Vec<String> {
+    /// differs from the first one seen. A first sighting is saved before
+    /// the listing is answered.
+    fn pin(&mut self, server: &str, result: &Value) -> Result<Vec<String>, PinError> {
         let mut changed = Vec::new();
+        let mut new_pin = false;
         for tool in result
             .get("tools")
             .and_then(Value::as_array)
@@ -198,6 +373,7 @@ impl McpState {
             match self.pins.entry((server.to_string(), name.to_string())) {
                 std::collections::hash_map::Entry::Vacant(v) => {
                     v.insert(h);
+                    new_pin = true;
                 }
                 std::collections::hash_map::Entry::Occupied(o) => {
                     if *o.get() != h {
@@ -206,6 +382,22 @@ impl McpState {
                 }
             }
         }
-        changed
+        if new_pin {
+            self.persist()?;
+        }
+        Ok(changed)
+    }
+
+    /// Save the pins. After a failure the pins on disk are stale, so every
+    /// later message is refused.
+    fn persist(&mut self) -> Result<(), PinError> {
+        let Some(path) = &self.store else {
+            return Ok(());
+        };
+        if let Err(e) = save(path, &self.pins) {
+            self.broken = true;
+            return Err(e);
+        }
+        Ok(())
     }
 }

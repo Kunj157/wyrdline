@@ -3,6 +3,7 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod bundles;
 pub mod idp;
 
 use std::sync::Arc;
@@ -112,13 +113,15 @@ pub fn config(database_url: &str, s3: S3Config) -> Config {
         db_max_connections: 5,
         s3,
         oidc: None,
-        data_dir: std::env::temp_dir(),
+        data_dir: std::env::temp_dir().join("wyrd-hub-tests"),
+        limits: wyrd_hub::config::Limits::default(),
     }
 }
 
 /// A migrated Hub with an existing bucket.
 pub struct Hub {
     pub state: Arc<AppState>,
+    pub data: tempfile::TempDir,
     pub pool: PgPool,
     pub pg: Postgres,
     pub minio: Minio,
@@ -148,12 +151,15 @@ pub async fn hub_with(oidc: Option<OidcConfig>) -> Hub {
     }
     let pool = db::connect(&pg.url, 5).await.unwrap();
     db::MIGRATOR.run(&pool).await.unwrap();
+    let data = tempfile::tempdir().unwrap();
     let mut cfg = config(&pg.url, minio.s3.clone());
     cfg.oidc = oidc;
+    cfg.data_dir = data.path().to_path_buf();
     let state = Arc::new(AppState::new(cfg, storage));
     state.set_db(pool.clone());
     Hub {
         state,
+        data,
         pool,
         pg,
         minio,
@@ -287,4 +293,76 @@ pub fn as_user(
             .unwrap(),
         None => b.body(Body::empty()).unwrap(),
     }
+}
+
+/// Sessions of the people in `acme` (admin, member, viewer) and of the
+/// admin of another org, `other`.
+pub struct Team {
+    pub admin: String,
+    pub member: String,
+    pub viewer: String,
+    pub outsider: String,
+}
+
+pub async fn user_id(app: &Router, cookie: &str) -> String {
+    let r = send(app, as_user("GET", "/api/v1/me", cookie, None)).await;
+    r.json()["id"].as_str().unwrap().to_string()
+}
+
+pub async fn team(app: &Router, idp: &std::sync::Arc<idp::Idp>) -> Team {
+    let t = Team {
+        admin: login(app, idp, "admin").await,
+        member: login(app, idp, "member").await,
+        viewer: login(app, idp, "viewer").await,
+        outsider: login(app, idp, "outsider").await,
+    };
+    for (cookie, slug) in [(&t.admin, "acme"), (&t.outsider, "other")] {
+        let r = send(
+            app,
+            as_user(
+                "POST",
+                "/api/v1/orgs",
+                cookie,
+                Some(serde_json::json!({"slug": slug, "name": slug})),
+            ),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    for (cookie, role) in [(&t.member, "member"), (&t.viewer, "viewer")] {
+        let id = user_id(app, cookie).await;
+        let r = send(
+            app,
+            as_user(
+                "PUT",
+                &format!("/api/v1/orgs/acme/members/{id}"),
+                &t.admin,
+                Some(serde_json::json!({ "role": role })),
+            ),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    }
+    t
+}
+
+/// Upload `bytes` to `org` with the session `cookie`.
+pub async fn upload(
+    app: &Router,
+    cookie: &str,
+    org: &str,
+    bytes: &[u8],
+    repo: Option<&str>,
+) -> Reply {
+    let (content_type, body) = bundles::multipart(bytes, repo);
+    send(
+        app,
+        Request::post(format!("/api/v1/orgs/{org}/bundles"))
+            .header("cookie", cookie)
+            .header("origin", "http://hub.test")
+            .header("content-type", content_type)
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await
 }

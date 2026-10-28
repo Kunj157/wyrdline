@@ -7,6 +7,7 @@
 //! rewind requests that wait for a human — never commands — and
 //! everything it receives is untrusted: kernel effects (Phase 5) are the
 //! ground truth intent is checked against.
+#![forbid(unsafe_code)]
 
 pub mod asks;
 pub mod claude_code;

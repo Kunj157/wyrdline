@@ -16,10 +16,13 @@ asset="wyrdline-${arch}-unknown-linux-gnu.tar.gz"
 # A release directory: binaries in a subdirectory, as cargo-dist lays out.
 make_release() {
   local dir=$1
-  mkdir -p "$dir/pkg/wyrdline"
-  printf '#!/bin/sh\necho "wyrd 0.0.0-test"\n' >"$dir/pkg/wyrdline/wyrd"
-  printf '#!/bin/sh\nexit 0\n' >"$dir/pkg/wyrdline/wyrd-sensord"
-  chmod +x "$dir/pkg/wyrdline/"*
+  # The real layout: binaries in bin/, and an AppArmor profile that has the
+  # same file name as a binary (the arm64 release run picked it up).
+  mkdir -p "$dir/pkg/wyrdline/bin" "$dir/pkg/wyrdline/deploy/apparmor"
+  printf '#!/bin/sh\necho "wyrd 0.0.0-test"\n' >"$dir/pkg/wyrdline/bin/wyrd"
+  printf '#!/bin/sh\nexit 0\n' >"$dir/pkg/wyrdline/bin/wyrd-sensord"
+  printf 'abi <abi/4.0>,\ninclude <tunables/global>\n' >"$dir/pkg/wyrdline/deploy/apparmor/wyrd"
+  chmod +x "$dir/pkg/wyrdline/bin/"*
   tar -czf "$dir/$asset" -C "$dir/pkg" wyrdline
   (cd "$dir" && sha256sum "$asset" >SHA256SUMS)
 }
@@ -66,11 +69,27 @@ rel="$tmp/release"
 make_release "$rel"
 base="WYRD_RELEASE_BASE=file://$rel"
 
-expect 0 "unsigned release, auto: checksum verified, installed" "$base"
+# The default is required: an unsigned release is refused.
+expect 1 "unsigned release, default: refused" "$base"
+contains "$LAST_OUT" "verify-signature is required" "reason given (default is required)"
+
+expect 0 "unsigned release, auto: checksum verified, installed" "$base" WYRD_VERIFY_SIGNATURE=auto
 contains "$LAST_OUT" "checksum verified" "checksum reported"
 contains "$LAST_OUT" "not signed" "missing signature warned about"
 contains "$tmp/gh-output" "bin-dir=$tmp/dest" "bin-dir output"
 if [ -x "$tmp/dest/wyrd-sensord" ]; then pass=$((pass + 1)); else fail=$((fail + 1)) && echo "FAIL sensord not installed"; fi
+
+rm -f "$tmp/summary"
+expect 0 "unsigned release, auto: warning in the job summary" "$base" WYRD_VERIFY_SIGNATURE=auto GITHUB_STEP_SUMMARY="$tmp/summary"
+contains "$tmp/summary" "not signed" "summary notes the unsigned release"
+
+rm -f "$tmp/summary"
+expect 0 "unsigned release, skip: installed with a loud warning" "$base" WYRD_VERIFY_SIGNATURE=skip GITHUB_STEP_SUMMARY="$tmp/summary"
+contains "$LAST_OUT" "SIGNATURE VERIFICATION DISABLED" "loud warning in the log"
+contains "$tmp/summary" "SIGNATURE VERIFICATION DISABLED" "warning in the job summary"
+
+expect 0 "unsigned release, false (alias of skip): installed with a warning" "$base" WYRD_VERIFY_SIGNATURE=false
+contains "$LAST_OUT" "SIGNATURE VERIFICATION DISABLED" "false warns like skip"
 
 expect 1 "unsigned release, required: refused" "$base" WYRD_VERIFY_SIGNATURE=required
 contains "$LAST_OUT" "verify-signature is required" "reason given"
@@ -92,17 +111,17 @@ rm "$rel/SHA256SUMS.sigstore.json"
 
 cp "$rel/SHA256SUMS" "$tmp/sums.bak"
 awk '{ printf "%064d  %s\n", 0, $2 }' "$tmp/sums.bak" >"$rel/SHA256SUMS"
-expect 1 "checksum mismatch: refused" "$base"
+expect 1 "checksum mismatch: refused" "$base" WYRD_VERIFY_SIGNATURE=auto
 contains "$LAST_OUT" "checksum mismatch" "reason given"
 rm "$rel/SHA256SUMS"
-expect 1 "no SHA256SUMS: refused" "$base"
+expect 1 "no SHA256SUMS: refused" "$base" WYRD_VERIFY_SIGNATURE=auto
 cp "$tmp/sums.bak" "$rel/SHA256SUMS"
 
 expect 1 "missing release: refused" "WYRD_RELEASE_BASE=file://$tmp/nowhere"
 
-expect 0 "prebuilt binaries via wyrd-path" "WYRD_PATH=$rel/pkg/wyrdline"
-rm "$rel/pkg/wyrdline/wyrd-sensord"
-expect 1 "wyrd-path without wyrd-sensord: refused" "WYRD_PATH=$rel/pkg/wyrdline"
+expect 0 "prebuilt binaries via wyrd-path" "WYRD_PATH=$rel/pkg/wyrdline/bin"
+rm "$rel/pkg/wyrdline/bin/wyrd-sensord"
+expect 1 "wyrd-path without wyrd-sensord: refused" "WYRD_PATH=$rel/pkg/wyrdline/bin"
 
 echo "install.sh: $pass passed, $fail failed"
 [ "$fail" = 0 ]

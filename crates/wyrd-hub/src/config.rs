@@ -59,6 +59,29 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     /// Local scratch: upload spooling and analytics projections.
     pub data_dir: PathBuf,
+    pub limits: Limits,
+}
+
+/// Upload size, the quota new organisations get, and the retention sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Largest bundle accepted, in bytes (refused while streaming).
+    pub max_upload_bytes: u64,
+    pub quota_bytes: i64,
+    pub quota_bundles: i64,
+    /// Seconds between retention sweeps; 0 disables the sweep.
+    pub retention_interval_secs: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_upload_bytes: 256 << 20,
+            quota_bytes: 10 << 30,
+            quota_bundles: 10_000,
+            retention_interval_secs: 3600,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -134,6 +157,37 @@ impl Config {
                 })
             }
         };
+        let number = |name: &'static str, default: u64| -> Result<u64, ConfigError> {
+            match var(name) {
+                None => Ok(default),
+                Some(v) => v.parse::<u64>().map_err(|_| ConfigError::Invalid {
+                    name,
+                    reason: "expected a whole number".into(),
+                }),
+            }
+        };
+        let d = Limits::default();
+        let signed = |name: &'static str, v: u64| {
+            i64::try_from(v).map_err(|_| ConfigError::Invalid {
+                name,
+                reason: "too large".into(),
+            })
+        };
+        let limits = Limits {
+            max_upload_bytes: number("WYRD_HUB_MAX_UPLOAD_BYTES", d.max_upload_bytes)?,
+            quota_bytes: signed(
+                "WYRD_HUB_QUOTA_BYTES",
+                number("WYRD_HUB_QUOTA_BYTES", d.quota_bytes.unsigned_abs())?,
+            )?,
+            quota_bundles: signed(
+                "WYRD_HUB_QUOTA_BUNDLES",
+                number("WYRD_HUB_QUOTA_BUNDLES", d.quota_bundles.unsigned_abs())?,
+            )?,
+            retention_interval_secs: number(
+                "WYRD_HUB_RETENTION_INTERVAL_SECS",
+                d.retention_interval_secs,
+            )?,
+        };
         Ok(Config {
             listen,
             public_url,
@@ -143,6 +197,7 @@ impl Config {
             oidc,
             data_dir: var("WYRD_HUB_DATA_DIR")
                 .map_or_else(|| "wyrd-hub-data".into(), PathBuf::from),
+            limits,
         })
     }
 }
@@ -199,6 +254,7 @@ mod tests {
         assert_eq!(c.s3.endpoint, "http://127.0.0.1:7733");
         assert_eq!(c.s3.region, "us-east-1");
         assert_eq!(c.db_max_connections, 10);
+        assert_eq!(c.limits, Limits::default());
         assert!(c.oidc.is_none());
     }
 
@@ -221,6 +277,8 @@ mod tests {
             ("WYRD_HUB_S3_ENDPOINT", "minio:9000"),
             ("WYRD_HUB_DB_MAX_CONNECTIONS", "0"),
             ("WYRD_HUB_OIDC_ISSUER", "ftp://idp"),
+            ("WYRD_HUB_MAX_UPLOAD_BYTES", "-1"),
+            ("WYRD_HUB_QUOTA_BYTES", "18446744073709551615"),
         ] {
             let mut m = base();
             m.insert(k, v.into());
