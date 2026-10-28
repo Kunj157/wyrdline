@@ -127,6 +127,9 @@ async fn trust_rules_are_admin_only_and_validated() {
         json!({"repository_owner": "octo", "repository": "octo"}),
         json!({"repository_owner": "octo", "repository": "someone/app"}),
         json!({"repository": "octo/app"}),
+        json!({"repository_owner": "octo", "repository": "octo/app", "wildcard": true}),
+        json!({"repository_owner": "octo", "repository": "octo/app", "git_ref": "refs/heads/*"}),
+        json!({"repository_owner": "octo", "repository": "octo/app", "git_ref": "main"}),
     ] {
         let r = add_rule(&app, &s.admin, "acme", bad.clone()).await;
         assert!(
@@ -142,9 +145,19 @@ async fn trust_rules_are_admin_only_and_validated() {
     let rule_id = r.json()["id"].as_str().unwrap().to_string();
     let r = add_rule(&app, &s.admin, "acme", rule).await;
     assert_eq!(r.status, StatusCode::CONFLICT);
+    // An owner-wide rule is refused without the explicit opt-in.
     let r = add_rule(&app, &s.admin, "acme", json!({"repository_owner": "wide"})).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    let r = add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "wide", "wildcard": true}),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
     assert_eq!(r.json()["repository"], serde_json::Value::Null);
+    assert_eq!(r.json()["wildcard"], true);
 
     let list = common::send(
         &app,
@@ -188,7 +201,15 @@ async fn trust_rules_are_admin_only_and_validated() {
     .fetch_all(&s.hub.pool)
     .await
     .unwrap();
-    assert_eq!(actions, ["ci.trust.add", "ci.trust.add", "ci.trust.remove"]);
+    assert_eq!(
+        actions,
+        [
+            "ci.trust.add",
+            "ci.trust.add",
+            "ci.trust.wildcard",
+            "ci.trust.remove"
+        ]
+    );
 }
 
 #[tokio::test]
@@ -202,7 +223,13 @@ async fn exchange_mints_an_upload_only_token_of_the_trusting_org() {
         json!({"repository_owner": "octo", "repository": "octo/app"}),
     )
     .await;
-    add_rule(&app, &s.admin, "acme", json!({"repository_owner": "wide"})).await;
+    add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "wide", "wildcard": true}),
+    )
+    .await;
 
     // Untrusted: another repository of the owner, another org, no org.
     for (repo, org) in [
@@ -420,4 +447,146 @@ async fn ci_migration_goes_down_and_up() {
     assert!(!present(TABLE).await && !present(COLUMN).await);
     db::MIGRATOR.run(&pool).await.unwrap();
     assert!(present(TABLE).await && present(COLUMN).await);
+}
+
+#[tokio::test]
+async fn exact_rules_refuse_other_repositories_and_owner_wide_rules_are_audited() {
+    let s = setup().await;
+    let app = s.hub.app();
+    add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "octo", "repository": "octo/app"}),
+    )
+    .await;
+    // A different repository of the same owner: refused, with the same body
+    // as a repository nobody trusts.
+    let other = exchange(&app, &s.gh.token("octo/other", Spoil::None), "acme").await;
+    let unknown = exchange(&app, &s.gh.token("elsewhere/app", Spoil::None), "acme").await;
+    assert_eq!(other.status, StatusCode::FORBIDDEN, "{}", other.text());
+    assert_eq!(other.json(), unknown.json());
+    assert_eq!(other.json()["type"], "ci-not-trusted");
+
+    // The explicit owner-wide opt-in: every repository of the owner works,
+    // the opt-in is audited as dangerous, and the exchange records it.
+    let r = add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "octo", "wildcard": true}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let ok = exchange(&app, &s.gh.token("octo/other", Spoil::None), "acme").await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.text());
+    let dangerous: Vec<String> = db::query_scalar(
+        "SELECT details::text FROM audit_logs WHERE org_id = 'o1' AND action = 'ci.trust.wildcard'",
+    )
+    .fetch_all(&s.hub.pool)
+    .await
+    .unwrap();
+    assert_eq!(dangerous.len(), 1);
+    let details: serde_json::Value = serde_json::from_str(&dangerous[0]).unwrap();
+    assert_eq!(details["dangerous"], true);
+    let exchanged: Vec<String> = db::query_scalar(
+        "SELECT details::text FROM audit_logs WHERE org_id = 'o1' AND action = 'ci.token.exchange' \
+         AND details->>'repository' = 'octo/other'",
+    )
+    .fetch_all(&s.hub.pool)
+    .await
+    .unwrap();
+    assert_eq!(exchanged.len(), 1);
+    let details: serde_json::Value = serde_json::from_str(&exchanged[0]).unwrap();
+    assert_eq!(details["wildcard"], true);
+
+    // A rule pinned to a ref: the test's runs are on refs/heads/main.
+    let r = add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "pin", "repository": "pin/app", "git_ref": "refs/heads/release"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = exchange(&app, &s.gh.token("pin/app", Spoil::None), "acme").await;
+    assert_eq!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "a run on another ref: {}",
+        r.text()
+    );
+    let r = add_rule(
+        &app,
+        &s.admin,
+        "acme",
+        json!({"repository_owner": "main", "repository": "main/app", "git_ref": "refs/heads/main"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = exchange(&app, &s.gh.token("main/app", Spoil::None), "acme").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // A disabled rule trusts nothing.
+    db::query("UPDATE ci_trust_rules SET enabled = false WHERE repository = 'main/app'")
+        .execute(&s.hub.pool)
+        .await
+        .unwrap();
+    let r = exchange(&app, &s.gh.token("main/app", Spoil::None), "acme").await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+}
+
+#[tokio::test]
+async fn owner_wide_rules_from_before_the_opt_in_are_disabled_and_their_access_revoked() {
+    let pg = common::postgres().await;
+    let pool = db::connect(&pg.url, 2).await.unwrap();
+    db::MIGRATOR.run(&pool).await.unwrap();
+    // The schema and access as they were before the opt-in.
+    db::MIGRATOR.undo(&pool, 20_261_021_120_000).await.unwrap();
+    for sql in [
+        "INSERT INTO orgs (id, slug, name) VALUES ('o1', 'acme', 'acme'), ('o2', 'other', 'other')",
+        "INSERT INTO users (id, issuer, subject, name) VALUES \
+           ('ci1', 'https://token.actions.githubusercontent.com', 'repo:octo/app', 'octo/app'), \
+           ('ci2', 'https://token.actions.githubusercontent.com', 'repo:octo/shop', 'octo/shop')",
+        "INSERT INTO ci_trust_rules (id, org_id, repository_owner, repository) VALUES \
+           ('r1', 'o1', 'octo', NULL), ('r2', 'o2', 'octo', 'octo/shop')",
+        "INSERT INTO memberships (org_id, user_id, role) VALUES ('o1', 'ci1', 'member'), ('o2', 'ci2', 'member')",
+        "INSERT INTO api_tokens (id, token_hash, user_id, org_id, name, scope, expires_at) VALUES \
+           ('t1', 'h1', 'ci1', 'o1', 'ci', 'upload', now() + interval '1 day'), \
+           ('t2', 'h2', 'ci2', 'o2', 'ci', 'upload', now() + interval '1 day')",
+    ] {
+        db::query(sql).execute(&pool).await.unwrap();
+    }
+    db::MIGRATOR.run(&pool).await.unwrap();
+
+    // The owner-wide rule is kept as a record, disabled, and no longer trusts.
+    let r1: (bool, bool) =
+        db::query_as("SELECT wildcard, enabled FROM ci_trust_rules WHERE id = 'r1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(r1, (true, false));
+    // The exact rule is untouched.
+    let r2: (bool, bool) =
+        db::query_as("SELECT wildcard, enabled FROM ci_trust_rules WHERE id = 'r2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(r2, (false, true));
+    // What the owner-wide rule granted is gone; the exact rule's access stays.
+    let members: i64 = db::query_scalar("SELECT count(*) FROM memberships WHERE user_id = 'ci1'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(members, 0);
+    let kept: i64 = db::query_scalar("SELECT count(*) FROM memberships WHERE user_id = 'ci2'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1);
+    let tokens: Vec<String> = db::query_scalar("SELECT id FROM api_tokens ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tokens, ["t2"]);
 }
