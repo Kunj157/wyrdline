@@ -103,6 +103,7 @@ test("members sync one bundle's annotations live and across an offline period; a
 
   // Live: Alice's comment reaches Bob without a reload.
   await comment(ana.page, "3", "alice: the .env read starts here");
+  await expect(article(ana.page, "alice: the .env read starts here")).toBeVisible();
   await expect(article(bo.page, "alice: the .env read starts here")).toBeVisible();
 
   // The viewer joins after that, follows the document, and cannot add to it.

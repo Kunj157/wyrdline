@@ -1,10 +1,10 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer as httpServer, request as httpRequest } from "node:http";
 import { connect, createServer as netServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import wyrddSetup from "../global-setup";
 
@@ -120,9 +120,14 @@ export default async function globalSetup() {
   const bucket = `wyrd-e2e-${randomBytes(3).toString("hex")}`;
   const server = await proxy(port, hubPort, wyrddPort);
 
+  // The Hub's log, kept for the CI artifact (target/e2e-results-hub).
+  const logDir = resolve(__dirname, "../../..", "target/e2e-results-hub");
+  mkdirSync(logDir, { recursive: true });
+  const hubLog = createWriteStream(join(logDir, "hub.log"));
   const hub: ChildProcess = spawn(hubBin, [], {
     env: {
       ...process.env,
+      WYRD_LOG: "info,wyrd_sync=debug,wyrd_hub=debug",
       WYRD_HUB_LISTEN: `127.0.0.1:${hubPort}`,
       WYRD_HUB_PUBLIC_URL: origin,
       WYRD_HUB_DATABASE_URL: pgUrl,
@@ -136,8 +141,10 @@ export default async function globalSetup() {
       WYRD_HUB_OIDC_CLIENT_ID: "",
       WYRD_HUB_OIDC_CLIENT_SECRET: "",
     },
-    stdio: ["ignore", "ignore", "inherit"],
+    stdio: ["ignore", "ignore", "pipe"],
   });
+  hub.stderr?.pipe(hubLog);
+  hub.stdout?.pipe(hubLog);
   const ready = async () => {
     try {
       return (await fetch(`http://127.0.0.1:${hubPort}/readyz`)).ok;
@@ -179,6 +186,7 @@ export default async function globalSetup() {
   process.env.WYRD_E2E_HUB_SECRETS = JSON.stringify(secrets);
   return async () => {
     hub.kill("SIGTERM");
+    hubLog.end();
     server.close();
     rmSync(dir, { recursive: true, force: true });
     await teardownWyrdd();
