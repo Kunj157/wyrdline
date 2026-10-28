@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-import { serviceWorker } from "./service-worker";
+import { serviceWorker } from "./service-worker.ts";
 
 export default defineConfig({
   plugins: [
