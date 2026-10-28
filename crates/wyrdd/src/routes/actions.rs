@@ -51,8 +51,10 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for JsonBody<T> {
 }
 
 /// Checkpoint ids, branch names, and `head`: short, no path characters.
+/// The first byte must not be `-`: a leading dash would reach the `wyrd`
+/// child as an option (argument injection).
 fn check_target(t: &str) -> Result<(), Problem> {
-    let ok = !t.is_empty()
+    let ok = t.as_bytes().first().is_some_and(|b| *b != b'-')
         && t.len() <= 64
         && t.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
@@ -105,6 +107,7 @@ fn spawn_relaunch(st: &AppState, sid: &str, args: &[&str]) -> Result<u32, Proble
     let err = log
         .try_clone()
         .map_err(|e| Problem::internal(e.to_string()))?;
+    // nosemgrep: wyrd-no-shell-out-in-wyrdd -- fixed sibling binary, argv only (no shell); the relaunch of ADR-005. Args are checked by check_target.
     let mut child = Command::new(&st.wyrd_bin)
         .args(args)
         .env("WYRD_DATA_DIR", st.data.root())
@@ -285,6 +288,15 @@ pub async fn diff_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn targets_cannot_look_like_options() {
+        // They become argv of the wyrd child: a leading '-' would be an option.
+        for bad in ["--relaunch", "-x", "-", ""] {
+            assert!(check_target(bad).is_err(), "{bad}");
+        }
+        assert!(check_target("_b").is_ok());
+    }
 
     #[test]
     fn targets_have_no_path_characters() {
