@@ -17,12 +17,12 @@ Semgrep rules, the dependency review and the `wyrd-sensord` capability audit.
 | F-2 | `wyrd-sensord` runs as root; no seccomp filter; comment and `ProtectHome` disagree | medium | dev | fixed by [#234](https://github.com/Kunj157/wyrdline/pull/234) (issue [#227](https://github.com/Kunj157/wyrdline/issues/227)); running as root kept, see the audit |
 | F-3 | `wyrdd` accepts a checkpoint, branch or target starting with `-`, passed as argv to the `wyrd` child | low | dev | fixed by [#230](https://github.com/Kunj157/wyrdline/pull/230) (`check_target` rejects a leading `-`, unit test) |
 | F-4 | MCP rug-pull pins live in memory only; a restart re-pins | medium | dev (adapter) | fixed by [#233](https://github.com/Kunj157/wyrdline/pull/233) (issue [#222](https://github.com/Kunj157/wyrdline/issues/222)) |
-| F-5 | Agent-controlled text (rewind reason, tool summaries) is returned to the agent as history | medium | #209, #218 | fix in open PR [#235](https://github.com/Kunj157/wyrdline/pull/235) (issue [#223](https://github.com/Kunj157/wyrdline/issues/223)) |
+| F-5 | Agent-controlled text (rewind reason, tool summaries) is returned to the agent as history | medium | #209, #218 | fixed by [#235](https://github.com/Kunj157/wyrdline/pull/235) (issue [#223](https://github.com/Kunj157/wyrdline/issues/223)) |
 | F-6 | `wyrdd` spawns the `wyrd` binary (relaunch, Landlock probe) | low | dev | accepted (see below) |
 | F-7 | `wyrd-bundle` `redact.rs` compiles constant patterns with `expect` | info | dev | accepted (see below) |
 | F-8 | Action installs an unsigned release under `verify-signature: auto` | medium | dev | fixed by [#232](https://github.com/Kunj157/wyrdline/pull/232) (issue [#224](https://github.com/Kunj157/wyrdline/issues/224)) |
 | F-9 | Action installs the sensor with `sudo -n` on the runner | low | dev | accepted (see below) |
-| F-10 | Owner-wide CI trust rules let any repository of an owner upload | medium | #216 | fix in open PR [#236](https://github.com/Kunj157/wyrdline/pull/236) (issue [#225](https://github.com/Kunj157/wyrdline/issues/225)) |
+| F-10 | Owner-wide CI trust rules let any repository of an owner upload | medium | #216 | fixed by [#236](https://github.com/Kunj157/wyrdline/pull/236) (issue [#225](https://github.com/Kunj157/wyrdline/issues/225)) |
 | F-11 | `aya::Pod` impls in `wyrd-common` lack compile-time padding checks | low | dev | fixed by [#234](https://github.com/Kunj157/wyrdline/pull/234) (issue [#228](https://github.com/Kunj157/wyrdline/issues/228)) |
 | F-12 | `cargo-deny` advisories: four zstd RUSTSEC entries | high (red CI) | dev | fixed by #215, not this PR |
 

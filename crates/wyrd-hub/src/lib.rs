@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+#[cfg(feature = "analytics")]
+pub mod analytics;
 pub mod audit;
 pub mod auth;
 pub mod config;
@@ -14,6 +16,7 @@ pub mod jwt;
 pub mod metrics;
 pub mod oidc;
 pub mod problem;
+pub mod projection;
 pub mod retention;
 mod routes;
 pub mod storage;
@@ -109,10 +112,9 @@ pub const CSP: &str = "default-src 'none'; frame-ancestors 'none'; base-uri 'non
 async fn secure_headers(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CSP),
-    );
+    // The Studio fallback sets its own (scripts and styles of its build).
+    h.entry(header::CONTENT_SECURITY_POLICY)
+        .or_insert(HeaderValue::from_static(CSP));
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),

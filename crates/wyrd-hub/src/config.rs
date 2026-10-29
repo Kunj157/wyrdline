@@ -80,6 +80,8 @@ pub struct Config {
     /// Local scratch: upload spooling and analytics projections.
     pub data_dir: PathBuf,
     pub limits: Limits,
+    /// A built Studio to serve at `/` (Hub mode pages), when set.
+    pub studio_dir: Option<PathBuf>,
 }
 
 /// Upload size, the quota new organisations get, and the retention sweep.
@@ -119,6 +121,7 @@ impl Config {
     }
 
     /// Read configuration through `get` (a test passes a map).
+    #[allow(clippy::too_many_lines)] // one line per setting, read top to bottom
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Config, ConfigError> {
         let var = |k: &str| get(k).filter(|v| !v.trim().is_empty());
         let required = |k: &'static str| var(k).ok_or(ConfigError::Missing(k));
@@ -220,6 +223,7 @@ impl Config {
             data_dir: var("WYRD_HUB_DATA_DIR")
                 .map_or_else(|| "wyrd-hub-data".into(), PathBuf::from),
             limits,
+            studio_dir: var("WYRD_HUB_STUDIO_DIR").map(PathBuf::from),
         })
     }
 }

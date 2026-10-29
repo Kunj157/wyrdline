@@ -78,7 +78,7 @@ numbered `F-…` there.
 | B8 GitHub action | Tampering | Unsigned sensor or CLI release installed | Checksums and cosign keyless verification; `verify-signature: auto` only warns when a release is unsigned (F-8). | dev |
 | B8 GitHub action | Injection | Workflow inputs executed as shell | Every input reaches the scripts through `env:`; none is interpolated into `run:`. Verified on dev. | dev |
 | B8 GitHub action | Elevation | Action installs the sensor with root | Only `sudo -n` on a runner that already has passwordless sudo; the unit is installed from the action bundle (F-9). | dev |
-| B9 Hub CI upload | Spoofing | Forged GitHub OIDC token | Issuer and audience checked; rule must match `repository_owner` and optionally `repository`; token org must match. Owner-wide rules trust every repository of that owner (F-10). | #216 |
+| B9 Hub CI upload | Spoofing | Forged GitHub OIDC token | Issuer and audience checked; rule must match `repository_owner` and `repository` (exact by default); token org must match. An owner-wide rule needs an audited `wildcard` opt-in, and migrated owner-wide rules are disabled (F-10, #236). | #216, #236 |
 | B9 Hub CI upload | Elevation | Workflow from one repo uploads to another org | Trust rules per org; no rule means 403 (`ci-not-trusted`). | #216 |
 | B10 Hub deployment | Elevation | Container escape or pod compromise | Non-root, read-only root filesystem, all capabilities dropped, distroless base pinned by digest, deny-all NetworkPolicy with DNS, 443, 5432 and 9000 allowed. Secrets only by `existingSecret`. | #210, #213 |
 | B11 Studio offline | Info disclosure | Service worker caches bundles or API answers | Caches only the app shell; never `v1/` or `bundle/` paths (test-enforced). | #214 |
