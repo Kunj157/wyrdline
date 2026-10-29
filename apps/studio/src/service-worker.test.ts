@@ -13,9 +13,11 @@ describe("service worker", () => {
     expect(() => new Function(src)).not.toThrow();
   });
 
-  it("never caches the daemon API or served bundles", () => {
+  it("never caches or answers the daemon API, the Hub API or served bundles", () => {
     const src = serviceWorkerSource(assets);
-    expect(src).toMatch(/path\.startsWith\("v1\/"\) \|\| path\.startsWith\("bundle\/"\)\) return;/);
+    expect(src).toMatch(
+      /path\.startsWith\("v1\/"\) \|\| path\.startsWith\("api\/"\) \|\| path\.startsWith\("bundle\/"\)\) return;/,
+    );
   });
 
   it("gets a new cache name when the build changes, and only then", () => {

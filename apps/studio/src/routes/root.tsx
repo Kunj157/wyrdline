@@ -1,7 +1,7 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
 import { useOffline } from "../lib/api";
-import { Activity, LayoutGrid, TriangleAlert } from "lucide-react";
+import { Activity, LayoutGrid, TriangleAlert, Users } from "lucide-react";
 import type { ComponentType } from "react";
 
 import { CommandPalette } from "../components/CommandPalette";
@@ -12,6 +12,7 @@ const nav: NavItem[] = [
   { to: "/", label: "Overview", icon: LayoutGrid },
   { to: "/sessions", label: "Sessions", icon: Activity },
   { to: "/divergences", label: "Divergences", icon: TriangleAlert },
+  { to: "/hub", label: "Hub", icon: Users },
 ];
 
 export function RootLayout() {
@@ -43,7 +44,7 @@ export function RootLayout() {
       <main className="min-w-0 flex-1 overflow-auto">
         <nav
           aria-label="Primary (compact)"
-          className="flex items-center gap-1 border-b border-border bg-surface-1 px-3 py-2 md:hidden"
+          className="flex items-center gap-1 overflow-x-auto border-b border-border bg-surface-1 px-3 py-2 md:hidden"
         >
           <img src={`${import.meta.env.BASE_URL}wyrdline.svg`} alt="" className="mr-1 size-6" />
           {nav.map(({ label, icon: Icon, to }) => (

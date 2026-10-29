@@ -371,6 +371,19 @@ mod tests {
             "/api/v1/orgs//bundles",
             ""
         ));
+        // Read endpoints, the analytics ones included, are never open to an
+        // upload-only token: only the upload and who-am-i pass the allow-list.
+        for (method, path) in [
+            (Method::GET, "/api/v1/orgs/acme/stats"),
+            (Method::GET, "/api/v1/orgs/acme/search"),
+            (Method::GET, "/api/v1/orgs/acme/bundles"),
+        ] {
+            let route = path.replace("acme", "{org}");
+            assert!(
+                !upload_scope_allows(&method, &route, path, "acme"),
+                "{method} {path}"
+            );
+        }
         assert_eq!(Scope::parse("upload"), Some(Scope::Upload));
         assert_eq!(Scope::parse("admin"), None);
     }
