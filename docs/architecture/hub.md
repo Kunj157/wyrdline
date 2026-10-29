@@ -72,7 +72,7 @@ migration, undo all of them, and apply them again.
 | `memberships` | `(org, user) → viewer \| member \| admin` |
 | `bundles` | verified manifest metadata, uploader-supplied repo, divergence rules, size, object key |
 | `oidc_logins`, `sessions`, `api_tokens` | login state, browser sessions, bearer tokens (hashed; `scope` `full` or `upload`) |
-| `ci_trust_rules` | per org: GitHub `repository_owner` and optional `repository` whose workflows may mint upload tokens |
+| `ci_trust_rules` | per org: an exact GitHub `repository`, or an owner-wide `wildcard` (dangerous opt-in), optionally pinned to a `git_ref`; `enabled` |
 | `audit_logs` | actor, action, target, request id, details; append-only (a trigger rejects `UPDATE`, `DELETE`, `TRUNCATE`) |
 
 ## Authentication
@@ -251,14 +251,23 @@ the issuer's JWKS (discovery at `WYRD_HUB_CI_ISSUER`, cached for an hour,
 refreshed once on an unknown `kid` so key rotation works, at most every
 30 s), `iss`, `aud` (= `WYRD_HUB_CI_AUDIENCE`), `exp`/`nbf`/`iat` with
 60 s leeway, and that `repository` belongs to `repository_owner`. Then it
-looks for a **trust rule** of the named organisation: an admin registers
-`{ "repository_owner": "acme-gh", "repository": "acme-gh/app" }` (one
-repository) or `{ "repository_owner": "acme-gh" }` (every repository of
-that user or GitHub organisation) through `POST /api/v1/orgs/{org}/ci-trust`;
-names match case-insensitively. Answers: a token that fails verification
+looks for an **enabled trust rule** of the named organisation. A rule names
+one repository exactly: `{ "repository_owner": "acme-gh", "repository":
+"acme-gh/app" }`. Owner-wide rules are an explicit opt-in: `{
+"repository_owner": "acme-gh", "wildcard": true }` trusts every repository of
+that user or GitHub organisation. It is **dangerous**: every repository of the
+owner can then upload to the organisation, so the API refuses an owner-wide
+rule without `wildcard: true`, and the add is audited as `ci.trust.wildcard`
+with `dangerous: true`. A rule may also pin a git ref, `"git_ref":
+"refs/heads/main"` (exact, no globs): runs on any other ref are refused. Rules
+are added through `POST /api/v1/orgs/{org}/ci-trust`, and names match
+case-insensitively. An exact rule wins over an owner-wide one. The `enabled`
+flag is set by the server; a disabled rule trusts nothing. Answers: a token that fails verification
 → **401** `ci-token-rejected` (reason only in the log and in
-`wyrd_hub_ci_token_exchanges_total{outcome="failure"}`); no matching rule
-or unknown organisation → **403** `ci-not-trusted`; issuer unreachable or
+`wyrd_hub_ci_token_exchanges_total{outcome="failure"}`); no matching rule (a
+different repository of the same owner included), a disabled rule, a ref
+the rule does not pin, or an unknown organisation → **403** `ci-not-trusted`
+with the same body for all of them; issuer unreachable or
 failing → **503** (the action retries).
 
 The minted token is an `api_tokens` row with `scope = 'upload'`,
@@ -274,6 +283,17 @@ tokens) of CI identities no remaining rule covers. Every exchange writes
 an audit row `ci.token.exchange` (repository, owner and repository ids,
 actor, workflow ref, run id, ref, sha, event, expiry); rules are audited
 as `ci.trust.add` / `ci.trust.remove`.
+
+**Migration (`20261028120000_ci_trust_exact`, F-10).** Owner-wide rules made
+before the opt-in are kept as records (`wildcard = true`) but **disabled**, and
+the memberships and upload tokens they granted are revoked, so nothing from
+them stays valid. Exact rules are unchanged. To trust the owner again an admin
+deletes the disabled rule and adds it with `wildcard: true`. Rolling back the
+migration deletes the owner-wide, disabled and ref-pinned rules (the old schema
+cannot represent them) together with the access they granted.
+
+Environment binding is not available: the verified GitHub token carries no
+`environment` claim in this code, so a rule cannot pin one yet.
 
 ## Tests
 
