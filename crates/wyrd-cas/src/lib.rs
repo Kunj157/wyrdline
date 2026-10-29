@@ -153,6 +153,14 @@ fn step(s: Step) {
     }
 }
 
+/// Record a durable step taken by a caller of this crate, so the caller's own
+/// steps appear in [`record_steps`] in order. Test support.
+#[doc(hidden)]
+#[cfg(feature = "store")]
+pub fn note_step(s: Step) {
+    step(s);
+}
+
 /// Run `f` and return its result with every durable step taken while it ran,
 /// from any thread, in the order they were taken. For tests that pin the
 /// order of writes. Recordings are serialised. Steps taken by other threads
@@ -175,9 +183,9 @@ pub fn record_steps<R>(f: impl FnOnce() -> R) -> (R, Vec<Step>) {
     (out, steps)
 }
 
-/// Sync a directory's entries.
+/// Sync a directory's entries, so names created or renamed in it are on disk.
 #[cfg(feature = "store")]
-fn sync_dir(dir: &Path) -> Result<()> {
+pub fn sync_dir(dir: &Path) -> Result<()> {
     step(Step::SyncDir(dir.to_path_buf()));
     fs::File::open(dir)
         .and_then(|d| d.sync_all())
@@ -215,15 +223,18 @@ fn sweep_staging(tmp: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Write `path` durably: the bytes go to a staging file, which is synced and
-/// renamed over `path`; then `root` (the directory that holds `path`) is
-/// synced, so the new name is on disk. A crash leaves the old file or the new
-/// one, never a partial one.
+/// Write `path` durably. The bytes go to a staging file beside it, which is
+/// synced and renamed over `path`; then the directory is synced, so the new
+/// name is on disk. A crash leaves the old file or the new one, never a
+/// partial one. The parent directory must exist.
 #[cfg(feature = "store")]
-fn write_durable(root: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = root
-        .join("tmp")
-        .join(format!("write.{}", std::process::id()));
+pub fn write_durable(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut staged_name = path.file_name().map_or_else(
+        || std::ffi::OsString::from("file"),
+        std::ffi::OsString::from,
+    );
+    staged_name.push(format!(".tmp.{}", std::process::id()));
+    let tmp = path.with_file_name(staged_name);
     {
         let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
         f.write_all(bytes).map_err(io_err(&tmp))?;
@@ -232,7 +243,27 @@ fn write_durable(root: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
     }
     step(Step::Rename(tmp.clone(), path.to_path_buf()));
     fs::rename(&tmp, path).map_err(io_err(path))?;
-    sync_dir(root)
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    sync_dir(parent)
+}
+
+/// Create `dir` and any missing parents, syncing each parent before anything
+/// is written under the new directory (see `docs/cas-format.md`).
+#[cfg(feature = "store")]
+pub fn create_dirs_durable(dir: &Path) -> Result<()> {
+    create_dirs(dir, true)
+}
+
+/// Make every file system change so far durable, on the file system that
+/// holds `path` (one `syncfs`).
+#[cfg(feature = "store")]
+pub fn sync_fs_of(path: &Path) -> Result<()> {
+    step(Step::SyncFs);
+    let f = fs::File::open(path).map_err(io_err(path))?;
+    rustix::fs::syncfs(&f).map_err(|e| CasError::Io {
+        path: path.to_path_buf(),
+        source: e.into(),
+    })
 }
 
 /// Create `dir` and any missing parents. A new directory is an entry in its
@@ -333,7 +364,7 @@ impl Cas {
         match fs::read_to_string(&marker) {
             Ok(s) if s.trim() == FORMAT_ID => {}
             Ok(other) => return Err(CasError::Format(other)),
-            Err(_) => write_durable(&root, &marker, format!("{FORMAT_ID}\n").as_bytes())?,
+            Err(_) => write_durable(&marker, format!("{FORMAT_ID}\n").as_bytes())?,
         }
         Ok(Cas { root })
     }

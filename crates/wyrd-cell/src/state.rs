@@ -1,7 +1,6 @@
 //! The session record (`session.json`), guarded by an advisory lock.
 
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -106,12 +105,9 @@ pub fn load(dir: &SessionDir) -> Result<SessionRecord> {
 
 pub fn save(dir: &SessionDir, rec: &SessionRecord) -> Result<()> {
     let path = dir.state();
-    let tmp = dir.root().join("session.json.tmp");
     let bytes = serde_json::to_vec_pretty(rec).map_err(|e| CellError::Invalid(e.to_string()))?;
-    let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
-    f.write_all(&bytes).map_err(io_err(&tmp))?;
-    f.sync_all().map_err(io_err(&tmp))?;
-    fs::rename(&tmp, &path).map_err(io_err(&path))
+    wyrd_cas::write_durable(&path, &bytes)?;
+    Ok(())
 }
 
 /// Exclusive advisory lock on the session; released on drop.
