@@ -19,8 +19,10 @@ agent (inside the Cell)
  └─ hook → `wyrd hook claude-code` → socket → ledger
 ```
 
-The socket accepts **ingest only**: hook payloads and pings. It cannot
-start, stop, rewind, or apply anything. The server checks the peer's UID
+The socket accepts ingest (hook payloads and pings), the
+[`wyrd mcp`](mcp-server.md) session views (read-only queries and rewind
+*requests*), and asks answered with the session's control token. It
+cannot start, stop, rewind, or apply anything. The server checks the peer's UID
 (`SO_PEERCRED`) on top of the 0600 mode. Neither the socket nor the
 ledger is inside the Cell's Landlock write set, so the agent cannot tamper
 with either; it can only *report*, and its reports are untrusted. Kernel

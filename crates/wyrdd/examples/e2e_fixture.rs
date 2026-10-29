@@ -9,10 +9,12 @@
 //! session also carries a divergence, and its record points at the
 //! fixture's own cgroup, which stays populated while the e2e run lives, so
 //! the daemon sees the session as running and refuses to triage it. Nothing
-//! in the suite stops or rewinds it.
+//! in the suite stops or rewinds it. A third session, with two checkpoints,
+//! serves the rewind-request spec, which asks for rewinds through `wyrd mcp`
+//! and decides them in Studio.
 //!
-//! Usage: `e2e_fixture <data-dir> <workspace-dir>` prints both session ids
-//! (one per line); `e2e_fixture append <data-dir> <session> <text>` appends
+//! Usage: `e2e_fixture <data-dir> <workspace-dir>` prints the three session
+//! ids (one per line); `e2e_fixture append <data-dir> <session> <text>` appends
 //! an assistant message to a session's ledger.
 
 use std::collections::BTreeMap;
@@ -235,6 +237,34 @@ fn verdicts(write: u64, said: u64) -> Vec<Event> {
     .collect()
 }
 
+/// A Cell session with checkpoints c1 and c2, for rewind requests.
+fn rewind_session(
+    data: &DataDir,
+    ws: &std::path::Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let rewind_ws = ws.with_file_name("rewind-ws");
+    std::fs::create_dir_all(&rewind_ws)?;
+    std::fs::write(rewind_ws.join("notes.txt"), "first\n")?;
+    let mut s = Session::create(
+        data,
+        CreateOptions {
+            workspace: rewind_ws,
+            command: vec!["agent".into(), "tidy the notes".into()],
+            observe: false,
+            name: Some("e2e rewind requests".into()),
+            agent_kind: "fakeagent".into(),
+            deny_tools: Vec::new(),
+            policy: None,
+            kernel_release: "e2e".into(),
+            capabilities: BTreeMap::new(),
+        },
+    )?;
+    s.checkpoint(None)?;
+    std::fs::write(s.dir().upper("a").join("notes.txt"), "second\n")?;
+    s.checkpoint(None)?;
+    Ok(s.record().id.clone())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1).peekable();
     if args.peek().is_some_and(|a| a == "append") {
@@ -248,7 +278,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = DataDir::new(PathBuf::from(args.next().ok_or("data dir")?));
     let ws = PathBuf::from(args.next().ok_or("workspace dir")?);
     std::fs::create_dir_all(&ws)?;
-    let live = live_session(&data, &ws)?;
+    let (live, rewind) = (live_session(&data, &ws)?, rewind_session(&data, &ws)?);
     std::fs::write(ws.join("greet.txt"), "helo world\n")?;
     std::fs::write(ws.join("old.txt"), "stale\n")?;
 
@@ -339,6 +369,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let last = ledger.append(events)?;
     ledger.append(verdicts(last - 2, last))?;
     // The test harness reads the session ids from stdout.
-    writeln!(std::io::stdout(), "{}\n{live}", s.record().id)?;
+    writeln!(std::io::stdout(), "{}\n{live}\n{rewind}", s.record().id)?;
     Ok(())
 }
