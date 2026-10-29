@@ -75,7 +75,7 @@ impl Baseline {
     pub fn save(&self, path: &Path) -> Result<()> {
         let mut out = Vec::new();
         ciborium::into_writer(self, &mut out).map_err(|e| CellError::Invalid(e.to_string()))?;
-        fs::write(path, out).map_err(io_err(path))
+        Ok(wyrd_cas::write_durable(path, &out)?)
     }
 
     pub fn load(path: &Path) -> Result<Baseline> {

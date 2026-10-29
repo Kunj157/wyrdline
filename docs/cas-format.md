@@ -59,6 +59,10 @@ materialising), symlinks have targets, only files have chunks.
 - `materialize(manifest, dest)` requires an empty or absent destination,
   restores contents, modes, and mtimes (directories last, deepest first),
   and returns whiteouts and opaque directories for the Cell to apply.
+  `materialize` does not sync what it writes. A rewind does: it runs one
+  `syncfs` on the restored tree before it changes the branch in the session
+  record and before it writes the rewind event, so neither ever refers to a
+  tree that a crash could leave incomplete.
 
 ## Garbage collection
 

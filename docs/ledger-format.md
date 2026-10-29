@@ -117,6 +117,29 @@ of `BLAKE3(public_key)` in hex. `wyrd close <session>` writes
 `meta.session.closed` and the seal; after that no event can be
 appended (the trigger raises).
 
+## Durability
+
+A ledger is an SQLite database in WAL mode, with `synchronous=NORMAL` for
+appends. What is relied on, and what is not:
+
+- **Atomic and consistent (relied on).** Each append is one SQLite
+  transaction. After a crash, SQLite recovers to a prefix of the committed
+  transactions: no torn event, no partial batch.
+- **Not durable at commit (accepted).** With `NORMAL`, a commit is not synced
+  when it returns, so the most recent appends can be lost after a power cut.
+  The chain stays valid; the lost tail is simply absent. A checkpoint's event
+  is appended after its chunks are durable (see `cas-format.md`), so a lost
+  event leaves only unreferenced chunks.
+- **Creation (synced).** `Ledger::create` commits the schema with
+  `synchronous=FULL`, so the file is never left empty; the session directory is
+  then synced to make the database file's name durable.
+- **Import (synced).** `Ledger::sync` sets `synchronous=FULL` and runs a full
+  WAL checkpoint, which moves the events into the database file and resets the
+  log. Import calls it before the imported session is made visible.
+
+The tests in `crates/wyrd-ledger/tests/ledger.rs` check that `sync` moves the
+events out of the log. They do not check the disk. A power cut is not simulated.
+
 ## Verification (`wyrd verify`)
 
 `wyrd verify <session | path to a ledger file> [--json]` checks, in

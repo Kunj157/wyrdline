@@ -139,8 +139,10 @@ fn event(body: EventBody) -> Event {
     }
 }
 
+/// Create a directory and its missing parents, each new entry synced in its
+/// parent before anything is written under it.
 fn mkdirs(p: &Path) -> Result<()> {
-    fs::create_dir_all(p).map_err(io_err(p))
+    Ok(wyrd_cas::create_dirs_durable(p)?)
 }
 
 impl Session {
@@ -203,6 +205,8 @@ impl Session {
         };
         state::save(&dir, &rec)?;
         let mut ledger = Ledger::create(dir.ledger(), &id)?;
+        // The database file's name is an entry in the session directory.
+        wyrd_cas::sync_dir(dir.root())?;
         ledger.append(vec![event(EventBody::SessionStarted(SessionStarted {
             session_id: id,
             agent_kind: opts.agent_kind,
@@ -687,6 +691,10 @@ impl Session {
         let id = self.rec.next_branch_id();
         let upper = self.dir.upper(&id);
         let report = self.cas.materialize(&manifest, &upper)?;
+        // The restored files are not durable until this sync. The branch change
+        // and the rewind event are written after it, so they never refer to a
+        // tree that a crash could leave incomplete.
+        wyrd_cas::sync_fs_of(&upper)?;
         for w in &report.whiteouts {
             nix::sys::stat::mknod(
                 w,
@@ -1140,9 +1148,12 @@ impl Session {
             };
             let mut ledger = Ledger::create(staging.ledger(), &id)?;
             ledger.append(spec.events.clone())?;
+            // The session becomes visible at the rename below, so its events must be on disk first.
+            ledger.sync()?;
+            wyrd_cas::note_step(wyrd_cas::Step::SyncFile(staging.ledger()));
             let source = serde_json::to_vec_pretty(&spec.source)
                 .map_err(|e| CellError::Invalid(e.to_string()))?;
-            fs::write(staging.import(), source).map_err(io_err(&staging.import()))?;
+            wyrd_cas::write_durable(&staging.import(), &source)?;
             state::save(&staging, &rec)?;
             Ok(rec)
         })();
@@ -1154,10 +1165,16 @@ impl Session {
             }
         };
         let dir = data.session(&id);
+        wyrd_cas::note_step(wyrd_cas::Step::Rename(
+            staging.root().to_path_buf(),
+            dir.root().to_path_buf(),
+        ));
         if let Err(e) = fs::rename(staging.root(), dir.root()) {
             let _ = fs::remove_dir_all(staging.root());
             return Err(io_err(dir.root())(e));
         }
+        // The new session's name is an entry in `sessions/`.
+        wyrd_cas::sync_dir(&data.sessions())?;
         Ok(Session {
             data: data.clone(),
             dir,

@@ -7,10 +7,13 @@ name: release
 #   studio ─┐                                  │
 #   build (x86_64, aarch64) ─┐                 ├─ publish (tag only)
 #   sbom ────────────────────┼─ sign ─ smoke ──┤
+#   chart (Hub Helm chart) ──┘
 #   reproducible ────────────────────────────── ┘
 #
 # Assets: wyrdline-<target>.tar.gz, wyrdline_<version>_<arch>.deb, CycloneDX
-# SBOMs, SHA256SUMS, SHA256SUMS.sigstore.json (cosign keyless, identity
+# SBOMs, wyrdline-hub-<version>.tgz (the Hub chart, stamped with the version so
+# its default image is the one this release publishes), SHA256SUMS,
+# SHA256SUMS.sigstore.json (cosign keyless, identity
 # this workflow on the tag), plus a GitHub build-provenance attestation per
 # asset. `workflow_dispatch` runs everything except publishing, with a
 # `0.0.0-dev.<run>` version, to rehearse the pipeline without a tag.
@@ -239,9 +242,35 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  chart:
+    name: Hub Helm chart
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Stamp the chart with the release version
+        run: scripts/release/stamp-chart.sh "$VERSION"
+      - name: Lint with the kind values and package
+        run: |
+          helm lint --strict deploy/helm/wyrdline-hub -f deploy/helm/wyrdline-hub/ci/kind-values.yaml
+          mkdir -p dist
+          helm package deploy/helm/wyrdline-hub --destination dist
+          test -s "dist/wyrdline-hub-$VERSION.tgz"
+          sha256sum dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: assets-chart
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+
   sign:
     name: Checksums, signature, attestation
-    needs: [version, build, sbom]
+    needs: [version, build, sbom, chart]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
