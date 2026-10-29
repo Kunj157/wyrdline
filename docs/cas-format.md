@@ -59,10 +59,46 @@ materialising), symlinks have targets, only files have chunks.
 - `materialize(manifest, dest)` requires an empty or absent destination,
   restores contents, modes, and mtimes (directories last, deepest first),
   and returns whiteouts and opaque directories for the Cell to apply.
-  `materialize` does not sync what it writes. A rewind does: it runs one
-  `syncfs` on the restored tree before it changes the branch in the session
-  record and before it writes the rewind event, so neither ever refers to a
-  tree that a crash could leave incomplete.
+  `materialize` does not sync what it writes.
+
+### Rewind
+
+A rewind does not sync its restored tree, because a sync of the whole
+filesystem costs about half a second for a 1 GB tree. Its order:
+
+1. The new branch is recorded in the session record, durably, and made
+   current. The record is the only durable write that names the branch.
+2. The branch's tree is rebuilt from the content store: its directory is
+   cleared, `materialize` runs, and whiteouts and opaque markers are applied.
+   Nothing is synced.
+3. A marker, `branches/<id>/restored`, is written with this boot's id
+   (`/proc/sys/kernel/random/boot_id`). It is written without a sync.
+4. The rewind event is written to the ledger.
+
+A branch made by a rewind or a fork is restored again, before anything reads
+it or checkpoints it, unless its marker names this boot. `Session::open`
+does this check, and so does the checkpoint path, under the session lock.
+
+The crash states and why each is safe:
+
+- **Before step 1 is durable.** The record still names the old branch. The
+  new branch's directory, if any, is an unreferenced leftover, and the next
+  rewind clears it.
+- **After step 1, before step 3 is written.** The branch needs restoring, and
+  it gets it on the next open or checkpoint. The restore clears the directory
+  first, so a half-written tree is never kept.
+- **After step 3 in this boot, a process crash.** The page cache still holds
+  the completed tree, and the marker is trusted.
+- **After a reboot, any point after step 1.** The marker names the old boot,
+  so the branch is restored again. A marker that was never written, or a
+  marker whose write was lost, reads the same way.
+- **After step 3, before step 4.** The tree is complete and the event is
+  missing. This is the same window as before this change; the ledger event
+  is a record of the rewind, not what the restore depends on.
+
+Branch `a` (the session's first branch) is not restored this way. Its tree is
+the workspace's uncheckpointed edits, which a reboot can leave partly written.
+Those edits were never durable, and nothing here changes that.
 
 ## Garbage collection
 
