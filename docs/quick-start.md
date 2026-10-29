@@ -159,9 +159,10 @@ Studio replays a session with no daemon and no network, the correlator
 running as WebAssembly in the browser: today from an events export
 (`wyrd events <session> --json > session.jsonl`, opened with
 `?offline=<url>` on the Studio origin, which is how the
-[website demo](https://kunj157.github.io/wyrdline/) works); opening a
-`.wyrd` bundle directly (`wyrd open`, Studio bundle mode) is landing
-with #151 and #193.
+[website demo](https://kunj157.github.io/wyrdline/) works), or a signed
+`.wyrd` bundle: `wyrd open session.wyrd` opens it in Studio without the
+daemon, and Studio's file picker or drag-and-drop does the same. Bundles
+are verified before anything is shown.
 
 ## 6. Try it with the demo instead
 

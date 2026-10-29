@@ -274,7 +274,8 @@ fn ingest(
     .with_views(Arc::new(super::mcp::views::RunViews {
         data: data.clone(),
         session: rec.id.clone(),
-    }));
+    }))
+    .with_mcp_pins(session.dir().root().join(wyrd_adapters::mcp::PINS_FILE))?;
     if let Some(p) = guard.policy {
         ingest = ingest.with_policy(Arc::new(super::guard::WasmToolPolicy::new(
             p,

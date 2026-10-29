@@ -354,6 +354,39 @@ fn privileged_kernel_effects_are_recorded_from_the_first_syscall() {
 }
 
 #[test]
+fn privileged_a_lagging_sensor_still_delivers_the_last_effects() {
+    use wyrd_schema::EventBody as B;
+    let e = env();
+    // The daemon reads its ring buffer only every 800 ms, longer than the
+    // old fixed drain: the last write must still reach the ledger.
+    let d = sensord_with(&e, &["--read-pause-ms", "800"]);
+    let agent = script(&e, "agent.sh", "echo late > late.txt\nexit 4");
+    let out = wyrd_with_sensor(&e, &d.socket, &["run", "--", &agent]);
+    assert_eq!(out.status.code(), Some(4));
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("warning"),
+        "no capture warning expected"
+    );
+    let sid = only_session(&e);
+    let events = ledger_events(&e, &sid);
+    let ws = fs::canonicalize(&e.ws).unwrap().display().to_string();
+    assert!(
+        events.iter().any(|b| matches!(
+            b,
+            B::FileOpenWrite(x) if x.file.in_cell && x.file.path.trim_start_matches(&ws) == "/late.txt"
+        )),
+        "{events:#?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|b| matches!(b, B::ProcExit(x) if x.exit_code == 4)),
+        "{events:#?}"
+    );
+    assert!(!events.iter().any(|b| matches!(b, B::SensorLost(_))));
+}
+
+#[test]
 fn privileged_missing_sensor_marks_the_session_degraded() {
     use wyrd_schema::{EventBody as B, SessionState};
     let e = env();

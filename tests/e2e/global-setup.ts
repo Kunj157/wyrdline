@@ -92,6 +92,20 @@ export default async function globalSetup() {
   const at = Math.floor(tampered.length / 2);
   tampered[at] = (tampered[at] ?? 0) ^ 0x01;
   writeFileSync(join(studio, "e2e-tampered.wyrd"), tampered);
+  // What the CLI says a policy would have stopped in that bundle, for the
+  // backtest overlay in bundle mode.
+  const backtest = execFileSync(
+    join(bin, "wyrd"),
+    [
+      "policy",
+      "backtest",
+      join(root, "policies/fixtures/hostile.wasm"),
+      join(studio, "e2e.wyrd"),
+      "--json",
+    ],
+    { encoding: "utf8", env },
+  );
+  writeFileSync(join(studio, "e2e-backtest.json"), backtest);
   process.env.WYRD_E2E_BASE = base;
   process.env.WYRD_E2E_TOKEN = token;
   process.env.WYRD_E2E_SID = sid;
@@ -101,6 +115,7 @@ export default async function globalSetup() {
   process.env.WYRD_E2E_DATA = data;
   process.env.WYRD_E2E_FIXTURE = join(bin, "examples/e2e_fixture");
   process.env.WYRD_E2E_STUDIO = studio;
+  process.env.WYRD_E2E_WYRD = join(bin, "wyrd");
   return () => {
     daemon.kill("SIGTERM");
     rmSync(dir, { recursive: true, force: true });
