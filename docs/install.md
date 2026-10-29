@@ -83,10 +83,13 @@ which is what the last command sets up for `/usr/local`; see
 The sensor is a systemd service. Its unit file is
 [`deploy/systemd/wyrd-sensord.service`](../deploy/systemd/wyrd-sensord.service):
 it starts `/usr/local/bin/wyrd-sensord --socket /run/wyrdline/sensord.sock`
-with only the capabilities loading tracepoint programs needs
-(`CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN`),
-no network (`PrivateNetwork=yes`, `AF_UNIX` only), a read-only system,
-and no access to home directories.
+as root, with a capability bounding set of `CAP_BPF CAP_PERFMON
+CAP_NET_ADMIN`: the capabilities loading its programs needs. Once the
+programs are attached it drops every capability except `CAP_BPF`, which
+its later `bpf()` calls use (#234). It runs as root rather than a dedicated
+user, because the unit's comments record why. It has no network
+(`PrivateNetwork=yes`, `AF_UNIX` only), a read-only system, no access to
+home directories, and a system-call filter.
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/Kunj157/wyrdline/$v/deploy/systemd/wyrd-sensord.service
@@ -107,7 +110,7 @@ a power of two); drops are counted in the ledger either way.
 
 `integrations/github-action/scripts/install.sh` does steps 1 and 2 for
 `wyrd` and `wyrd-sensord` (it needs `curl`, `tar`, `sha256sum`, and
-`cosign` when the release is signed):
+`cosign` unless the signature check is skipped):
 
 ```sh
 WYRD_VERSION=v1.0.0 WYRD_INSTALL_DIR=$HOME/.local/bin \
@@ -233,7 +236,7 @@ starts: `export WYRD_PRIVILEGED_HELPER=sudo` (passwordless sudo for
 | sessions, CAS, host signing key, uploaded policies | `$WYRD_DATA_DIR`, else `$XDG_DATA_HOME/wyrdline`, else `~/.local/share/wyrdline` (`sessions/<id>/ledger.wyrdledger`, `cas/`, `keys/host.key`, `policies/`) |
 | daemon token | `$XDG_STATE_HOME/wyrdline/token`, else `~/.local/state/wyrdline/token` (`wyrd token path`) |
 | daemon socket | `$WYRD_DAEMON_SOCKET`, else `$XDG_RUNTIME_DIR/wyrdline/wyrdd.sock` |
-| intent socket of a running session | `$XDG_RUNTIME_DIR/wyrdline/intent-<session>.sock` |
+| intent socket of a running session | `$XDG_RUNTIME_DIR/wyrdline/intent-<session>.sock`, else `/run/user/<uid>/wyrdline/` when that is your own runtime directory, else `intent.sock` in the session directory (#221). The path must be at most 107 bytes, so set a short `XDG_RUNTIME_DIR` if it does not fit. |
 | sensor socket | `$WYRD_SENSORD_SOCKET`, else `/run/wyrdline/sensord.sock` |
 | project configuration | `.wyrdline/config.toml`, `scope.toml`, `secrets.toml` in the workspace ([policy guide](policies/README.md)) |
 

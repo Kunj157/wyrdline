@@ -2,9 +2,8 @@
 
 The Hub is the team server for Wyrdline bundles. Members upload signed
 `.wyrd` bundles (from `wyrd push`, or from a GitHub Actions job), and
-they can browse, download, and search them, and see analytics across
-the organisation's sessions. Studio can open the Hub's dashboard and
-search pages.
+they can browse and download them. Analytics and search across an
+organisation's sessions are in #220 (see below).
 
 The Hub verifies every upload before storing it: the signature, every
 file hash, and the ledger's hash chain. A bundle that does not verify is
@@ -16,10 +15,8 @@ This page is for the people who run a Hub and for the people who upload
 to it. The architecture and the full API are in
 [the Hub's architecture page](architecture/hub.md).
 
-Some features on this page are in open pull requests that are part of
-1.0 and not yet merged. Each section names the feature's status. If a
-section says a feature is not in your version, use the release notes to
-check.
+Everything on this page is in the release except analytics and search,
+which are in #220 and not merged yet (see [analytics](#analytics-and-search)).
 
 ## What you need
 
@@ -33,8 +30,7 @@ check.
 
 ## Run it
 
-Two ways. Both come from open pull requests at the time of writing (the
-image from #210, the chart from #213):
+Two ways:
 
 - **Container image** (`ghcr.io/kunj157/wyrdline-hub`, from
   `deploy/docker/hub.Dockerfile`). It is a distroless image that runs as
@@ -107,8 +103,6 @@ settings; the defaults apply.
 
 ## Upload a bundle
 
-_From #198 (upload, browse, download)._
-
 From a machine with `wyrd` and an API token:
 
 ```sh
@@ -127,15 +121,19 @@ that it is already there.
 
 ### From GitHub Actions (CI token)
 
-_From #216 (CI upload tokens)._
-
 A job can upload a bundle without storing a secret, by exchanging the
 job's GitHub OIDC token for a short-lived upload token. This needs:
 
 1. The job's `permissions: id-token: write`.
-2. An organisation admin adds a trust rule for your repository
-   (`POST /api/v1/orgs/{org}/ci-trust`, with `repository_owner` and
-   `repository`). Omit `repository` to trust every repository of an owner.
+2. An organisation admin adds a trust rule (`POST /api/v1/orgs/{org}/ci-trust`).
+   A rule names one repository by default: `{"repository_owner": "acme-gh",
+   "repository": "acme-gh/app"}`. Trusting every repository of an owner
+   needs `"wildcard": true`; that opt-in is audited as `ci.trust.wildcard`.
+   A rule may also pin a git ref, such as `"git_ref": "refs/heads/main"`,
+   so only runs of that ref can upload (exact refs only, no patterns).
+   Owner-wide rules made before this version were disabled by its
+   migration: an admin deletes such a rule and adds it again with
+   `wildcard: true` to trust the owner again.
 3. The job exchanges its token at `POST /api/v1/ci/token` and uploads
    with the returned `<upload token>`. The token lasts 15 minutes by
    default and can only upload.
@@ -144,34 +142,27 @@ The script `integrations/github-action/scripts/hub-upload.sh` wraps those
 steps. It sets two outputs for both a new upload and a bundle the
 organisation already has: `hub-bundle-id` (the bundle's id) and
 `hub-bundle-url`, the bundle's API resource, `<hub>/api/v1/bundles/<id>`.
-The Hub has no page per bundle, so the URL is an API address. These outputs
-are fixed in #216 (the answer is `{"duplicate", "bundle": {...}}`). The
-Action's `hub-url` input is reserved and does not upload yet.
+The Hub has no page per bundle, so the URL is an API address. The Action's
+`hub-url` input is reserved and does not upload yet.
 
-## Browse, download, search
+## Browse and download
 
 - `GET /api/v1/orgs/{org}/bundles` lists bundles, newest first. Filter
   with `repo`, `rule` (bundles whose divergence rules include that rule),
   and `since`. Page with `before`.
 - `GET /api/v1/bundles/{id}/download` downloads the stored `.wyrd`.
-- Studio's Hub pages: the dashboard at `/hub`, and search at `/hub/search`.
-  The Hub serves the Studio build named by `WYRD_HUB_STUDIO_DIR`; the
-  container image does not include one.
-
-Search takes a query of terms like `repo:owner/repo rule:D002 path:src/`.
-The filters `rule:`, `repo:`, `agent:`, and `session:` match bundles;
-`path:`, `kind:`, `host:`, `exe:`, and `tool:` match events. Event
-filters need the analytics feature (below).
 
 ## Analytics and search
 
-_From #220 (analytics, search, Studio pages)._
-
 The analytics endpoints (`GET /api/v1/orgs/{org}/stats`, and event
-search) and the Studio dashboard are in the analytics PR. They need a
-Hub built with the `analytics` Cargo feature, which is not enabled in the
-default container image. A Hub without it answers `501` for those
-endpoints; bundle listing and bundle search still work.
+search), the search endpoint (`GET /api/v1/orgs/{org}/search?q=`), and the
+Studio pages (the dashboard at `/hub` and search at `/hub/search`) are in
+#220, which is not merged yet. Until it is, none of them exist in a Hub
+built from dev.
+
+When #220 lands, the analytics need a Hub built with the `analytics` Cargo
+feature. The default container image does not enable it. A Hub without it
+answers `501` for those endpoints; listing and downloading bundles still work.
 
 The statistics cover the 500 most recent bundles of the organisation. The
 capture-overhead figure is always `null` per session: overhead is a

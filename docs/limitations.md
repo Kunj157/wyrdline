@@ -53,7 +53,7 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
 |---|---|
 | `wyrd-sensord` not running, or no systemd user manager (the Cell gets no cgroup of its own) | No kernel effects at all. Tool calls, MCP traffic, OTLP spans, policy decisions, and checkpoints are still recorded; the correlator has nothing to attribute; the divergence rules that judge effects (writes, reads, connects, unlinks: most of D002–D008) cannot fire; `on-effect` and `exec-deny` do not run; the egress allow-list is **not** enforced. |
 | Sensor connection lost mid-run | `meta.sensor.lost`, Degraded; effects between loss and `meta.sensor.resumed` are missing. |
-| Ring-buffer overflow | Effects were dropped; the count is recorded in-chain (`drops_since_last` on the next event) and `wyrd run` warns. The ring buffer is 64 MiB by default (`wyrd-sensord --ringbuf-mb`); in measurements it held 200 000 events/s with zero loss ([sensor performance](results/perf-sensor.md)). |
+| Ring-buffer overflow | Effects were dropped; the count is recorded in-chain (`drops_since_last` on the next event) and `wyrd run` warns. The ring buffer is 64 MiB by default (`wyrd-sensord --ringbuf-mb`); in measurements it held 200 000 events/s with zero loss ([sensor performance](results/perf-sensor.md)). Events a slow client's queue refuses are counted the same way (#217). A loss after a session's last captured effect has no later effect to carry the count, so it does not reach the ledger; fixing that needs a ledger schema change. |
 | Landlock ABI < 4 | TCP port rules cannot be enforced; the session says so and is Degraded. |
 | Landlock, cgroup v2, or overlayfs in user namespaces absent | No Cell mode: `wyrd run` needs `--observe`, which records intent (and effects, if the sensor runs) but has no sandbox, no checkpoints, no rewind, and does not enforce the policy's kernel rules. |
 | BPF LSM not enabled | Exec denial is detect-and-stop (below). Nothing else changes; BPF LSM is optional. |
@@ -139,6 +139,13 @@ read its own session and request a rewind, which a person must confirm;
 OTLP covers `execute_tool` spans. Kernel effects are captured for every agent
 regardless.
 
+The MCP gateway's tool pins (a tool that changes its description or schema
+is flagged, D009) are kept in each session's `mcp-pins.json`, so they survive
+a restart of that session's gateway (#233). They are per session: a server
+that changes between two separate `wyrd run`s is not flagged. `wyrd mcp`
+returns session text as quoted data, cut at 200 items and 32 KiB per block
+(#235).
+
 ## Studio
 
 - WebGPU is used when the browser offers it, with Canvas2D and SVG
@@ -158,6 +165,9 @@ regardless.
 
 ## Operational
 
+- `wyrd-sensord` runs as root, not as a dedicated user. After it attaches
+  its programs it keeps only `CAP_BPF`; the unit's comments explain why it
+  is not a dedicated user yet ([install](install.md#3-install-the-sensor)).
 - `wyrd run` owns a live session. `wyrdd` reads the ledger read-only
   and reaches a running session only through its intent socket; a
   rewind or fork with relaunch requested from Studio starts a detached

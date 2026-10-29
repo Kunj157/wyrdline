@@ -8,7 +8,7 @@ their results, and the assistant's messages (plan §15.2).
 ```
 wyrd run (outside the Cell)
  ├─ binds $XDG_RUNTIME_DIR/wyrdline/intent-<session>.sock  (0600, owner only;
- │     falls back to <session dir>/intent.sock)
+ │     else /run/user/<uid>/wyrdline/, else <session dir>/intent.sock; #221)
  ├─ serves it: one thread per connection, one JSON line in, one JSON line out
  └─ starts the agent with
       WYRD_INTENT_SOCKET  socket path
