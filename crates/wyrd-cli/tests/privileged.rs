@@ -665,3 +665,89 @@ for host in ('203.0.113.9', '10.255.255.1'):
     assert_eq!(denials.len(), 1, "{denials:?}");
     assert!(denials[0].contains("203.0.113.9"), "{}", denials[0]);
 }
+
+/// Plan §14.3 / §17.8 in a real Cell: the agent asks for a rewind through
+/// `wyrd mcp`, then tries to confirm it itself with `wyrd rewind
+/// --confirm`. The request is recorded, the confirmation fails (the
+/// ledger is not readable in the Cell), and only the user outside the
+/// Cell can confirm it.
+#[test]
+fn privileged_an_agent_cannot_confirm_its_own_rewind_request() {
+    let e = env();
+    let wyrd_bin = env!("CARGO_BIN_EXE_wyrd");
+    let rpc = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agent","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"request_rewind","arguments":{"checkpoint_id":"c1","reason":"I broke a.txt"}}}"#,
+    ]
+    .map(|l| format!("'{l}'"))
+    .join(" ");
+    // First run: write a.txt (checkpoint c1 at the end). On the relaunch
+    // from c1, a.txt reads "one" and the agent plays its part.
+    let agent = script(
+        &e,
+        "agent.sh",
+        &format!(
+            "if grep -q one a.txt; then\n\
+             printf '%s\\n' {rpc} | {wyrd_bin} mcp > mcp.out 2>&1\n\
+             cat mcp.out\n\
+             rid=$(grep -o '\"decided_by\":null,\"id\":[0-9]*' mcp.out | head -1 | grep -o '[0-9]*$')\n\
+             echo REQUEST=$rid\n\
+             {wyrd_bin} rewind \"$WYRD_SESSION_ID\" --confirm \"$rid\"; echo CONFIRM_RC=$?\n\
+             env -u WYRD_INTENT_SOCKET {wyrd_bin} mcp --session \"$WYRD_SESSION_ID\" </dev/null; echo DIRECT_RC=$?\n\
+             else echo one > a.txt; fi"
+        ),
+    );
+    assert_eq!(wyrd(&e, &["run", "--", &agent]).status.code(), Some(0));
+    let sid = only_session(&e);
+    let out = wyrd(&e, &["rewind", &sid, "c1", "--relaunch"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("pending human confirmation"),
+        "the request was not answered: {stdout}"
+    );
+    let rid: u64 = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("REQUEST="))
+        .and_then(|r| r.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no request id: {stdout}"));
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with("CONFIRM_RC=") && l != "CONFIRM_RC=0"),
+        "the agent confirmed its own request: {stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with("DIRECT_RC=") && l != "DIRECT_RC=0"),
+        "the agent served its session around the intent socket: {stdout}"
+    );
+
+    // Still pending, and nothing but the user's own rewind happened.
+    let reqs = wyrd(&e, &["rewind", &sid, "--requests", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&reqs.stdout).unwrap();
+    assert_eq!(v["requests"][0]["id"], rid);
+    assert_eq!(v["requests"][0]["status"], "pending");
+    assert_eq!(v["requests"][0]["source"], "mcp");
+    let kinds = |e: &Env| -> Vec<&'static str> {
+        ledger_events(e, &sid)
+            .iter()
+            .filter_map(|b| match b {
+                wyrd_schema::EventBody::RewindConfirmed(_) => Some("confirmed"),
+                wyrd_schema::EventBody::CheckpointRewound(_) => Some("rewound"),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(kinds(&e), ["rewound"], "only the user's rewind to c1");
+
+    // The user confirms outside the Cell: decision, then the rewind.
+    assert_eq!(
+        wyrd(&e, &["rewind", &sid, "--confirm", &rid.to_string()])
+            .status
+            .code(),
+        Some(0)
+    );
+    assert_eq!(kinds(&e), ["rewound", "confirmed", "rewound"]);
+}

@@ -9,7 +9,7 @@ PNPM ?= pnpm
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
-	test-e2e test-e2e-webgpu e2e-build site test-site test-hub fuzz fuzz-seeds
+	test-e2e test-e2e-webgpu test-e2e-hub e2e-build site test-site test-hub fuzz fuzz-seeds
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -76,6 +76,9 @@ test-e2e: e2e-build ## Studio end to end: Playwright (headless Chromium) against
 
 test-e2e-webgpu: e2e-build ## The WebGPU river, headed Chromium with SwiftShader on a virtual display
 	WYRD_E2E_WEBGPU=1 xvfb-run -a $(PNPM) exec playwright test -c tests/e2e --project=webgpu
+
+test-e2e-hub: e2e-build ## Studio against a real Hub and wyrdd (needs Postgres, MinIO and the WYRD_E2E_HUB_* variables, see tests/e2e/hub)
+	$(PNPM) exec playwright test -c tests/e2e/playwright.hub.config.ts
 
 site: ## Landing page with Studio and the demo session, as published (apps/site/dist)
 	scripts/build-site.sh

@@ -10,6 +10,7 @@
 //! --confirm` or the daemon API, neither of which a Cell can reach.
 
 mod server;
+mod untrusted;
 pub mod views;
 
 use std::path::PathBuf;

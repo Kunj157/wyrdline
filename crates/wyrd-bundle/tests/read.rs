@@ -110,6 +110,7 @@ fn good() -> Vec<u8> {
             withheld_files: 0,
             redaction: Redaction::Standard,
             divergences: wyrd_divergence::view::project_json,
+            annotations: None,
         },
         &key(7),
     )
@@ -731,4 +732,41 @@ fn not_a_bundle_truncated_or_trailing_data() {
             ..
         }
     ));
+}
+
+#[test]
+fn annotations_travel_in_standard_bundles_only() {
+    let m = meta();
+    let ev = events();
+    let ch = BTreeMap::new();
+    let doc = b"\x85\x6f\x4a\x83automerge document bytes".to_vec();
+    let with = |redaction| {
+        export(
+            &ExportInput {
+                session: &m,
+                events: &ev,
+                chunks: &ch,
+                content: false,
+                withheld_files: 0,
+                redaction,
+                divergences: wyrd_divergence::view::project_json,
+                annotations: Some(&doc),
+            },
+            &key(7),
+        )
+        .unwrap()
+        .bytes
+    };
+    let standard = read(&with(Redaction::Standard)[..], &opts()).unwrap();
+    assert_eq!(standard.annotations.as_deref(), Some(doc.as_slice()));
+    assert!(
+        standard
+            .manifest
+            .files
+            .iter()
+            .any(|f| f.path == format::ANNOTATIONS)
+    );
+    // Free text from teammates cannot be redacted: strict leaves it out.
+    let strict = read(&with(Redaction::Strict)[..], &opts()).unwrap();
+    assert!(strict.annotations.is_none());
 }
