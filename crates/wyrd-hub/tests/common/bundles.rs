@@ -84,6 +84,7 @@ pub fn bundle(name: &str, rules: &[&str]) -> Vec<u8> {
             withheld_files: 0,
             redaction: Redaction::Standard,
             divergences: wyrd_divergence::view::project_json,
+            annotations: None,
         },
         &SigningKey::from_bytes(&[7; 32]),
     )
