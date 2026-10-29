@@ -10,25 +10,69 @@ ExecStart=/usr/local/bin/wyrd-sensord --socket /run/wyrdline/sensord.sock
 Restart=on-failure
 RestartSec=2
 
-# Only what loading tracepoint programs and reading tracefs/cgroupfs needs.
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
+# Runs as root, not a dedicated user: the daemon creates its socket in
+# /run/wyrdline (root-owned RuntimeDirectory) and loads programs that the
+# kernel checks against the process's own capabilities. A dedicated user
+# would need AmbientCapabilities for the same set, and its BPF load was not
+# verified on the kernel matrix before 1.0, so it is not used (F-2, #227).
+#
+# The bounding set is the load-time ceiling. After its programs are loaded and
+# attached, the daemon keeps only CAP_BPF (wyrd-sensord keep_runtime_caps,
+# F-1, #226). Each granted capability is needed to load, and is then dropped:
+#   CAP_BPF       load and attach programs; the bpf() calls that run later
+#                 (register, egress rules, counters). Kept.
+#   CAP_PERFMON   the verifier loads the tracepoint programs only with it
+#                 (checked on kernel 6.17); not needed after attach (dropped).
+#   CAP_NET_ADMIN the verifier loads the cgroup connect programs only with it
+#                 (checked on 6.17); not needed to attach them per session
+#                 (dropped; the privileged egress tests pass without it).
+# Not granted, and not needed on the supported kernels (5.15 and newer):
+#   CAP_SYS_ADMIN, CAP_SYS_RESOURCE (aya raises RLIMIT_MEMLOCK only before 5.11),
+#   CAP_DAC_READ_SEARCH (not needed to load on 6.17; not tested on 5.15-6.12).
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_ADMIN
 AmbientCapabilities=
 NoNewPrivileges=yes
+
+# Syscalls: the system-service set, minus the groups the sensor does not use,
+# then the calls it needs added back: bpf and perf_event_open (in @privileged
+# and @debug) and capget/capset (the capability drop at start-up, in
+# @privileged). Everything else fails with EPERM.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @debug
+SystemCallFilter=bpf perf_event_open capget capset
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
 # No network: the daemon only serves a unix socket.
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
 PrivateNetwork=yes
-# Read-only system, private /tmp, no access to home directories.
+
+# Filesystem: read-only system, private /tmp, no home directories. The daemon
+# reads tracefs and cgroupfs and never writes outside its runtime directory.
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=yes
 PrivateTmp=yes
 RuntimeDirectory=wyrdline
 RuntimeDirectoryMode=0755
+# Not set: ProtectControlGroups (cgroup directories are opened by the daemon
+# to attach programs and to read their ids; the read-only cgroup mount has not
+# been verified against attach on the kernel matrix), ProtectProc (the daemon
+# reads /proc of every process in a session).
+
+# Kernel and host.
 ProtectKernelModules=yes
-ProtectControlGroups=no
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+UMask=0077
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
