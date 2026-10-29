@@ -31,9 +31,12 @@ case "$org" in
   *[!a-z0-9-]* | -*) die "hub-org must be an organisation slug (got '$org')" ;;
 esac
 bundle=${WYRD_BUNDLE:-}
-[ -n "$bundle" ] && [ -s "$bundle" ] || die "no bundle at '${bundle}'"
-[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] ||
+if [ -z "$bundle" ] || [ ! -s "$bundle" ]; then
+  die "no bundle at '${bundle}'"
+fi
+if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
   die "no OIDC token available: the job needs 'permissions: id-token: write'"
+fi
 repo=${WYRD_REPO:-${GITHUB_REPOSITORY:-}}
 
 work=$(mktemp -d)

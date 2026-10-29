@@ -2717,6 +2717,25 @@
         ],
         "type": "object"
       },
+      "RequestStatus": {
+        "oneOf": [
+          {
+            "const": "pending",
+            "description": "Waiting for a human.",
+            "type": "string"
+          },
+          {
+            "const": "confirmed",
+            "description": "A human confirmed; the rewind follows it in the ledger.",
+            "type": "string"
+          },
+          {
+            "const": "rejected",
+            "description": "A human rejected; nothing was changed.",
+            "type": "string"
+          }
+        ]
+      },
       "RewindBody": {
         "additionalProperties": false,
         "properties": {
@@ -2753,6 +2772,51 @@
         ],
         "type": "object"
       },
+      "RewindDecided": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Branch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new branch, when the request was confirmed."
+          },
+          "request": {
+            "$ref": "#/components/schemas/RewindRequest"
+          }
+        },
+        "required": [
+          "request",
+          "branch"
+        ],
+        "type": "object"
+      },
+      "RewindDecisionBody": {
+        "additionalProperties": false,
+        "description": "A human's decision on a rewind request.",
+        "properties": {
+          "confirm": {
+            "description": "True rewinds to the requested checkpoint; false rejects the request.",
+            "type": "boolean"
+          },
+          "note": {
+            "default": null,
+            "description": "Why it was rejected; stored in the ledger. At most 2000 characters.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "type": "object"
+      },
       "RewindRejected": {
         "additionalProperties": false,
         "description": "A human rejected a rewind request.",
@@ -2780,6 +2844,61 @@
         ],
         "type": "object"
       },
+      "RewindRequest": {
+        "description": "One rewind request with its decision, if any.",
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "decided_by": {
+            "description": "`cli` or `studio` once decided.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Request id: the `seq` of its `meta.rewind.requested` event.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "note": {
+            "description": "The rejection note, if one was given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "The agent's reason (redacted).",
+            "type": "string"
+          },
+          "requested_ms": {
+            "description": "Wall-clock milliseconds of the request.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "source": {
+            "description": "Surface the request came through, e.g. `mcp`.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequestStatus"
+          }
+        },
+        "required": [
+          "id",
+          "checkpoint_id",
+          "reason",
+          "source",
+          "requested_ms",
+          "status",
+          "decided_by",
+          "note"
+        ],
+        "type": "object"
+      },
       "RewindRequested": {
         "additionalProperties": false,
         "description": "The agent asked to be rewound to a checkpoint (through `wyrd mcp`).\nNothing changes until a human confirms; the request is identified by\nthe `seq` of this event.",
@@ -2800,6 +2919,21 @@
           "checkpoint_id",
           "reason",
           "source"
+        ],
+        "type": "object"
+      },
+      "RewindRequests": {
+        "description": "The agent's rewind requests (`wyrd mcp`), oldest first.",
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/RewindRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "requests"
         ],
         "type": "object"
       },
@@ -5768,6 +5902,215 @@
           }
         ],
         "summary": "OTLP/HTTP JSON trace export into a live session"
+      }
+    },
+    "/v1/sessions/{sid}/rewind-requests": {
+      "get": {
+        "operationId": "getSessionsSidRewindRequests",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewindRequests"
+                }
+              }
+            },
+            "description": "Rewind requests"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Rewind requests the agent made, with their decisions"
+      }
+    },
+    "/v1/sessions/{sid}/rewind-requests/{id}": {
+      "post": {
+        "operationId": "postSessionsSidRewindRequestsId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewindDecisionBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewindDecided"
+                }
+              }
+            },
+            "description": "Decided"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict: ambiguous id, workspace changed, session not live, or idempotency key in flight"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body or reused idempotency key"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "security": [
+          {
+            "daemonToken": []
+          },
+          {
+            "unixSocket": []
+          }
+        ],
+        "summary": "Confirm (rewind) or reject a pending rewind request"
       }
     },
     "/v1/sessions/{sid}/stop": {

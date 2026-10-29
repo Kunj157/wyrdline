@@ -1,0 +1,25 @@
+# Values for the kind smoke test (.github/workflows/hub-chart.yml). The CI job
+# builds the Hub image locally, loads it into kind, and creates the Secrets
+# named below with random values at run time.
+image:
+  repository: wyrdline-hub
+  tag: ci
+  pullPolicy: Never
+
+replicaCount: 1
+
+publicUrl: http://127.0.0.1:7730
+
+database:
+  existingSecret: hub-database
+
+s3:
+  endpoint: http://minio.hub-test.svc.cluster.local:9000
+  bucket: wyrd-bundles
+  existingSecret: hub-s3
+
+networkPolicy:
+  egressTo:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: hub-test

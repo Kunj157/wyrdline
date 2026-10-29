@@ -44,6 +44,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     api::BacktestReport::export_all(&cfg)?;
     api::AnswerBody::export_all(&cfg)?;
     api::Answered::export_all(&cfg)?;
+    api::RewindRequests::export_all(&cfg)?;
+    api::RewindDecisionBody::export_all(&cfg)?;
+    api::RewindDecided::export_all(&cfg)?;
     api::BranchCreated::export_all(&cfg)?;
     api::Relaunching::export_all(&cfg)?;
     api::Changes::export_all(&cfg)?;

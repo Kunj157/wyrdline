@@ -1,5 +1,6 @@
 //! `wyrd-hub`: serve the Hub API. Configuration comes from the
 //! environment (`docs/architecture/hub.md`).
+#![forbid(unsafe_code)]
 
 use std::process::ExitCode;
 use std::sync::Arc;

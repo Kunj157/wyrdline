@@ -35,10 +35,12 @@ needed (`.github/workflows/github-action.yml`).
    `wyrd-repository` (`wyrd-version`, default `latest`), or from prebuilt
    binaries in `wyrd-path`. The release's `SHA256SUMS` is always checked; its
    cosign keyless signature (`SHA256SUMS.sigstore.json`, issued to the
-   repository's `release.yml` workflow) is verified when present
-   (`verify-signature: auto`), required (`required`), or skipped (`skip`).
-   Signed releases start with the release pipeline (plan Phase 14); until
-   then `auto` warns that only the checksum was verified.
+   repository's `release.yml` workflow on the release tag) must verify. This
+   is the default (`verify-signature: required`): a release without a valid
+   signature is refused. `auto` verifies when a signature is present and warns
+   otherwise. `skip` (or `false`) installs without a signature check and
+   writes a loud warning to the log and the job summary. Prebuilt binaries
+   from `wyrd-path` are not downloaded and are not verified.
 2. **Start the sensor**: installs `deploy/systemd/wyrd-sensord.service`
    (the runner has passwordless sudo) and waits for its socket. If it does
    not come up, the step fails with the `wyrd doctor` report and the agent
@@ -80,7 +82,7 @@ needed (`.github/workflows/github-action.yml`).
 | `wyrd-version` | `latest` | Release tag to install. |
 | `wyrd-repository` | `Kunj157/wyrdline` | |
 | `wyrd-path` | | Prebuilt `wyrd` + `wyrd-sensord` directory (skips the download). |
-| `verify-signature` | `auto` | `auto`, `required`, or `skip`. |
+| `verify-signature` | `required` | `required` (default: refuse unsigned releases), `auto` (verify when signed, warn otherwise), or `skip` / `false` (no signature check, warned). |
 | `hub-url` | | **Reserved.** Hub upload with the job's GitHub OIDC token (`id-token: write`, no stored secret) comes with the Hub's CI token exchange; setting it now only prints a warning. |
 
 ## Outputs

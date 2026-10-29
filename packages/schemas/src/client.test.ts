@@ -97,6 +97,8 @@ describe("daemon client", () => {
       c.uploadPolicy("p", new Uint8Array([0, 97, 115, 109])),
       c.backtest("p", "s"),
       c.answerAsk("s", 1, true),
+      c.rewindRequests("s"),
+      c.decideRewind("s", 1, { confirm: false, note: null }),
       c.rewind("s", "c1", {}),
       c.fork("s", "c1", { name: "n" }),
       c.apply("s", "c1", {}),

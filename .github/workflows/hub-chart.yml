@@ -1,0 +1,138 @@
+name: hub-chart
+
+# The Hub Helm chart (deploy/helm/wyrdline-hub). Lint and render checks run on
+# every PR that touches the chart. The kind job builds the Hub image, loads it
+# into a throwaway cluster with PostgreSQL and MinIO, installs the chart, and
+# smoke-tests /readyz through a port-forward.
+on:
+  pull_request:
+    paths:
+      - deploy/helm/**
+      - deploy/kind/**
+      - deploy/docker/**
+      - crates/wyrd-hub/**
+      - .github/workflows/hub-chart.yml
+  push:
+    branches: [dev]
+    paths:
+      - deploy/helm/**
+      - deploy/kind/**
+      - deploy/docker/**
+      - crates/wyrd-hub/**
+      - .github/workflows/hub-chart.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CHART: deploy/helm/wyrdline-hub
+  KUBECONFORM_VERSION: 0.7.0
+  NAMESPACE: hub-test
+
+jobs:
+  chart:
+    name: Chart · lint, render, kubeconform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: kubeconform
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+      - name: helm lint --strict
+        run: |
+          # Lint with values that satisfy the required keys, so templates render.
+          # Without them helm lint warns and skips the templates.
+          helm lint --strict "$CHART" -f "$CHART/ci/kind-values.yaml"
+      - name: Render and validate (defaults with required values, kind values, OIDC, autoscaling, ingress)
+        run: |
+          set -euo pipefail
+          helm template wyrdline-hub "$CHART" -f "$CHART/ci/kind-values.yaml" \
+            | kubeconform -strict -summary
+          helm template wyrdline-hub "$CHART" -f "$CHART/ci/kind-values.yaml" \
+            --set oidc.issuer=https://idp.example.internal --set oidc.clientId=wyrd-hub \
+            --set oidc.existingSecret=hub-oidc \
+            | kubeconform -strict -summary
+          helm template wyrdline-hub "$CHART" -f "$CHART/ci/kind-values.yaml" \
+            --set autoscaling.enabled=true --set ingress.enabled=true \
+            --set ingress.host=hub.example.internal --set ingress.className=nginx \
+            --set metrics.serviceMonitor.enabled=false \
+            | kubeconform -strict -summary
+      - name: Missing secret values fail the render with a clear message
+        run: |
+          if helm template wyrdline-hub "$CHART" --set publicUrl=https://hub.example.internal >/dev/null 2>err.txt; then
+            echo "::error::render succeeded without required values"; exit 1
+          fi
+          grep -q 'database.existingSecret is required' err.txt
+
+  kind:
+    name: Chart · kind smoke (Postgres, MinIO, /readyz)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the Hub image (loaded locally for kind)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/hub.Dockerfile
+          load: true
+          tags: wyrdline-hub:ci
+          cache-from: type=gha,scope=hub-image
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Create the kind cluster
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: hub
+          wait: 120s
+      - name: Load the image into kind
+        run: kind load docker-image wyrdline-hub:ci --name hub
+      - name: Dependencies (PostgreSQL 17, MinIO) and throwaway Secrets
+        run: |
+          set -euo pipefail
+          kubectl apply -f deploy/kind/hub-test/dependencies.yaml
+          pg_pass="$(openssl rand -hex 24)"
+          s3_key="$(openssl rand -hex 12)"
+          s3_secret="$(openssl rand -hex 24)"
+          kubectl -n "$NAMESPACE" create secret generic postgres-auth --from-literal=password="$pg_pass"
+          kubectl -n "$NAMESPACE" create secret generic minio-auth \
+            --from-literal=access-key-id="$s3_key" --from-literal=secret-access-key="$s3_secret"
+          kubectl -n "$NAMESPACE" create secret generic hub-s3 \
+            --from-literal=access-key-id="$s3_key" --from-literal=secret-access-key="$s3_secret"
+          kubectl -n "$NAMESPACE" create secret generic hub-database \
+            --from-literal=database-url="postgres://hub:${pg_pass}@postgres.${NAMESPACE}.svc.cluster.local:5432/hub"
+          kubectl -n "$NAMESPACE" rollout status deploy/postgres --timeout=180s
+          kubectl -n "$NAMESPACE" rollout status deploy/minio --timeout=180s
+      - name: Install the chart
+        run: |
+          helm install wyrdline-hub "$CHART" --namespace "$NAMESPACE" \
+            -f "$CHART/ci/kind-values.yaml" --wait --timeout 5m
+      - name: Smoke /readyz through a port-forward
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" port-forward svc/wyrdline-hub 7730:80 > pf.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7730/readyz; then
+              echo "ready"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::/readyz did not return 200"
+          kubectl -n "$NAMESPACE" get pods -o wide
+          kubectl -n "$NAMESPACE" logs deploy/wyrdline-hub --tail=200
+          exit 1
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all,networkpolicy,pdb || true
+          kubectl -n "$NAMESPACE" describe pods || true
+          kubectl -n "$NAMESPACE" logs deploy/postgres --tail=100 || true
+          kubectl -n "$NAMESPACE" logs deploy/minio --tail=100 || true

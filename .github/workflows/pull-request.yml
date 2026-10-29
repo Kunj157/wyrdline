@@ -1,16 +1,18 @@
 name: pull-request
 
+# The gate on every PR and push to dev/main; release.yml calls it on tags.
 on:
   pull_request:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-gate
   cancel-in-progress: true
 
 env:
@@ -121,7 +123,20 @@ jobs:
   e2e:
     name: Studio · end to end
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    # Postgres for the Hub-backed Studio test (make test-e2e-hub); MinIO is
+    # started by a step, like the Hub's Testcontainers pin.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: wyrd-e2e-${{ github.run_id }}
+          POSTGRES_DB: wyrd_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hub -d wyrd_e2e"
+          --health-interval 5s --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned toolchain
@@ -144,6 +159,26 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Studio against a real daemon (headless Chromium)
         run: make test-e2e
+      - name: Hub and Studio end to end (Hub, MinIO, two teammates and a viewer)
+        env:
+          WYRD_E2E_HUB_BIN: ${{ github.workspace }}/target/debug/wyrd-hub
+          WYRD_E2E_HUB_DATABASE_URL: postgres://hub:wyrd-e2e-${{ github.run_id }}@127.0.0.1:5432/wyrd_e2e
+          WYRD_E2E_HUB_S3_ENDPOINT: http://127.0.0.1:9000
+          WYRD_E2E_HUB_S3_KEY: wyrd-minio-${{ github.run_id }}
+          WYRD_E2E_HUB_S3_SECRET: wyrd-minio-secret-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$WYRD_E2E_HUB_S3_KEY" \
+            -e MINIO_ROOT_PASSWORD="$WYRD_E2E_HUB_S3_SECRET" \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:9000/minio/health/ready && break
+            sleep 2
+          done
+          command -v psql >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client; }
+          cargo build --locked -p wyrd-hub --bin wyrd-hub
+          make test-e2e-hub
       - name: WebGPU river (SwiftShader, virtual display)
         run: make test-e2e-webgpu
       - name: Landing page as published (site, Studio, demo session)
@@ -155,6 +190,7 @@ jobs:
           name: e2e-results
           path: |
             target/e2e-results
+            target/e2e-results-hub
             target/site-results
           retention-days: 7
 
@@ -210,6 +246,21 @@ jobs:
           ./gitleaks detect --no-banner --redact
       - name: Semgrep
         run: pipx run semgrep scan --config p/default --error --metrics off --exclude target --exclude node_modules .
+      - name: Semgrep · Wyrdline rules (no unwrap on input paths, no shell-out in wyrdd)
+        run: pipx run semgrep scan --config .semgrep/wyrd.yml --error --metrics off --exclude target --exclude node_modules .
+
+  release-scripts:
+    name: Release · packaging scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Packaging, reproducibility compare, version stamp
+        run: bash tests/release/scripts.test.sh
+      - name: shellcheck
+        run: shellcheck scripts/release/*.sh tests/release/*.sh
 
   workflows:
     name: Workflows · actionlint

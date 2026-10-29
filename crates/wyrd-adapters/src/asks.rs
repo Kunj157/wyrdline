@@ -7,6 +7,7 @@
 //! read (plan §17.8).
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,29 @@ use serde::{Deserialize, Serialize};
 /// Session file holding the control token (0600), present while the
 /// session runs.
 pub const CONTROL_TOKEN_FILE: &str = "control.token";
+
+/// Write `bytes` to `path` as a private (0600) file, replacing any old one
+/// in one step: the bytes go to a temporary file, which is synced and then
+/// renamed over `path`. A reader sees the old file or the new one, never an
+/// empty or half-written one. (A plain truncate-and-write let a poll read an
+/// empty control token, which the daemon then refused.)
+pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+}
 
 /// Default wait for an answer. Below the hook client's and the gateway's
 /// own timeouts, so the agent always gets a decision.

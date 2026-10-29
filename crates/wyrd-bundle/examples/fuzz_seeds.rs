@@ -111,6 +111,7 @@ fn main() {
                 withheld_files: 0,
                 redaction,
                 divergences: wyrd_divergence::view::project_json,
+                annotations: None,
             },
             &key,
         )

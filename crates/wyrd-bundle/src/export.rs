@@ -10,8 +10,8 @@ use wyrd_schema::{ClaimExtracted, Event, EventBody, SCHEMA_ID, to_canonical_cbor
 
 use crate::archive;
 use crate::format::{
-    self, CAS_DIR, CLAIMS, Content, DIVERGENCES, FileEntry, LEDGER, LedgerSummary, MANIFEST,
-    Manifest, Redaction, SIGNATURE, SessionMeta, SignerInfo,
+    self, ANNOTATIONS, CAS_DIR, CLAIMS, Content, DIVERGENCES, FileEntry, LEDGER, LedgerSummary,
+    MANIFEST, Manifest, Redaction, SIGNATURE, SessionMeta, SignerInfo,
 };
 use crate::redact::{
     KnownHosts, Level, host_pseudonym, hosts_in, map_strings, redact_json, redact_str,
@@ -67,6 +67,10 @@ pub struct ExportInput<'a> {
     pub withheld_files: u64,
     pub redaction: Redaction,
     pub divergences: DivergenceProjection,
+    /// The session's annotation document (saved Automerge bytes), if any.
+    /// It is teammates' free text, which redaction cannot reach, so a
+    /// `strict` bundle leaves it out.
+    pub annotations: Option<&'a [u8]>,
 }
 
 /// What [`export`] wrote.
@@ -206,6 +210,7 @@ fn content_files(
     ledger: Vec<u8>,
     chunks: &BTreeMap<Hash, Vec<u8>>,
     divergences: DivergenceProjection,
+    annotations: Option<&[u8]>,
 ) -> Result<BTreeMap<String, Vec<u8>>, ExportError> {
     let claims: Vec<&ClaimExtracted> = events
         .iter()
@@ -222,6 +227,9 @@ fn content_files(
     files.insert(CLAIMS.into(), json("claims", &claims)?);
     files.insert(DIVERGENCES.into(), json("divergences", &divergences)?);
     files.insert(LEDGER.into(), ledger);
+    if let Some(a) = annotations {
+        files.insert(ANNOTATIONS.into(), a.to_vec());
+    }
     for (hash, bytes) in chunks {
         if blake3::hash(bytes).as_bytes() != hash {
             return Err(ExportError::ChunkMismatch(hex::encode(hash)));
@@ -237,7 +245,16 @@ pub fn export(input: &ExportInput<'_>, signer: &dyn Signer) -> Result<Exported, 
     let (events, known) = redact_all(input.events, level)?;
     let (ledger, head) = encode_ledger(&events)?;
     let ledger_bytes = ledger.len() as u64;
-    let files = content_files(&events, ledger, input.chunks, input.divergences)?;
+    let annotations = input
+        .annotations
+        .filter(|_| input.redaction != Redaction::Strict);
+    let files = content_files(
+        &events,
+        ledger,
+        input.chunks,
+        input.divergences,
+        annotations,
+    )?;
 
     let public_key = signer.public_key();
     let fingerprint = format::fingerprint(&public_key);

@@ -65,7 +65,7 @@ is a projection of it.
 
 | Component | Privilege | Responsibility |
 |---|---|---|
-| `wyrd-sensord` | `CAP_BPF`, `CAP_PERFMON`, `CAP_NET_ADMIN`, `CAP_SYS_RESOURCE` | load eBPF, stream events of registered cgroups, attach network enforcement |
+| `wyrd-sensord` | `CAP_BPF` kept after start-up (`CAP_PERFMON` and `CAP_NET_ADMIN` only while loading the programs) | load eBPF, stream events of registered cgroups, attach network enforcement; the rest is dropped before the first client connects (see the unit file) |
 | `wyrdd` | user | sessions, Cells, ledger, CAS, correlation, policies, divergence, API, Studio |
 | `wyrd` | user | CLI client; `doctor`, `verify`, `open` work standalone |
 | `wyrd-gateway` | user, inside the session | MCP proxy with policy checks |
