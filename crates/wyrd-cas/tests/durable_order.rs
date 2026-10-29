@@ -1,8 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
-//! Every durable write syncs a new directory's parent right after making the
-//! directory, and syncs the chunk's directory after its rename. These tests
-//! read the order of the steps a write takes. A power cut is not simulated.
+//! Every durable write syncs a new directory's parent before a file is
+//! renamed into the directory, and syncs the chunk's directory after its
+//! rename. A staged write leaves the directories to the commit's `syncfs`.
+//! These tests read the order of the steps a write takes, from every thread.
+//! A power cut is not simulated.
 
 use std::path::{Path, PathBuf};
 
@@ -12,25 +14,31 @@ fn parent(p: &Path) -> PathBuf {
     p.parent().unwrap().to_path_buf()
 }
 
+/// The first step after `from` that makes `dir`'s entries durable: a sync of
+/// `dir` itself, or a `syncfs`, which covers everything.
+fn durable_after(steps: &[Step], from: usize, dir: &Path) -> Option<usize> {
+    steps[from..]
+        .iter()
+        .position(|t| *t == Step::SyncDir(dir.to_path_buf()) || *t == Step::SyncFs)
+        .map(|k| from + k)
+}
+
 /// The invariant every durable write must keep, checked on its steps:
-/// - each directory made is synced in its parent after it is made, and
-///   before any file is renamed into it;
-/// - each rename into a directory is followed by a sync of that directory.
+/// - each directory made is durable in its parent (a sync of the parent, or a
+///   `syncfs`) before any file is renamed into it;
+/// - each rename into a directory is followed by a durable sync of it.
 fn check_invariant(steps: &[Step]) {
     for (i, s) in steps.iter().enumerate() {
         match s {
             Step::Mkdir(d) => {
-                let synced = steps[i + 1..]
-                    .iter()
-                    .position(|t| *t == Step::SyncDir(parent(d)));
-                let synced = synced.unwrap_or_else(|| {
+                let parent_dir = parent(d);
+                let synced = durable_after(steps, i + 1, &parent_dir).unwrap_or_else(|| {
                     panic!(
-                        "{} was made, its parent never synced: {steps:?}",
+                        "{} was made, its parent is never synced: {steps:?}",
                         d.display()
                     )
                 });
-                // The parent sync comes before any rename into `d`.
-                let renamed_before = steps[i + 1..i + 1 + synced]
+                let renamed_before = steps[i + 1..synced]
                     .iter()
                     .any(|t| matches!(t, Step::Rename(_, to) if parent(to) == *d));
                 assert!(
@@ -42,7 +50,7 @@ fn check_invariant(steps: &[Step]) {
             Step::Rename(_, to) => {
                 let dir = parent(to);
                 assert!(
-                    steps[i + 1..].contains(&Step::SyncDir(dir.clone())),
+                    durable_after(steps, i + 1, &dir).is_some(),
                     "rename into {} is never followed by a sync of it: {steps:?}",
                     dir.display()
                 );
@@ -89,13 +97,12 @@ fn a_new_fan_out_directory_is_synced_into_its_parent_before_the_chunk_is_renamed
 fn a_chunk_into_an_existing_directory_is_synced_after_its_rename_only() {
     let tmp = tempfile::tempdir().unwrap();
     let cas = Cas::open(tmp.path().join("cas")).unwrap();
-    // Two contents whose hashes share the first two bytes: same fan-out directory.
     let first = b"first content".to_vec();
     let h = ChunkHash::of(&first);
     cas.put(&first).unwrap();
     let hex = h.to_hex();
     let leaf = cas.root().join("chunks").join(&hex[..2]).join(&hex[2..4]);
-    // Remove the chunk so the second write runs the full path into a directory that exists.
+    // Remove the chunk, so the second write runs the full path into a directory that exists.
     std::fs::remove_file(leaf.join(&hex)).unwrap();
     let (res, steps) = record_steps(|| cas.put(&first));
     assert_eq!(res.unwrap(), h);
@@ -135,7 +142,7 @@ fn every_durable_entry_point_keeps_the_order() {
 }
 
 #[test]
-fn opening_a_new_store_syncs_each_directory_it_creates_into_its_parent() {
+fn opening_a_new_store_syncs_each_directory_and_the_format_marker_it_creates() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("deep").join("cas");
     let (res, steps) = record_steps(|| Cas::open(&root));
@@ -146,8 +153,81 @@ fn opening_a_new_store_syncs_each_directory_it_creates_into_its_parent() {
         "{steps:?}"
     );
     assert!(steps.contains(&Step::SyncDir(root.clone())), "{steps:?}");
+    // The marker is written to a staging file, synced, then renamed into place.
+    let marker = root.join("FORMAT");
+    let sync_at = steps
+        .iter()
+        .position(|t| matches!(t, Step::SyncFile(_)))
+        .expect("the marker's data is synced");
+    let rename_at = steps
+        .iter()
+        .position(|t| matches!(t, Step::Rename(_, to) if *to == marker))
+        .expect("the marker is renamed into place");
+    assert!(sync_at < rename_at, "{steps:?}");
+    assert!(
+        steps[rename_at..].contains(&Step::SyncDir(root.clone())),
+        "the marker's directory is synced after: {steps:?}"
+    );
     // Opening an existing store creates nothing and syncs nothing.
     let (res, steps) = record_steps(|| Cas::open(&root));
     res.unwrap();
     assert!(steps.is_empty(), "{steps:?}");
+}
+
+#[test]
+fn writes_made_by_snapshot_worker_threads_are_recorded_and_keep_the_order() {
+    // Many distinct files: the snapshot chunks them on several worker threads,
+    // each creating fan-out directories and renaming chunks in. The recording
+    // is global, so the worker threads' steps are part of it.
+    let tmp = tempfile::tempdir().unwrap();
+    let cas = Cas::open(tmp.path().join("cas")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    for i in 0..64u32 {
+        let body: Vec<u8> = (0..20_000u32)
+            .map(|j| ((j ^ i.wrapping_mul(7919)) % 251) as u8)
+            .collect();
+        std::fs::write(ws.join(format!("f{i:02}")), body).unwrap();
+    }
+    let (r, steps) = record_steps(|| cas.snapshot(&ws, None));
+    let (m, stats) = r.unwrap();
+    assert_eq!(stats.files_read, 64);
+    let renames = steps
+        .iter()
+        .filter(|t| matches!(t, Step::Rename(_, _)))
+        .count();
+    assert!(
+        renames >= 64,
+        "every file's chunk was renamed in, from any thread: {renames}"
+    );
+    check_invariant(&steps);
+    assert!(cas.get_manifest(cas.put_manifest(&m).unwrap()).is_ok());
+}
+
+#[test]
+fn concurrent_writers_into_one_store_keep_the_order() {
+    // Several threads write distinct chunks into the same store at once, so
+    // they race to create the same fan-out directories.
+    let tmp = tempfile::tempdir().unwrap();
+    let cas = Cas::open(tmp.path().join("cas")).unwrap();
+    let ((), steps) = record_steps(|| {
+        std::thread::scope(|scope| {
+            for t in 0..8u32 {
+                let cas = &cas;
+                scope.spawn(move || {
+                    for i in 0..40u32 {
+                        let body =
+                            format!("thread {t} chunk {i} {}", "x".repeat(3000)).into_bytes();
+                        cas.put(&body).unwrap();
+                    }
+                });
+            }
+        });
+    });
+    let renames = steps
+        .iter()
+        .filter(|t| matches!(t, Step::Rename(_, _)))
+        .count();
+    assert_eq!(renames, 8 * 40, "every chunk was renamed in exactly once");
+    check_invariant(&steps);
 }

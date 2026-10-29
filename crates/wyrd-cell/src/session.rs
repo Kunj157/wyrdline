@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wyrd_cas::{Cas, ChunkHash, Manifest};
+use wyrd_cas::{Cas, ChunkHash, Manifest, Staged};
 use wyrd_ledger::{HostKey, Ledger, Seal};
 use wyrd_schema::{
     CaptureMode, CheckpointApplied, CheckpointCreated, CheckpointForked, CheckpointRewound, Event,
@@ -578,12 +578,20 @@ impl Session {
         if let Some(cg) = &frozen {
             cg.freeze()?;
         }
-        let snap = self.cas.snapshot(&self.dir.upper(&branch), base.as_ref());
+        // The changed chunks and the manifest are staged inside the freeze
+        // (no barrier, nothing visible), then committed after the thaw: two
+        // barriers and the renames in between (see docs/cas-format.md). The
+        // ledger event below is written only after the commit.
+        let mut staged = Staged::default();
+        let snap = self
+            .cas
+            .snapshot_staged(&self.dir.upper(&branch), base.as_ref(), &mut staged);
         if let Some(cg) = &frozen {
             cg.thaw()?;
         }
         let (manifest, stats) = snap?;
-        let hash = self.cas.put_manifest(&manifest)?;
+        let hash = self.cas.stage_manifest(&manifest, &mut staged)?;
+        self.cas.commit(staged)?;
         if skip_unchanged
             && let Some(p) = &parent
             && p.manifest == hash.to_string()
