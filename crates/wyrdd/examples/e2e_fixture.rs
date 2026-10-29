@@ -107,7 +107,10 @@ fn ask(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error:
     let sid = args.next().ok_or("session")?;
     let s = Session::open(&data, &sid)?;
     let token = wyrd_adapters::asks::new_token()?;
-    std::fs::write(s.dir().root().join(CONTROL_TOKEN_FILE), &token)?;
+    wyrd_adapters::asks::write_private_atomic(
+        &s.dir().root().join(CONTROL_TOKEN_FILE),
+        token.as_bytes(),
+    )?;
     let socket = wyrd_adapters::server::socket_path(s.dir().root(), &sid);
     let listener = wyrd_adapters::server::bind(&socket)?;
     let ingest = std::sync::Arc::new(
@@ -133,6 +136,9 @@ fn ask(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error:
     });
     let _ = std::fs::remove_file(s.dir().root().join(CONTROL_TOKEN_FILE));
     let _ = std::fs::remove_file(&socket);
+    // The answer that woke us may still be on its way out, and Studio asks
+    // again right after it: finish those connections before exiting.
+    wyrd_adapters::server::drain(std::time::Duration::from_secs(2));
     writeln!(std::io::stdout(), "{}", serde_json::to_string(&r)?)?;
     Ok(())
 }
