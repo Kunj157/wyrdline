@@ -1,4 +1,5 @@
 //! `wyrd` — the Wyrdline command-line interface.
+#![forbid(unsafe_code)]
 
 mod cmd;
 
@@ -31,7 +32,7 @@ struct Cli {
 enum Command {
     /// Report which kernel capabilities Wyrdline can use on this machine.
     Doctor(cmd::doctor::Args),
-    /// Verify a session ledger's hash chain and seal signature.
+    /// Verify a session ledger (chain and seal) or a `.wyrd` bundle.
     Verify(cmd::verify::Args),
     /// Run an agent inside a Cell and record the session.
     Run(cmd::session::RunArgs),
@@ -70,8 +71,14 @@ enum Command {
     Close(cmd::session::SessionArg),
     /// Export a session as a signed, redacted `.wyrd` bundle.
     Export(cmd::bundle::ExportArgs),
+    /// Upload a bundle to a Wyrdline Hub (token in `$WYRD_HUB_TOKEN`).
+    Push(cmd::push::PushArgs),
+    /// Verify a `.wyrd` bundle and add it as a read-only session.
+    Import(cmd::bundle::ImportArgs),
     /// Open Studio in a browser (served by the running daemon).
     Studio(cmd::studio::Args),
+    /// Open a `.wyrd` bundle in Studio, without the daemon.
+    Open(cmd::open::Args),
     /// Manage the daemon token.
     #[command(subcommand)]
     Token(cmd::daemon::TokenCmd),
@@ -87,6 +94,9 @@ enum Command {
     Policy(cmd::policy::PolicyCmd),
     /// Proxy a stdio MCP server, recording and checking its traffic.
     McpProxy(cmd::mcp_proxy::Args),
+    /// Serve a session's inspection tools and rewind requests over stdio
+    /// MCP (for the agent; rewinds still need a human).
+    Mcp(cmd::mcp::Args),
     /// Internal: stage two of a Cell launch.
     #[command(name = "__cell-exec", hide = true)]
     CellExec { spec: std::path::PathBuf },
@@ -113,6 +123,7 @@ fn main() -> ExitCode {
         Command::Show(a) => cmd::inspect::show(&a),
         Command::Tail(a) => cmd::inspect::tail(&a),
         Command::Studio(a) => cmd::studio::run(&a),
+        Command::Open(a) => cmd::open::run(&a),
         Command::Token(c) => cmd::daemon::token(&c),
         Command::Daemon(c) => cmd::daemon::daemon(&c),
         Command::Graph(a) => cmd::graph::graph(&a),
@@ -128,8 +139,11 @@ fn main() -> ExitCode {
         Command::Stop(a) => cmd::session::stop(&a),
         Command::Close(a) => cmd::session::close(&a),
         Command::Export(a) => cmd::bundle::export(&a),
+        Command::Push(a) => cmd::push::push(&a),
+        Command::Import(a) => cmd::bundle::import(&a),
         Command::Hook(a) => cmd::hook::run(&a),
         Command::McpProxy(a) => cmd::mcp_proxy::run(&a),
+        Command::Mcp(a) => cmd::mcp::run(&a),
         Command::Policy(c) => cmd::policy::run(&c),
         Command::Ask(a) => cmd::ask::run(&a),
         Command::CellExec { spec } => cmd::session::cell_exec(&spec),

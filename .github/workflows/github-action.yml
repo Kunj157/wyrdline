@@ -1,0 +1,169 @@
+name: github-action
+
+# The Wyrdline GitHub Action (integrations/github-action): script tests,
+# and an end-to-end run with the scripted agent (no API key) whose PR
+# comment and bundle artifact are checked. Runs on changes to the action,
+# and on every release candidate (release branches, tags, main).
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - integrations/github-action/**
+      - deploy/systemd/**
+      - .github/workflows/github-action.yml
+  push:
+    branches: [main, "release/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Action · script tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Summary, comment, fail-on, and command parsing
+        run: node --test integrations/github-action/tests/*.test.mjs
+      - name: Installer (checksums, signatures) and sensor start-up
+        run: |
+          bash integrations/github-action/tests/install.test.sh
+          bash integrations/github-action/tests/sensord.test.sh
+      - name: shellcheck
+        run: shellcheck integrations/github-action/scripts/*.sh integrations/github-action/tests/*.sh
+      - name: The example workflow is valid
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz actionlint
+          ./actionlint -color integrations/github-action/examples/*.yml
+
+  e2e:
+    name: Action · end to end (fakeagent)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write # the PR comment under test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install nightly for the eBPF object
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: bpf-linker
+      # Release builds, as the action installs them: a debug sensor and
+      # capture loop lag behind the agent on a runner.
+      - name: Build wyrd, wyrd-sensord, the scripted agent, and the default policy
+        run: |
+          cargo build --release --locked -p wyrd-cli -p wyrd-sensord -p wyrd-fakeagent
+          target/release/wyrd policy build policies/default
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+      - name: The demo shop as the agent's workspace, with a throwaway .env
+        run: |
+          mkdir -p "$RUNNER_TEMP/shop"
+          cp -r demo/victim-shop/. "$RUNNER_TEMP/shop/"
+          printf 'SHOP_API_KEY=shop_%s\n' "$(od -An -tx8 -N8 /dev/urandom | tr -d ' ')" > "$RUNNER_TEMP/shop/.env"
+
+      # The plan §2 injection scenario: nobody answers the policy's asks,
+      # so .env and curl are denied; D001, D002 and D006 remain.
+      - name: Run the scripted agent under the action
+        id: wyrdline
+        uses: ./integrations/github-action
+        with:
+          command: wyrd-fakeagent run ${{ github.workspace }}/demo/scenarios/injection.wyrdscript.toml
+          policy: policies/default.wasm
+          workspace: ${{ runner.temp }}/shop
+          ask-timeout: "1"
+          wyrd-path: target/release
+          comment-key: e2e
+          artifact-name: wyrdline-e2e
+      # Same comment key again, now gated on D006: the comment is updated,
+      # not duplicated, and the step fails.
+      - name: Run it again with fail-on
+        id: gated
+        continue-on-error: true
+        uses: ./integrations/github-action
+        with:
+          command: wyrd-fakeagent run ${{ github.workspace }}/demo/scenarios/injection.wyrdscript.toml
+          policy: policies/default.wasm
+          workspace: ${{ runner.temp }}/shop
+          ask-timeout: "1"
+          wyrd-path: target/release
+          comment-key: e2e
+          artifact-name: wyrdline-e2e-gated
+          fail-on: D006
+
+      - name: Outputs, kernel capture, and the bundle
+        env:
+          SID: ${{ steps.wyrdline.outputs.session-id }}
+          BUNDLE: ${{ steps.wyrdline.outputs.bundle-path }}
+          COUNT: ${{ steps.wyrdline.outputs.divergence-count }}
+          CODE: ${{ steps.wyrdline.outputs.agent-exit-code }}
+          SENSOR: ${{ steps.wyrdline.outputs.sensor }}
+          ARTIFACT: ${{ steps.wyrdline.outputs.artifact-url }}
+          GATED: ${{ steps.gated.outcome }}
+          GATED_SID: ${{ steps.gated.outputs.session-id }}
+        run: |
+          data="$(dirname "$(dirname "$BUNDLE")")/data"
+          echo "::group::diagnostics"
+          WYRD_DATA_DIR=$data wyrd divergences "$SID" || true
+          WYRD_DATA_DIR=$data wyrd events "$SID" --json | jq -r '.body.kind' | sort | uniq -c || true
+          WYRD_DATA_DIR=$data wyrd events "$SID" --plane effect --json | head -n 20 || true
+          sudo journalctl -u wyrd-sensord.service -n 40 --no-pager || true
+          echo "::endgroup::"
+          set -x
+          test -n "$SID" && test "$CODE" = 0 && test "$SENSOR" = running
+          test "$COUNT" = 3
+          test -s "$BUNDLE" && test -n "$ARTIFACT"
+          test "$GATED" = failure && test -n "$GATED_SID" && test "$GATED_SID" != "$SID"
+          WYRD_DATA_DIR=$data wyrd divergences "$SID" --json | jq -e '[.[].rule_id] | sort == ["D001","D002","D006"]'
+          effects=$(WYRD_DATA_DIR=$data wyrd events "$SID" --plane effect --json | wc -l)
+          echo "kernel effect events: $effects"
+          test "$effects" -gt 0
+          WYRD_DATA_DIR=$data wyrd show "$SID" --json | jq -e '.verification.sealed and .verification.problem == null'
+      - name: Exactly one PR comment, carrying the summary
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq '[.[] | select(.body | startswith("<!-- wyrdline-action:e2e -->"))]' | jq -s add > comments.json
+          jq -e 'length == 1' comments.json
+          jq -r '.[0].body' comments.json | tee body.md
+          grep -q 'Wyrdline: 3 divergences' body.md
+          grep -q 'D006 test-tampering' body.md
+          grep -q 'fail-on matched' body.md
+
+  e2e-artifact:
+    name: Action · bundle artifact
+    needs: e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wyrdline-e2e
+          path: bundle
+      - name: The bundle is a zstd tar holding the manifest and the ledger
+        run: |
+          ls -l bundle
+          f=$(ls bundle/*.wyrd)
+          zstd -dc "$f" | tar -t | tee contents.txt
+          grep -qx manifest.json contents.txt
+          grep -q ledger contents.txt

@@ -2,7 +2,36 @@
 
 A bundle (`.wyrd`) is one session, redacted and signed, in a single file
 that can be shared and opened without the machine that recorded it.
-Written by `wyrd export`; the implementation is `crates/wyrd-bundle`.
+Written by `wyrd export`; the implementation is `crates/wyrd-bundle`
+(`FORMAT` = `wyrdline.bundle`, `FORMAT_VERSION` = 1).
+
+## Writing one
+
+```sh
+wyrd export <session> -o session.wyrd                  # strict redaction, content included
+wyrd export <session> -o session.wyrd --redact standard
+wyrd export <session> -o meta.wyrd --no-content        # no cas/: metadata only
+wyrd export <session> -o session.wyrd --json           # the summary as JSON
+```
+
+| Flag | Meaning |
+|---|---|
+| `-o, --output FILE` | the bundle to write (atomically: a temporary file renamed into place) |
+| `--redact standard\|strict` | redaction applied to every string of every event; `strict` is the default ([redaction](#redaction)) |
+| `--no-content` | leave out checkpoint content (`cas/`) |
+| `--json` | print the summary as JSON |
+
+`export` refuses a session that is still recording (exit 4: let the
+agent exit or `wyrd stop` it first) and a ledger that does not verify
+(exit 3: run `wyrd verify`). It signs with the host key, creating one if
+none exists yet. The summary names the output, the number of events,
+chunks, and withheld files, the ledger and bundle sizes, the manifest
+hash, and the signer fingerprint to pass on to the receiver.
+
+A session need not be closed to be exported. The bundle's integrity
+comes from the manifest signature over the redacted chain, not from the
+ledger seal, which is not included: `ledger.head_hash` is the head of
+the events as exported.
 
 ## Container
 
@@ -30,11 +59,11 @@ Entries appear in this order:
 ```
 manifest.json          # format, session meta, redaction, ledger head, file list
 signature.ed25519      # public key ‖ signature over manifest.json
+annotations.automerge  # optional: the session's annotation document
 cas/<hex blake3>       # checkpoint content, sorted by name (absent with --no-content)
 claims.json
 divergences.json
 ledger.cbor-seq
-annotations.automerge  # reserved for Phase 12 (collaboration); not written yet
 ```
 
 No other path is valid. A path is relative, has no empty, `.` or `..`
@@ -107,6 +136,17 @@ payload, and every divergence with its latest triage state (the same view
 as `GET /v1/sessions/{sid}/divergences`). They are conveniences: a reader
 can rebuild both from the ledger.
 
+### `annotations.automerge`
+
+The session's collaborative annotation document (comments anchored to
+`seq` ranges, team triage, pinned checkpoints), as saved Automerge bytes
+([collaborative annotations](architecture/annotations.md)). `wyrd export`
+includes it when given `--annotations <file>` with the document saved from
+Studio, and the redaction is `standard`; a `strict` bundle never contains
+it, because teammates' free text cannot be redacted reliably. Readers that
+predate it accept it already: the path was reserved from the first format
+version.
+
 ### `cas/`
 
 Chunks of the CAS ([CAS format](cas-format.md)), each named by the hex
@@ -132,9 +172,49 @@ File content in `cas/` is not rewritten (that would break the hashes);
 strict redaction withholds secret-classified files instead, and
 `--no-content` leaves out all content.
 
+## Reading and verification
+
+A bundle is untrusted input. `wyrd-bundle`'s reader (also used by
+`wyrd verify x.wyrd`, `wyrd import`, and the Studio through WebAssembly)
+streams the zstd frame and the archive and checks, in this order, before
+it exposes anything:
+
+1. **Archive** — every header is a checksummed ustar header of a regular
+   file with a valid v1 path. Rejected, each with its own error: `..`
+   components, absolute paths, symbolic and hard links, devices and fifos,
+   directories and extended headers, a duplicate entry, data after the end
+   of the archive. Limits: entries, bytes per entry and for the manifest,
+   total decompressed bytes, compression ratio (size bombs), and the zstd
+   window. Buffers grow with the data actually decompressed.
+2. **Signature** — the first two entries must be `manifest.json` and
+   `signature.ed25519`; the signature is verified before the manifest is
+   parsed.
+3. **Manifest** — known `format` and `format_version`, no unknown field,
+   signer equal to the signature's key, file list sorted, within the
+   limits, with the required files, consistent with `content`.
+4. **Files** — each further entry is the next file of the manifest, with
+   its size and BLAKE3; a chunk must also hash to its name. A ledger that
+   does not match its hash is walked to name the modified `seq`.
+5. **Chain** — every record decodes, its event is canonical and has the
+   next `seq`, its hash is the recomputed chain hash, and the final count
+   and head equal `ledger`.
+
+`wyrd verify` prints each step as passed, failed, or skipped and exits 3
+on any failure. The signature proves integrity since signing by the key
+shown; trusting that key is the receiver's decision.
+
+`wyrd import` adds a verified bundle as a read-only session: the ledger is
+rebuilt from the events (same chain head), chunks go into the local CAS,
+and `import.json` records where it came from.
+
+The reader, the ledger CBOR decoders, and the manifest decoder are fuzzed
+(`make fuzz`, targets in `fuzz/`, seeds in `fuzz/seeds/` regenerated by
+`make fuzz-seeds`): 60 s per target on every pull request, 10 minutes per
+target nightly.
+
 ## Versioning
 
-`format_version` is 1. Readers refuse any other version and any unknown
-manifest field. A change to the container, the layout, the manifest, the
+`format_version` is 1 (`wyrd_bundle::format::FORMAT_VERSION`). Readers
+refuse any other version and any unknown manifest field. A change to the container, the layout, the manifest, the
 signed message, or the record encoding increments the version; the
 `BREAKING CHANGE` footer of the commit says so.

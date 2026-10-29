@@ -6,17 +6,30 @@
 //! itself stored as a chunk, so a checkpoint is just a manifest hash.
 //! See `docs/cas-format.md`.
 
+//!
+//! Without the default `store` feature only the formats are built
+//! ([`ChunkHash`], [`Manifest`]): that is what the Studio's WebAssembly
+//! bundle reader uses.
+#![forbid(unsafe_code)]
+
 mod manifest;
+#[cfg(feature = "store")]
 mod snapshot;
 
 pub use manifest::{Entry, EntryKind, MAX_MANIFEST_ENTRIES, Manifest};
+#[cfg(feature = "store")]
 pub use snapshot::{MaterializeReport, SnapshotStats};
 
+#[cfg(feature = "store")]
 use std::collections::HashSet;
 use std::fmt;
+#[cfg(feature = "store")]
 use std::fs;
+#[cfg(feature = "store")]
 use std::io::{Read, Write as _};
-use std::path::{Path, PathBuf};
+#[cfg(feature = "store")]
+use std::path::Path;
+use std::path::PathBuf;
 
 /// Chunking parameters.
 pub const MIN_CHUNK: usize = 16 * 1024;
@@ -26,6 +39,7 @@ pub const MAX_CHUNK: usize = 256 * 1024;
 /// Format identifier written to `<root>/FORMAT`.
 pub const FORMAT_ID: &str = "wyrdline.cas.v1";
 
+#[cfg(feature = "store")]
 const ZSTD_LEVEL: i32 = 3;
 
 /// BLAKE3 digest of uncompressed chunk bytes.
@@ -91,6 +105,7 @@ pub enum CasError {
 
 pub type Result<T> = std::result::Result<T, CasError>;
 
+#[cfg(feature = "store")]
 pub(crate) fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CasError + '_ {
     move |source| CasError::Io {
         path: path.to_path_buf(),
@@ -99,6 +114,7 @@ pub(crate) fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CasError + '
 }
 
 /// Result of [`Cas::gc`].
+#[cfg(feature = "store")]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GcReport {
     pub kept: usize,
@@ -107,11 +123,13 @@ pub struct GcReport {
 }
 
 /// A chunk store rooted at a directory.
+#[cfg(feature = "store")]
 #[derive(Debug, Clone)]
 pub struct Cas {
     root: PathBuf,
 }
 
+#[cfg(feature = "store")]
 impl Cas {
     /// Open or create a store at `root`.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
@@ -241,6 +259,7 @@ impl Cas {
     }
 }
 
+#[cfg(feature = "store")]
 fn read_dir(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for e in fs::read_dir(dir).map_err(io_err(dir))? {

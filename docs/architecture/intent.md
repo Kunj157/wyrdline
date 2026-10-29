@@ -19,8 +19,10 @@ agent (inside the Cell)
  └─ hook → `wyrd hook claude-code` → socket → ledger
 ```
 
-The socket accepts **ingest only**: hook payloads and pings. It cannot
-start, stop, rewind, or apply anything. The server checks the peer's UID
+The socket accepts ingest (hook payloads and pings), the
+[`wyrd mcp`](mcp-server.md) session views (read-only queries and rewind
+*requests*), and asks answered with the session's control token. It
+cannot start, stop, rewind, or apply anything. The server checks the peer's UID
 (`SO_PEERCRED`) on top of the 0600 mode. Neither the socket nor the
 ledger is inside the Cell's Landlock write set, so the agent cannot tamper
 with either; it can only *report*, and its reports are untrusted. Kernel
@@ -124,6 +126,14 @@ description and input schema (BLAKE3). If a later listing differs, a
 `guard.decision` with policy `wyrdline.mcp-pinning` and decision `ask` is
 recorded — a server that swaps a benign description for a malicious one
 after approval ("rug pull") is flagged (divergence rule D009 builds on it).
+The pins are kept in the session's `mcp-pins.json` (0600, saved
+atomically), so a relaunch or fork of the session compares against the
+first listing, not the restarted gateway's. A new `wyrd run` is a new
+session with its own pins. A corrupt, unknown-version, or group- or
+world-readable pins file stops the run before the agent starts, and in
+Cell mode a listing whose pins cannot be saved is withheld from the agent.
+Observe mode runs the agent without Landlock, so the agent can alter that
+file there.
 
 **Routing the agent's servers.** For Claude Code, `wyrd run` merges the
 MCP servers the agent would start (user config < project `.mcp.json` <

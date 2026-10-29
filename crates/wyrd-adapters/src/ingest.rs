@@ -2,6 +2,7 @@
 //! decisions. Pure apart from the [`Sink`], so it is tested without a
 //! socket, a ledger, or a Cell.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -13,8 +14,8 @@ use wyrd_schema::{
 };
 
 use crate::asks::{Answer, Asks};
-use crate::mcp::{McpState, PINNING_POLICY};
-use crate::{Adapter, Direction, Request, Response};
+use crate::mcp::{McpState, PINNING_POLICY, PinError};
+use crate::{Adapter, Direction, Request, Response, SessionQuery};
 
 /// Redaction level applied to everything before it reaches the ledger.
 pub const INGEST_LEVEL: Level = Level::Standard;
@@ -52,6 +53,12 @@ pub trait Sink: Send + Sync {
     fn before_tool_call(&self) {}
     /// A tool call finished: schedule a checkpoint attributed to it.
     fn after_tool_call(&self, _call_id: &str) {}
+}
+
+/// Answers [`SessionQuery`]s for the session the intent socket belongs
+/// to. Errors are reported to the caller as messages.
+pub trait SessionViews: Send + Sync + std::fmt::Debug {
+    fn answer(&self, query: &SessionQuery) -> Result<Value, String>;
 }
 
 /// Pre-execution policy until Wasm policies arrive (Phase 9): deny tools by
@@ -104,6 +111,7 @@ pub struct Ingest<S> {
     policy: StaticPolicy,
     tool_policy: Option<Arc<dyn ToolPolicy>>,
     asks: Option<Arc<Asks>>,
+    views: Option<Arc<dyn SessionViews>>,
     denials: AtomicU32,
     turn: Mutex<u32>,
     mcp: Mutex<McpState>,
@@ -136,10 +144,19 @@ impl<S: Sink> Ingest<S> {
             policy,
             tool_policy: None,
             asks: None,
+            views: None,
             denials: AtomicU32::new(0),
             turn: Mutex::new(turn),
             mcp: Mutex::new(McpState::default()),
         }
+    }
+
+    /// Keep MCP tool pins in `path` (a session's [`crate::mcp::PINS_FILE`]),
+    /// so a restarted session compares tools against their first listing.
+    /// A corrupt or unsafe pin file is an error.
+    pub fn with_mcp_pins(mut self, path: PathBuf) -> Result<Self, PinError> {
+        self.mcp = Mutex::new(McpState::with_store(path)?);
+        Ok(self)
     }
 
     /// Decide tool calls with `policy` after the static deny list.
@@ -154,6 +171,14 @@ impl<S: Sink> Ingest<S> {
     #[must_use]
     pub fn with_asks(mut self, asks: Arc<Asks>) -> Self {
         self.asks = Some(asks);
+        self
+    }
+
+    /// Answer session views and rewind requests (`wyrd mcp`); without
+    /// this, they are refused.
+    #[must_use]
+    pub fn with_views(mut self, views: Arc<dyn SessionViews>) -> Self {
+        self.views = Some(views);
         self
     }
 
@@ -260,6 +285,15 @@ impl<S: Sink> Ingest<S> {
                     message: "not authorised".into(),
                 },
             },
+            Request::Session { query } => match &self.views {
+                Some(v) => match v.answer(&query) {
+                    Ok(result) => Response::View { result },
+                    Err(message) => Response::Error { message },
+                },
+                None => Response::Error {
+                    message: "this session does not serve session views".into(),
+                },
+            },
             Request::Hook { adapter, payload } => match Adapter::from_name(&adapter) {
                 Some(a) => self.hook(a, &payload),
                 None => Response::Error {
@@ -296,6 +330,16 @@ impl<S: Sink> Ingest<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .observe(server, direction, message, std::time::Instant::now());
+        // Unsaved or unreadable pins: refuse the message rather than compare
+        // against memory that a restart would forget.
+        let observed = match observed {
+            Ok(o) => o,
+            Err(e) => {
+                return Response::Error {
+                    message: e.to_string(),
+                };
+            }
+        };
         let mut bodies = observed.events;
         for tool in &observed.rug_pulls {
             bodies.push(EventBody::GuardDecision(GuardDecision {

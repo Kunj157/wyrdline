@@ -146,6 +146,45 @@ impl Drain {
     }
 }
 
+/// Loss counters seen on the capture connection, and loss not yet attributed
+/// to an event (it goes out as the next event's `drops_since_last`).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DropCount {
+    /// Last ring-buffer total the daemon reported (daemon-wide).
+    ring: Option<u64>,
+    /// Last count of events this connection's queue refused.
+    queue: u64,
+    pending: u64,
+}
+
+/// Which loss counters grew in one `drops` report.
+#[derive(Debug, PartialEq, Eq)]
+struct Grew {
+    ring: bool,
+    queue: bool,
+}
+
+impl DropCount {
+    /// Fold one `drops` report in.
+    fn observe(&mut self, total: u64, queue_dropped: u64) -> Grew {
+        let ring_prev = *self.ring.get_or_insert(total);
+        self.pending += total.saturating_sub(ring_prev);
+        self.ring = Some(total);
+        self.pending += queue_dropped.saturating_sub(self.queue);
+        let queue = queue_dropped > self.queue;
+        self.queue = queue_dropped;
+        Grew {
+            ring: total > ring_prev,
+            queue,
+        }
+    }
+
+    /// The daemon counts each connection's queue from zero.
+    fn new_connection(&mut self) {
+        self.queue = 0;
+    }
+}
+
 /// Handle to the capture thread.
 #[derive(Debug)]
 pub struct EffectCapture {
@@ -250,6 +289,26 @@ impl Ctx {
         match Ledger::open(&self.ledger).and_then(|mut l| l.append(events)) {
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "could not append kernel effects"),
+        }
+    }
+
+    /// Record that some effects were lost, without marking the session
+    /// degraded (the loss is counted in `drops_since_last`).
+    fn warn_lost(&self, msg: &str) {
+        if let Ok(mut w) = self.warning.lock() {
+            w.get_or_insert_with(|| msg.into());
+        }
+    }
+
+    /// Fold a `drops` report in, warning when loss grew. The queue loss means
+    /// this client fell behind the sensor.
+    fn on_drops(&self, seen: &mut DropCount, total: u64, queue_dropped: u64) {
+        let grew = seen.observe(total, queue_dropped);
+        if grew.ring {
+            self.warn_lost("the sensor's ring buffer overflowed; some effects were lost");
+        }
+        if grew.queue {
+            self.warn_lost("wyrd could not keep up with the sensor; some effects were lost");
         }
     }
 
@@ -429,8 +488,7 @@ impl Ctx {
         if self.cgroup.is_none() {
             return;
         }
-        let mut drops_total: Option<u64> = None;
-        let mut pending_drops = 0u64;
+        let mut seen = DropCount::default();
         let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
         let mut last_flush = Instant::now();
         let mut last_attempt = Instant::now();
@@ -454,6 +512,7 @@ impl Ctx {
                 if last_attempt.elapsed() >= RECONNECT_EVERY {
                     last_attempt = Instant::now();
                     client = self.reconnect();
+                    seen.new_connection();
                 }
                 continue;
             };
@@ -469,7 +528,7 @@ impl Ctx {
                         ..d
                     });
                     let drops =
-                        u32::try_from(std::mem::take(&mut pending_drops)).unwrap_or(u32::MAX);
+                        u32::try_from(std::mem::take(&mut seen.pending)).unwrap_or(u32::MAX);
                     let guard = self.guard_for(&body);
                     let stop = self.guard.as_ref().and_then(|g| g.check(&body));
                     batch.push(event(ts_mono_ns, Some(process), drops, body));
@@ -480,18 +539,10 @@ impl Ctx {
                         self.effect_denied(&mut batch, &reason);
                     }
                 }
-                Ok(Some(ServerMsg::Drops { total })) => {
-                    let prev = *drops_total.get_or_insert(total);
-                    if total > prev {
-                        pending_drops += total - prev;
-                        if let Ok(mut w) = self.warning.lock() {
-                            w.get_or_insert_with(|| {
-                                "the sensor's ring buffer overflowed; some effects were lost".into()
-                            });
-                        }
-                    }
-                    drops_total = Some(total);
-                }
+                Ok(Some(ServerMsg::Drops {
+                    total,
+                    queue_dropped,
+                })) => self.on_drops(&mut seen, total, queue_dropped),
                 Ok(Some(msg)) if drain.as_ref().is_some_and(|d| d.confirmed_by(&msg)) => break,
                 Ok(Some(_)) => {}
                 Ok(None) => {
@@ -526,6 +577,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn drop_counts_add_up_loss_across_reports_and_reconnects() {
+        let mut seen = DropCount::default();
+        // The first report is the baseline: loss before it was not seen here.
+        assert_eq!(
+            seen.observe(4, 0),
+            Grew {
+                ring: false,
+                queue: false,
+            }
+        );
+        assert_eq!(seen.pending, 0);
+        // Ring-buffer loss grows daemon-wide; queue loss grows this connection.
+        assert_eq!(
+            seen.observe(6, 5),
+            Grew {
+                ring: true,
+                queue: true,
+            }
+        );
+        assert_eq!(seen.pending, 2 + 5);
+        // Unchanged counts add nothing.
+        assert_eq!(
+            seen.observe(6, 5),
+            Grew {
+                ring: false,
+                queue: false,
+            }
+        );
+        assert_eq!(seen.pending, 7);
+        // A reconnect starts the daemon's queue count again from zero, so
+        // its first losses must count, even below the old total.
+        seen.new_connection();
+        seen.observe(6, 0);
+        seen.observe(6, 3);
+        assert_eq!(seen.pending, 10);
+    }
+
+    #[test]
     fn drain_ends_on_its_own_flush_answer_or_the_bound() {
         let since = Instant::now();
         let d = Drain {
@@ -535,7 +624,10 @@ mod tests {
         };
         assert!(d.confirmed_by(&ServerMsg::Flushed { token: 7 }));
         assert!(!d.confirmed_by(&ServerMsg::Flushed { token: 8 }));
-        assert!(!d.confirmed_by(&ServerMsg::Drops { total: 0 }));
+        assert!(!d.confirmed_by(&ServerMsg::Drops {
+            total: 0,
+            queue_dropped: 0,
+        }));
         assert!(!d.expired(since + DRAIN_BOUND.saturating_sub(Duration::from_millis(1))));
         assert!(d.expired(since + DRAIN_BOUND));
     }

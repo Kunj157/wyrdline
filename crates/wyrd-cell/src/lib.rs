@@ -5,6 +5,7 @@
 //! upper layer per branch), and a Landlock ruleset that confines writes.
 //! Checkpoints are CAS manifests of the upper layer; rewind and fork
 //! materialise a checkpoint into a fresh branch. See ADR-005.
+#![forbid(unsafe_code)]
 
 pub mod apply;
 pub mod baseline;
@@ -14,11 +15,12 @@ pub mod diff;
 pub mod exec;
 pub mod launch;
 pub mod paths;
+pub mod requests;
 pub mod session;
 pub mod state;
 
 pub use paths::{DataDir, SessionDir};
-pub use session::{RunOptions, Session};
+pub use session::{ImportSource, ImportSpec, RunOptions, Session};
 
 use std::path::PathBuf;
 

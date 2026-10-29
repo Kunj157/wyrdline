@@ -9,7 +9,7 @@ PNPM ?= pnpm
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
-	test-e2e test-e2e-webgpu e2e-build site test-site
+	test-e2e test-e2e-webgpu test-e2e-hub e2e-build site test-site test-hub fuzz fuzz-seeds
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -77,6 +77,9 @@ test-e2e: e2e-build ## Studio end to end: Playwright (headless Chromium) against
 test-e2e-webgpu: e2e-build ## The WebGPU river, headed Chromium with SwiftShader on a virtual display
 	WYRD_E2E_WEBGPU=1 xvfb-run -a $(PNPM) exec playwright test -c tests/e2e --project=webgpu
 
+test-e2e-hub: e2e-build ## Studio against a real Hub and wyrdd (needs Postgres, MinIO and the WYRD_E2E_HUB_* variables, see tests/e2e/hub)
+	$(PNPM) exec playwright test -c tests/e2e/playwright.hub.config.ts
+
 site: ## Landing page with Studio and the demo session, as published (apps/site/dist)
 	scripts/build-site.sh
 
@@ -90,6 +93,9 @@ test-integration: ## Privileged Cell, scenario, and sensor tests (through passwo
 
 test-escape: ## The escape suite: an agent in a Cell tries to get around every enforcement layer (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test escape
+
+test-hub: ## Hub tests, including Postgres 17 and MinIO in containers (needs Docker)
+	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests
 
 demo: ## The plan §2 demo with the scripted agent: victim shop, Cell, sensor, default policy (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test demo --no-capture
@@ -134,6 +140,22 @@ wasm-parity: ## Native vs WebAssembly correlator output must be identical
 	$(CARGO) build --quiet --locked --release -p wyrd-wasm --target wasm32-unknown-unknown
 	wasm-bindgen --target nodejs --out-dir target/wasm-parity/pkg target/wasm32-unknown-unknown/release/wyrd_wasm.wasm
 	node scripts/wasm-parity.mjs target/wasm-parity target/wasm-parity/pkg
+
+FUZZ_TARGETS := bundle_reader event_cbor manifest
+FUZZ_SECONDS ?= 60
+# The host triple: a prebuilt cargo-fuzz (CI) otherwise defaults to the musl
+# target it was built for, which the sanitizers do not support.
+FUZZ_TRIPLE ?= $(shell rustc -vV | sed -n 's/^host: //p')
+fuzz: ## Fuzz every untrusted-input parser for FUZZ_SECONDS each (nightly + cargo-fuzz)
+	@for t in $(FUZZ_TARGETS); do \
+		mkdir -p fuzz/corpus/$$t && \
+		echo "fuzz $$t for $(FUZZ_SECONDS) s" && \
+		$(CARGO) +nightly fuzz run -O --target $(FUZZ_TRIPLE) $$t fuzz/corpus/$$t fuzz/seeds/$$t -- \
+			-max_total_time=$(FUZZ_SECONDS) -rss_limit_mb=2048 -max_len=65536 -print_final_stats=1 || exit 1; \
+	done
+
+fuzz-seeds: ## Regenerate the committed fuzz seed corpora from real exports
+	$(CARGO) run --quiet --locked -p wyrd-bundle --example fuzz_seeds -- fuzz/seeds
 
 secrets: ## Secret scan of the working tree and history
 	gitleaks detect --no-banner --redact

@@ -4,10 +4,12 @@ import { ShieldCheck, ShieldX, ZoomIn, ZoomOut } from "lucide-react";
 import type { BacktestReport } from "@wyrdline/schemas/generated-api";
 import { useMemo, useState } from "react";
 
+import { AnnotationsPanel } from "../components/AnnotationsPanel";
 import { AskDialog } from "../components/AskDialog";
 import { BacktestPanel } from "../components/BacktestPanel";
 import { CheckpointPanel } from "../components/CheckpointPanel";
 import { DivergencePanel } from "../components/DivergencePanel";
+import { RewindRequests } from "../components/RewindRequests";
 import { EventTable } from "../components/EventTable";
 import { Inspector } from "../components/Inspector";
 import { River2D } from "../components/River2D";
@@ -15,6 +17,7 @@ import { type Renderer, RiverCanvas } from "../river/RiverCanvas";
 import { RIVER_HEIGHT } from "../river/theme";
 import { Transcript } from "../components/Transcript";
 import {
+  offlineBundle,
   offlineSource,
   useCheckpoints,
   useDivergences,
@@ -23,6 +26,7 @@ import {
   useSession,
   useVerify,
 } from "../lib/api";
+import { bundleFromLocation } from "../lib/annotations/use-annotations";
 import { evidenceSeqs } from "../lib/divergences";
 import { useLiveEvents } from "../lib/live";
 import { layoutRiver } from "../lib/model";
@@ -87,7 +91,7 @@ export function SessionPage() {
             {s.workspace}
           </span>
         )}
-        {offlineSource() !== null && (
+        {offlineSource() !== null && offlineBundle() === null && (
           <span className="text-sm text-text-muted">replay · chain not verifiable offline</span>
         )}
         {verify.data &&
@@ -210,21 +214,36 @@ export function SessionPage() {
                 panel: <DivergencePanel sid={sid} onSelect={setSelected} />,
               },
               {
+                id: "annotations",
+                label: "Annotations",
+                panel: (
+                  <AnnotationsPanel
+                    sid={sid}
+                    selected={selected}
+                    onSelect={setSelected}
+                    divergences={divergences.data?.divergences ?? []}
+                    checkpoints={checkpoints.data?.checkpoints ?? []}
+                    bundle={bundleFromLocation()}
+                  />
+                ),
+              },
+              {
                 id: "transcript",
                 label: "Transcript",
                 panel: <Transcript events={list} onSelect={setSelected} />,
               },
-              ...(offlineSource() === null
-                ? [
-                    {
-                      id: "backtest",
-                      label: "Backtest",
-                      panel: (
-                        <BacktestPanel sid={sid} onReport={setBacktest} onSelect={setSelected} />
-                      ),
-                    },
-                  ]
-                : []),
+              {
+                id: "backtest",
+                label: "Backtest",
+                panel: (
+                  <BacktestPanel
+                    sid={sid}
+                    events={list.length}
+                    onReport={setBacktest}
+                    onSelect={setSelected}
+                  />
+                ),
+              },
             ]}
           />
         </Card>
@@ -232,6 +251,7 @@ export function SessionPage() {
 
       <Card>
         <h2 className="mb-2 text-sm font-semibold">Checkpoints &amp; branches</h2>
+        {offlineSource() === null && <RewindRequests sid={sid} live={Boolean(recording)} />}
         <CheckpointPanel sid={sid} checkpoints={checkpoints.data} events={list} />
       </Card>
       {offlineSource() === null && <AskDialog sid={sid} live={Boolean(recording)} />}

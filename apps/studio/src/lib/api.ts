@@ -3,8 +3,10 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import type { Event } from "@wyrdline/schemas";
 import type * as api from "@wyrdline/schemas/generated-api";
 import { type Client, createClient } from "@wyrdline/schemas/client";
+import { useSyncExternalStore } from "react";
 
 import { takeTokenFromUrl } from "./auth";
+import type { BundleInfo } from "./bundle";
 
 let client: Client | null = null;
 let token: string | null = null;
@@ -29,11 +31,37 @@ export function setApiClient(c: Client): void {
 }
 
 let offlineName: string | null = null;
+let bundleInfo: BundleInfo | null = null;
 
-/** Switch Studio to a read-only replay of an exported session. */
-export function setOffline(name: string, c: Client): void {
+/**
+ * Switch Studio to a read-only replay of an exported session, or of a
+ * verified bundle (`bundle`).
+ */
+export function setOffline(name: string, c: Client, bundle: BundleInfo | null = null): void {
   offlineName = name;
+  bundleInfo = bundle;
   client = c;
+  offlineState = { name, bundle };
+  for (const l of listeners) l();
+}
+
+let offlineState: { name: string; bundle: BundleInfo | null } | null = null;
+const listeners = new Set<() => void>();
+
+/** The offline file and bundle, re-rendering when Studio switches to one. */
+export function useOffline(): { name: string; bundle: BundleInfo | null } | null {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => offlineState,
+  );
+}
+
+/** The open bundle in bundle mode (verified), else `null`. */
+export function offlineBundle(): BundleInfo | null {
+  return bundleInfo;
 }
 
 /** The replayed file's name in offline mode, else `null`. */
@@ -49,6 +77,7 @@ export const keys = {
   verify: (sid: string) => ["verify", sid] as const,
   checkpoints: (sid: string) => ["checkpoints", sid] as const,
   asks: (sid: string) => ["asks", sid] as const,
+  rewindRequests: (sid: string) => ["rewind-requests", sid] as const,
   divergences: (sid: string) => ["divergences", sid] as const,
   policies: ["policies"] as const,
   diff: (sid: string, a: string, b: string) => ["diff", sid, a, b] as const,
@@ -201,6 +230,31 @@ export function useTriage(sid: string) {
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: keys.divergences(sid) }),
+        qc.invalidateQueries({ queryKey: keys.events(sid) }),
+      ]),
+  });
+}
+
+/** Rewind requests the agent made through `wyrd mcp` (polled while live). */
+export function useRewindRequests(sid: string, live: boolean) {
+  return useQuery({
+    queryKey: keys.rewindRequests(sid),
+    queryFn: () => apiClient().rewindRequests(sid),
+    refetchInterval: live ? 2000 : false,
+  });
+}
+
+/** Confirm (rewind) or reject one of the agent's rewind requests. */
+export function useDecideRewind(sid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; confirm: boolean }) =>
+      apiClient().decideRewind(sid, v.id, { confirm: v.confirm, note: null }),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.rewindRequests(sid) }),
+        qc.invalidateQueries({ queryKey: keys.session(sid) }),
+        qc.invalidateQueries({ queryKey: keys.checkpoints(sid) }),
         qc.invalidateQueries({ queryKey: keys.events(sid) }),
       ]),
   });

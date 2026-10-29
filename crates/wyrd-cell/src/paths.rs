@@ -88,6 +88,11 @@ impl SessionDir {
         self.root.join("baseline.cbor")
     }
 
+    /// Provenance of an imported session (absent for recorded ones).
+    pub fn import(&self) -> PathBuf {
+        self.root.join("import.json")
+    }
+
     pub fn spec(&self) -> PathBuf {
         self.root.join("launch.json")
     }

@@ -9,7 +9,8 @@ use wyrd_cas::{Cas, ChunkHash, Manifest};
 use wyrd_ledger::{HostKey, Ledger, Seal};
 use wyrd_schema::{
     CaptureMode, CheckpointApplied, CheckpointCreated, CheckpointForked, CheckpointRewound, Event,
-    EventBody, SessionClosed, SessionStarted, SessionState, SessionStateChanged,
+    EventBody, RewindConfirmed, RewindRejected, RewindRequested, SessionClosed, SessionStarted,
+    SessionState, SessionStateChanged,
 };
 
 use crate::apply::{self, ApplyReport};
@@ -17,6 +18,7 @@ use crate::baseline::Baseline;
 use crate::cgroup::Cgroup;
 use crate::diff::{self, Change};
 use crate::exec::{LaunchMode, LaunchSpec};
+use crate::requests::{self, RequestStatus, RewindRequest};
 use crate::state::{self, Branch, CheckpointRecord, SessionRecord};
 use crate::{CellError, DataDir, Result, SessionDir, confine, io_err, launch, mono_ns, now_ms};
 
@@ -466,6 +468,7 @@ impl Session {
         probe_userns: impl FnOnce() -> std::result::Result<(), String>,
         opts: RunOptions<'_>,
     ) -> Result<i32> {
+        self.writable()?;
         let RunOptions {
             env: extra_env,
             command,
@@ -538,6 +541,7 @@ impl Session {
 
     /// Checkpoint the current branch (freezing the Cell while reading).
     pub fn checkpoint(&mut self, after_call: Option<String>) -> Result<CheckpointRecord> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         self.checkpoint_locked(after_call)
@@ -659,8 +663,14 @@ impl Session {
     /// Materialise `target` into a new branch and make it current.
     /// `fork_name` = `None` is a rewind (auto-named branch).
     pub fn rewind(&mut self, target: &str, fork_name: Option<&str>) -> Result<Branch> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
+        self.rewind_locked(target, fork_name)
+    }
+
+    /// [`Session::rewind`] with the session lock already held.
+    fn rewind_locked(&mut self, target: &str, fork_name: Option<&str>) -> Result<Branch> {
         let cp = self.resolve(target)?;
         if self.stop()? {
             self.set_status(SessionState::Rewinding, Some("stopped the agent to rewind"))?;
@@ -715,6 +725,146 @@ impl Session {
         }])?;
         self.set_status(SessionState::Paused, Some("rewound"))?;
         Ok(branch)
+    }
+
+    /// Every event of the ledger, in order.
+    fn events(&self) -> Result<Vec<Event>> {
+        let l = Ledger::open_read_only(self.dir.ledger())?;
+        let mut all: Vec<Event> = Vec::new();
+        loop {
+            let batch = l.events_after(all.last().map_or(0, |e| e.seq), 5_000)?;
+            if batch.is_empty() {
+                return Ok(all);
+            }
+            all.extend(batch);
+        }
+    }
+
+    /// The session's rewind requests with their decisions, oldest first.
+    pub fn rewind_requests(&self) -> Result<Vec<RewindRequest>> {
+        Ok(requests::project(&self.events()?))
+    }
+
+    fn pending_request(&self, id: u64) -> Result<RewindRequest> {
+        let r = self
+            .rewind_requests()?
+            .into_iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| CellError::NotFound(format!("rewind request {id}")))?;
+        if r.status != RequestStatus::Pending {
+            return Err(CellError::Busy(format!(
+                "rewind request {id} is already {}",
+                match r.status {
+                    RequestStatus::Confirmed => "confirmed",
+                    _ => "rejected",
+                }
+            )));
+        }
+        Ok(r)
+    }
+
+    /// Append under the lock; a sealed ledger is a state error.
+    fn append_decision(&self, body: EventBody) -> Result<u64> {
+        match self.append(vec![body]) {
+            Err(CellError::Ledger(wyrd_ledger::LedgerError::Sealed)) => Err(CellError::Busy(
+                "the session is closed and its ledger sealed".into(),
+            )),
+            r => r,
+        }
+    }
+
+    /// Record that the agent asks to be rewound to checkpoint
+    /// `checkpoint_id` (an id such as `c2`; branch names are not
+    /// accepted). Nothing else changes: the agent keeps running until a
+    /// human confirms. The caller redacts `reason`.
+    pub fn request_rewind(
+        &mut self,
+        checkpoint_id: &str,
+        reason: &str,
+        source: &str,
+    ) -> Result<RewindRequest> {
+        self.writable()?;
+        let reason = reason.trim();
+        if reason.is_empty() || reason.chars().count() > requests::MAX_REASON {
+            return Err(CellError::Invalid(format!(
+                "a reason of 1 to {} characters is required",
+                requests::MAX_REASON
+            )));
+        }
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        if self.rec.checkpoint(checkpoint_id).is_none() {
+            return Err(CellError::NotFound(format!("checkpoint {checkpoint_id}")));
+        }
+        let pending = self
+            .rewind_requests()?
+            .iter()
+            .filter(|r| r.status == RequestStatus::Pending)
+            .count();
+        if pending >= requests::MAX_PENDING {
+            return Err(CellError::Busy(format!(
+                "{pending} rewind requests are already waiting for a human"
+            )));
+        }
+        let id = self.append_decision(EventBody::RewindRequested(RewindRequested {
+            checkpoint_id: checkpoint_id.into(),
+            reason: reason.into(),
+            source: source.into(),
+        }))?;
+        self.pending_request(id)
+    }
+
+    /// A human confirms rewind request `id`: the decision is recorded, then
+    /// the session is rewound to the requested checkpoint (stopping the
+    /// agent if it runs). `by` names the surface (`cli`, `studio`).
+    pub fn confirm_rewind(&mut self, id: u64, by: &str) -> Result<Branch> {
+        self.writable()?;
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        let r = self.pending_request(id)?;
+        if self.rec.checkpoint(&r.checkpoint_id).is_none() {
+            return Err(CellError::NotFound(format!(
+                "checkpoint {}",
+                r.checkpoint_id
+            )));
+        }
+        self.append_decision(EventBody::RewindConfirmed(RewindConfirmed {
+            request_seq: id,
+            checkpoint_id: r.checkpoint_id.clone(),
+            by: by.into(),
+        }))?;
+        self.rewind_locked(&r.checkpoint_id, None)
+    }
+
+    /// A human rejects rewind request `id`; nothing else changes.
+    pub fn reject_rewind(
+        &mut self,
+        id: u64,
+        by: &str,
+        note: Option<String>,
+    ) -> Result<RewindRequest> {
+        self.writable()?;
+        if note
+            .as_ref()
+            .is_some_and(|n| n.chars().count() > requests::MAX_NOTE)
+        {
+            return Err(CellError::Invalid(format!(
+                "the note is longer than {} characters",
+                requests::MAX_NOTE
+            )));
+        }
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        self.pending_request(id)?;
+        self.append_decision(EventBody::RewindRejected(RewindRejected {
+            request_seq: id,
+            by: by.into(),
+            note,
+        }))?;
+        self.rewind_requests()?
+            .into_iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| CellError::NotFound(format!("rewind request {id}")))
     }
 
     /// Changes from checkpoint/branch `a` to `b`.
@@ -794,6 +944,7 @@ impl Session {
 
     /// Apply a checkpoint/branch to the real workspace.
     pub fn apply(&mut self, target: &str, dry_run: bool, force: bool) -> Result<ApplyReport> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         let cp = self.resolve(target)?;
@@ -827,6 +978,7 @@ impl Session {
                 "only verdict events can be recorded".into(),
             ));
         }
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         if self.is_running() {
@@ -842,6 +994,7 @@ impl Session {
 
     /// Stop the agent if needed, write the closing event, and seal the ledger.
     pub fn close(&mut self, reason: &str) -> Result<Seal> {
+        self.writable()?;
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         self.stop()?;
@@ -854,5 +1007,171 @@ impl Session {
         let key = HostKey::load_or_create(&self.data.host_key())?;
         let mut l = Ledger::open(self.dir.ledger())?;
         Ok(l.seal(&key, now_ms())?)
+    }
+}
+
+/// Where an imported session came from (`import.json` in its directory).
+/// An imported session is read-only: nothing can run, checkpoint, rewind,
+/// apply, or append to it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ImportSource {
+    /// Session id in the bundle (on the machine that recorded it).
+    pub original_id: String,
+    /// `b3:` + hex of the bundle's `manifest.json`.
+    pub manifest_hash: String,
+    pub signer_fingerprint: String,
+    /// `standard` or `strict`.
+    pub redaction: String,
+    /// False when the bundle had no checkpoint content (`--no-content`).
+    pub content: bool,
+    pub imported_ms: i64,
+}
+
+/// A verified bundle's session, as [`Session::import`] takes it.
+#[derive(Debug, Clone)]
+pub struct ImportSpec {
+    pub name: Option<String>,
+    pub agent: String,
+    pub mode: CaptureMode,
+    pub created_ms: i64,
+    /// Events in seq order, dense from 1.
+    pub events: Vec<Event>,
+    /// CAS chunks (each stored under the BLAKE3 of its bytes).
+    pub chunks: Vec<Vec<u8>>,
+    pub source: ImportSource,
+}
+
+fn add_branch(branches: &mut Vec<Branch>, id: &str, forked_from: Option<String>, ms: i64) {
+    if !branches.iter().any(|b| b.id == id) {
+        branches.push(Branch {
+            id: id.into(),
+            name: id.into(),
+            forked_from,
+            created_ms: ms,
+        });
+    }
+}
+
+/// Checkpoints and branches recorded in `events`.
+fn recorded_tree(events: &[Event]) -> (Vec<Branch>, Vec<CheckpointRecord>) {
+    let mut branches: Vec<Branch> = Vec::new();
+    let mut checkpoints = Vec::new();
+    for e in events {
+        match &e.body {
+            EventBody::CheckpointCreated(c) => {
+                add_branch(&mut branches, &c.branch_id, None, e.ts_wall_ms);
+                checkpoints.push(CheckpointRecord {
+                    id: c.checkpoint_id.clone(),
+                    branch: c.branch_id.clone(),
+                    parent: c.parent_id.clone(),
+                    manifest: c.manifest.clone(),
+                    seq: e.seq,
+                    created_ms: e.ts_wall_ms,
+                    files: u64::from(c.files_changed),
+                    bytes_read: c.bytes_added,
+                });
+            }
+            EventBody::CheckpointForked(f) => {
+                add_branch(
+                    &mut branches,
+                    &f.branch_id,
+                    Some(f.checkpoint_id.clone()),
+                    e.ts_wall_ms,
+                );
+            }
+            _ => {}
+        }
+    }
+    if branches.is_empty() {
+        add_branch(&mut branches, "a", None, 0);
+    }
+    (branches, checkpoints)
+}
+
+impl Session {
+    /// Add a verified bundle as a new, read-only session. The ledger is
+    /// rebuilt from the events (so its chain head equals the bundle's) and
+    /// left unsealed; `import.json` records the provenance. Nothing is
+    /// visible under `sessions/` until the import is complete.
+    pub fn import(data: &DataDir, spec: &ImportSpec) -> Result<Session> {
+        mkdirs(&data.sessions())?;
+        let cas = Cas::open(data.cas())?;
+        for chunk in &spec.chunks {
+            cas.put(chunk)?;
+        }
+        let id = ulid::Ulid::generate().to_string().to_lowercase();
+        let staging = data.session(&format!(".import-{id}"));
+        let result = (|| {
+            mkdirs(staging.root())?;
+            let (branches, checkpoints) = recorded_tree(&spec.events);
+            let command = spec
+                .events
+                .iter()
+                .find_map(|e| match &e.body {
+                    EventBody::SessionStarted(s) => Some(s.command.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let rec = SessionRecord {
+                id: id.clone(),
+                name: spec.name.clone(),
+                workspace: PathBuf::new(),
+                command,
+                mode: spec.mode,
+                created_ms: spec.created_ms,
+                status: SessionState::Closed,
+                current_branch: branches.last().map_or_else(|| "a".into(), |b| b.id.clone()),
+                branches,
+                checkpoints,
+                cgroup: None,
+                pid: None,
+                runs: 0,
+                agent: spec.agent.clone(),
+                deny_tools: Vec::new(),
+                policy: None,
+            };
+            let mut ledger = Ledger::create(staging.ledger(), &id)?;
+            ledger.append(spec.events.clone())?;
+            let source = serde_json::to_vec_pretty(&spec.source)
+                .map_err(|e| CellError::Invalid(e.to_string()))?;
+            fs::write(staging.import(), source).map_err(io_err(&staging.import()))?;
+            state::save(&staging, &rec)?;
+            Ok(rec)
+        })();
+        let rec = match result {
+            Ok(rec) => rec,
+            Err(e) => {
+                let _ = fs::remove_dir_all(staging.root());
+                return Err(e);
+            }
+        };
+        let dir = data.session(&id);
+        if let Err(e) = fs::rename(staging.root(), dir.root()) {
+            let _ = fs::remove_dir_all(staging.root());
+            return Err(io_err(dir.root())(e));
+        }
+        Ok(Session {
+            data: data.clone(),
+            dir,
+            rec,
+            cas,
+        })
+    }
+
+    /// Provenance of an imported session; `None` for a recorded one.
+    pub fn imported(&self) -> Option<ImportSource> {
+        let bytes = fs::read(self.dir.import()).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Refuse to change an imported session.
+    fn writable(&self) -> Result<()> {
+        if self.dir.import().exists() {
+            return Err(CellError::Busy(format!(
+                "session {} was imported from a bundle and is read-only",
+                self.rec.id
+            )));
+        }
+        Ok(())
     }
 }
