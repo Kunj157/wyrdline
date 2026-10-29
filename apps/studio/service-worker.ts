@@ -7,8 +7,9 @@
  *   module included, even though the page loads it lazily);
  * - navigations: network first, the cached app shell when offline;
  * - assets: cache first (their names carry a content hash);
- * - the daemon API (`v1/`) and bundles served by `wyrd open` (`bundle/`)
- *   are never cached.
+ * - the daemon API (`v1/`), the Hub API (`api/v1/`, when the Hub serves
+ *   this Studio at its own origin) and bundles served by `wyrd open`
+ *   (`bundle/`) are never cached, and never answered by the worker.
  */
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
@@ -56,7 +57,8 @@ self.addEventListener("fetch", (event) => {
   const base = scope();
   if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) return;
   const path = url.pathname.slice(base.pathname.length);
-  if (path.startsWith("v1/") || path.startsWith("bundle/")) return;
+  // The Hub serves this Studio at the root, so its API is api/v1/ here.
+  if (path.startsWith("v1/") || path.startsWith("api/") || path.startsWith("bundle/")) return;
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(() =>

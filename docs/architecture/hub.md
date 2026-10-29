@@ -32,6 +32,7 @@ browser / wyrd CLI ──HTTPS──▶ wyrd-hub (Axum)
 | `WYRD_HUB_MAX_UPLOAD_BYTES` | 256 MiB | largest bundle accepted |
 | `WYRD_HUB_QUOTA_BYTES`, `WYRD_HUB_QUOTA_BUNDLES` | 10 GiB, 10 000 | quota of new organisations |
 | `WYRD_HUB_RETENTION_INTERVAL_SECS` | `3600` | retention sweep interval (0 disables) |
+| `WYRD_HUB_STUDIO_DIR` | unset | a Studio build (`apps/studio/dist`) served at `/` for Hub mode |
 | `WYRD_LOG` | `info` | log filter; logs are JSON lines on stderr |
 
 Secrets are wrapped so they never appear in `Debug` output or logs.
@@ -127,7 +128,10 @@ organisation's log with `GET /api/v1/audit-logs?org=<slug>&limit=&before=`
 ## Bundles
 
 `POST /api/v1/orgs/{org}/bundles` (member) takes `multipart/form-data`
-with a `bundle` file and an optional `repo` label, and:
+with a `bundle` file, an optional `repo` label, and optional `judge_runs`
+(the session's judge runs as JSON lines: `model`, `prompt_version`,
+`usage` token counts, `est_cost_usd`, `latency_ms`; at most 1 MiB and
+1000 lines, else 400), and:
 
 1. streams the file to a spool file under `WYRD_HUB_DATA_DIR/uploads`,
    refusing it with 413 as soon as it passes `WYRD_HUB_MAX_UPLOAD_BYTES`
@@ -163,13 +167,70 @@ would raise their own limit); the operator changes `orgs.quota_bytes` and
 
 **From the CLI:** `wyrd push file.wyrd --hub <url> --org <slug> [--repo
 owner/name]` with an API token in `WYRD_HUB_TOKEN`. It verifies the file
-locally first, then streams it. Exit codes: 0 uploaded (or already
+locally first, then streams it; when the session the bundle came from is
+on this machine, its judge runs (`judge-runs.jsonl` next to the ledger)
+go along as the `judge_runs` field. Exit codes: 0 uploaded (or already
 there), 1 usage or refused, 3 verification failed, 4 over quota, 5 Hub
 unreachable.
 
 Metrics: `wyrd_hub_uploads_total{outcome}` (`accepted`, `duplicate`,
 `rejected`, `too_large`, `over_quota`, `storage_error`, `error`),
 `wyrd_hub_bundle_verify_seconds`, `wyrd_hub_retention_sweeps_total`.
+
+## Analytics and search
+
+Built with the `analytics` feature (on in `make test-hub` and the CI hub
+job; it compiles DuckDB from source, so plain workspace builds leave it out
+and the two endpoints answer 501 there). A Hub image must enable it too.
+
+On upload the Hub writes a Parquet **projection** of the bundle to
+`WYRD_HUB_DATA_DIR/projections/<org>/<bundle>/`: `events.parquet` (seq,
+plane, kind, time, pid, path, target, detail, outcome, dropped events),
+`divergences.parquet`, `guard.parquet`, and `judge.parquet` (the judge
+runs sent with the upload, also kept in the bundle's row so a rebuild has
+them). Queries run in an embedded,
+in-memory DuckDB over the projections of the organisation's 500 most
+recent matching bundles. A missing projection (a new replica, a wiped
+volume) is rebuilt from the stored bundle, verified again, on first use
+(`wyrd_hub_projection_rebuilds_total`).
+
+`GET /api/v1/orgs/{org}/stats?since=` (viewer) returns sessions in total,
+per repo and per agent; per divergence rule the sessions that raised it,
+how often, and the rate over the sessions considered; denied actions by
+kind (refused connects, denied tool calls, deny decisions); captured
+events, dropped events, and sensor losses; judge runs, input, output,
+and cached tokens, and estimated cost in total and per model (from the
+`judge_runs` sent with each upload; `"recorded": false` while no bundle
+brought any). Capture overhead is not measured per session (it is a
+benchmark number, `docs/results/perf-sensor.md`), so `overhead_pct` is
+`null`.
+
+`GET /api/v1/orgs/{org}/search?q=&limit=` (viewer) takes filters
+`path:` `rule:` `repo:` `agent:` `session:` `kind:` `host:` `exe:` `tool:`
+and plain words (matched against path, target, and detail), with `"…"`
+for values containing spaces, e.g. `path:~/.ssh rule:D003 repo:shop`.
+Filters are ANDed; repeated `repo:`, `agent:`, or `session:` match any of
+the values. `rule:`, `repo:`, `agent:`, and `session:` select bundles in
+Postgres; the others match events in DuckDB. The answer lists the
+matching sessions and the matching events (`bundle`, `seq`, `kind`,
+`path`, `target`, `detail`). A malformed query is 400 with the character
+`position` and a `reason`. User text reaches SQL only as bound
+parameters, and results are always scoped to the caller's organisation.
+Latency: `wyrd_hub_query_seconds{query}`.
+
+### Hub mode in Studio
+
+With `WYRD_HUB_STUDIO_DIR` set, the Hub serves the Studio build (with a
+Studio Content-Security-Policy; single-page routes fall back to
+`index.html`), so `/hub` and `/hub/search` talk to the same origin with
+the session cookie. **Dashboard** (`/hub`): sessions, denied actions,
+event loss, and judge cost tiles; divergence rate per rule, sessions per
+repository, and denied actions by kind as labelled bar tables; capture
+overhead and agents. **Search** (`/hub/search`): the query box, the
+matching sessions, and the matching events; a malformed query is
+highlighted from the position the Hub reports. Signed out, both pages
+link to the login. Playwright specs (`tests/e2e/hub.spec.ts`) drive both
+against a stand-in Hub API.
 
 ## API (`/api/v1`)
 
