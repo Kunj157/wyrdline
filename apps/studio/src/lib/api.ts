@@ -77,6 +77,7 @@ export const keys = {
   verify: (sid: string) => ["verify", sid] as const,
   checkpoints: (sid: string) => ["checkpoints", sid] as const,
   asks: (sid: string) => ["asks", sid] as const,
+  rewindRequests: (sid: string) => ["rewind-requests", sid] as const,
   divergences: (sid: string) => ["divergences", sid] as const,
   policies: ["policies"] as const,
   diff: (sid: string, a: string, b: string) => ["diff", sid, a, b] as const,
@@ -229,6 +230,31 @@ export function useTriage(sid: string) {
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: keys.divergences(sid) }),
+        qc.invalidateQueries({ queryKey: keys.events(sid) }),
+      ]),
+  });
+}
+
+/** Rewind requests the agent made through `wyrd mcp` (polled while live). */
+export function useRewindRequests(sid: string, live: boolean) {
+  return useQuery({
+    queryKey: keys.rewindRequests(sid),
+    queryFn: () => apiClient().rewindRequests(sid),
+    refetchInterval: live ? 2000 : false,
+  });
+}
+
+/** Confirm (rewind) or reject one of the agent's rewind requests. */
+export function useDecideRewind(sid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; confirm: boolean }) =>
+      apiClient().decideRewind(sid, v.id, { confirm: v.confirm, note: null }),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.rewindRequests(sid) }),
+        qc.invalidateQueries({ queryKey: keys.session(sid) }),
+        qc.invalidateQueries({ queryKey: keys.checkpoints(sid) }),
         qc.invalidateQueries({ queryKey: keys.events(sid) }),
       ]),
   });
