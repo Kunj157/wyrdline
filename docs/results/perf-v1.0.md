@@ -81,7 +81,12 @@ Context, not a target:
   runs `node --test` directly (not `pnpm test`, so pnpm startup is not
   counted), and the demo suite fails one test on purpose, so the wrapper
   ignores node's exit status. A workload this short is dominated by noise.
-  Follow-up: #240.
+  Follow-up: #240. On the GitHub-hosted runner the v0.13.0 release
+  rehearsals measured attached-but-filtered overhead at +5.1 %, +5.5 %, and
+  +10.7 % (baseline 89–155 ms), once above the captured figure (+3.7 %),
+  which does strictly more work. Release runs therefore report this test
+  without gating on it; the nightly (`WYRD_PERF_STRICT=1`) enforces it. The
+  `cargo build` and syscall-dense overhead tests still gate releases.
 - **Wall-clock measurement is not done with hyperfine.** The issue names
   hyperfine. The harness uses interleaved medians instead, which is stricter
   on a shared box, but hyperfine is not installed. Follow-up: #240.
