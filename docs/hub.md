@@ -149,7 +149,8 @@ steps. It sets two outputs for both a new upload and a bundle the
 organisation already has: `hub-bundle-id` (the bundle's id) and
 `hub-bundle-url`, the bundle's API resource, `<hub>/api/v1/bundles/<id>`.
 The Hub has no page per bundle, so the URL is an API address. The Action's
-`hub-url` input is reserved and does not upload yet.
+`hub-url` and `hub-org` inputs upload the bundle after the agent runs; a failed
+upload fails the step unless `hub-upload-required` is `false`.
 
 ## Browse and download
 
