@@ -95,6 +95,7 @@ pub fn bundle_with(name: &str, rules: &[&str], extra: Vec<EventBody>, drops: u32
             withheld_files: 0,
             redaction: Redaction::Standard,
             divergences: wyrd_divergence::view::project_json,
+            annotations: None,
         },
         &SigningKey::from_bytes(&[7; 32]),
     )

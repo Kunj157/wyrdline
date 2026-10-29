@@ -59,11 +59,11 @@ Entries appear in this order:
 ```
 manifest.json          # format, session meta, redaction, ledger head, file list
 signature.ed25519      # public key ‖ signature over manifest.json
+annotations.automerge  # optional: the session's annotation document
 cas/<hex blake3>       # checkpoint content, sorted by name (absent with --no-content)
 claims.json
 divergences.json
 ledger.cbor-seq
-annotations.automerge  # reserved for Phase 12 (collaboration); not written yet
 ```
 
 No other path is valid. A path is relative, has no empty, `.` or `..`
@@ -135,6 +135,17 @@ JSON arrays projected from the bundled events: every `verdict.claim.extracted`
 payload, and every divergence with its latest triage state (the same view
 as `GET /v1/sessions/{sid}/divergences`). They are conveniences: a reader
 can rebuild both from the ledger.
+
+### `annotations.automerge`
+
+The session's collaborative annotation document (comments anchored to
+`seq` ranges, team triage, pinned checkpoints), as saved Automerge bytes
+([collaborative annotations](architecture/annotations.md)). `wyrd export`
+includes it when given `--annotations <file>` with the document saved from
+Studio, and the redaction is `standard`; a `strict` bundle never contains
+it, because teammates' free text cannot be redacted reliably. Readers that
+predate it accept it already: the path was reserved from the first format
+version.
 
 ### `cas/`
 

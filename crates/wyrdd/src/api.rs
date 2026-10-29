@@ -148,6 +148,30 @@ pub struct Answered {
     pub allow: bool,
 }
 
+/// The agent's rewind requests (`wyrd mcp`), oldest first.
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct RewindRequests {
+    pub requests: Vec<wyrd_cell::requests::RewindRequest>,
+}
+
+/// A human's decision on a rewind request.
+#[derive(Debug, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct RewindDecisionBody {
+    /// True rewinds to the requested checkpoint; false rejects the request.
+    pub confirm: bool,
+    /// Why it was rejected; stored in the ledger. At most 2000 characters.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema, TS)]
+pub struct RewindDecided {
+    pub request: wyrd_cell::requests::RewindRequest,
+    /// The new branch, when the request was confirmed.
+    pub branch: Option<Branch>,
+}
+
 #[derive(Debug, Serialize, JsonSchema, TS)]
 pub struct Stopped {
     /// False when no agent was running.

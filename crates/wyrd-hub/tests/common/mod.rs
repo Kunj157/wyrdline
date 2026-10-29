@@ -3,6 +3,7 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod actions;
 pub mod bundles;
 pub mod idp;
 
@@ -17,7 +18,7 @@ use testcontainers::core::{IntoContainerPort, Mount, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tower::ServiceExt;
-use wyrd_hub::config::{Config, OidcConfig, S3Config, Secret};
+use wyrd_hub::config::{self, CiConfig, Config, OidcConfig, S3Config, Secret};
 use wyrd_hub::db::{self, PgPool};
 use wyrd_hub::{AppState, Storage, app};
 
@@ -116,6 +117,11 @@ pub fn config(database_url: &str, s3: S3Config) -> Config {
         data_dir: std::env::temp_dir().join("wyrd-hub-tests"),
         limits: wyrd_hub::config::Limits::default(),
         studio_dir: None,
+        ci: CiConfig {
+            issuer: config::DEFAULT_CI_ISSUER.into(),
+            audience: "http://hub.test".into(),
+            token_ttl_secs: config::DEFAULT_CI_TOKEN_TTL_SECS,
+        },
     }
 }
 
@@ -129,20 +135,25 @@ pub struct Hub {
 }
 
 pub async fn hub() -> Hub {
-    hub_with(None).await
+    hub_with(None, None).await
 }
 
 /// A Hub logging in through `idp`.
 pub async fn hub_with_idp(idp: &idp::Idp) -> Hub {
-    hub_with(Some(OidcConfig {
+    hub_with(Some(idp_config(idp)), None).await
+}
+
+pub fn idp_config(idp: &idp::Idp) -> OidcConfig {
+    OidcConfig {
         issuer: idp.issuer.clone(),
         client_id: idp.client_id.clone(),
         client_secret: Secret::new(idp.client_secret.clone()),
-    }))
-    .await
+    }
 }
 
-pub async fn hub_with(oidc: Option<OidcConfig>) -> Hub {
+/// `oidc`: the login provider; `ci_issuer`: the CI token issuer (default
+/// GitHub's).
+pub async fn hub_with(oidc: Option<OidcConfig>, ci_issuer: Option<String>) -> Hub {
     let (pg, minio) = tokio::join!(postgres(), minio());
     let storage = Storage::new(minio.s3.clone());
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -156,6 +167,9 @@ pub async fn hub_with(oidc: Option<OidcConfig>) -> Hub {
     let mut cfg = config(&pg.url, minio.s3.clone());
     cfg.oidc = oidc;
     cfg.data_dir = data.path().to_path_buf();
+    if let Some(issuer) = ci_issuer {
+        cfg.ci.issuer = issuer;
+    }
     let state = Arc::new(AppState::new(cfg, storage));
     state.set_db(pool.clone());
     Hub {

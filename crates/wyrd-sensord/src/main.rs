@@ -1,13 +1,17 @@
 //! `wyrd-sensord`: the only privileged Wyrdline process. It loads the eBPF
 //! programs and streams each registered cgroup's events to the user who
 //! owns that cgroup. No network, no persistent storage.
+#![forbid(unsafe_code)]
 
+use rustix::thread::CapabilitySet;
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -31,6 +35,10 @@ struct Args {
     /// overflow deterministic).
     #[arg(long, hide = true, default_value_t = 0)]
     read_pause_ms: u64,
+    /// Events queued per client before its events are counted as dropped
+    /// (tests only: makes a stalled client overflow quickly).
+    #[arg(long, hide = true, default_value_t = CLIENT_QUEUE)]
+    client_queue: usize,
     /// Exit when standard input reaches end of file (tests, supervisors).
     #[arg(long)]
     exit_on_stdin_eof: bool,
@@ -47,7 +55,7 @@ enum Cmd {
         workspace: PathBuf,
         /// The cgroup directory and the rules to enforce in it.
         egress: Option<(PathBuf, wyrd_sensor::EgressRules)>,
-        tx: SyncSender<ServerMsg>,
+        tx: Queue,
         /// `Ok(Some(why))`: registered, but the egress rules are not enforced.
         ack: SyncSender<Result<Option<String>, String>>,
     },
@@ -55,6 +63,13 @@ enum Cmd {
         cgroup_id: u64,
         dir: PathBuf,
         rules: wyrd_sensor::EgressRules,
+    },
+    /// Answer `Flushed { token }` on `conn` after the events already in the
+    /// ring buffer have been dispatched.
+    Flush {
+        conn: u64,
+        cgroup_id: u64,
+        token: u64,
     },
     Unregister {
         conn: u64,
@@ -75,6 +90,28 @@ fn main() {
         tracing::error!("{e}");
         std::process::exit(1);
     }
+}
+
+/// Capabilities the daemon keeps once the programs are attached. `CAP_BPF`
+/// is the one still in use: the `bpf()` syscalls that register cgroups,
+/// change egress rules, attach enforcement and read counters. The privileged
+/// tests run these paths with this set alone (`CAP_PERFMON` was dropped after
+/// a test run without it). Reading events from the ring buffer, `SO_PEERCRED`
+/// checks and cgroup `stat` calls need no capability. Dropped after loading:
+/// `CAP_PERFMON` (the tracepoint programs need it to load), `CAP_NET_ADMIN`
+/// (the connect programs need it to load), and `CAP_SYS_ADMIN`,
+/// `CAP_DAC_READ_SEARCH`, `CAP_SYS_RESOURCE`, which the unit does not grant.
+/// See deploy/systemd/wyrd-sensord.service.
+const RUNTIME_CAPS: CapabilitySet = CapabilitySet::BPF;
+
+fn keep_runtime_caps() -> Result<(), String> {
+    let mut sets = rustix::thread::capabilities(None).map_err(|e| format!("capget: {e}"))?;
+    sets.effective &= RUNTIME_CAPS;
+    sets.permitted &= RUNTIME_CAPS;
+    sets.inheritable = CapabilitySet::empty();
+    rustix::thread::set_capabilities(None, sets).map_err(|e| format!("capset: {e}"))?;
+    tracing::info!("kept the runtime capabilities only (BPF)");
+    Ok(())
 }
 
 fn run(args: &Args) -> Result<(), String> {
@@ -100,6 +137,10 @@ fn run(args: &Args) -> Result<(), String> {
     std::fs::set_permissions(&args.socket, std::fs::Permissions::from_mode(0o666))
         .map_err(|e| e.to_string())?;
     tracing::info!(socket = %args.socket.display(), "listening");
+    // Once the socket exists, before any thread starts: capabilities are per
+    // thread, and threads inherit the set they are created with. Creating the
+    // socket needed CAP_DAC_OVERRIDE for a directory the daemon does not own.
+    keep_runtime_caps()?;
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
     std::thread::Builder::new()
@@ -121,6 +162,7 @@ fn run(args: &Args) -> Result<(), String> {
     }
 
     let attached = report.attached.len();
+    let queue = args.client_queue;
     let mut next_conn = 0u64;
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
@@ -130,7 +172,7 @@ fn run(args: &Args) -> Result<(), String> {
         let skipped = skipped.clone();
         let _ = std::thread::Builder::new()
             .name(format!("conn-{conn}"))
-            .spawn(move || serve(stream, conn, &cmd_tx, attached, skipped));
+            .spawn(move || serve(stream, conn, &cmd_tx, attached, skipped, queue));
     }
     Ok(())
 }
@@ -164,6 +206,7 @@ fn serve(
     cmd_tx: &Sender<Cmd>,
     attached: usize,
     skipped: Vec<String>,
+    queue: usize,
 ) {
     let peer_uid = match rustix::net::sockopt::socket_peercred(&stream) {
         Ok(c) => c.uid.as_raw(),
@@ -183,7 +226,7 @@ fn serve(
             workspace,
             egress,
         }) => (cgroup, workspace, egress),
-        Ok(ClientMsg::Egress { .. }) => {
+        Ok(ClientMsg::Egress { .. } | ClientMsg::Flush { .. }) => {
             let _ = send(
                 &mut stream,
                 &ServerMsg::Error {
@@ -210,7 +253,13 @@ fn serve(
             return;
         }
     };
-    let (tx, rx) = mpsc::sync_channel(CLIENT_QUEUE);
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = mpsc::sync_channel(queue + CONTROL_RESERVE);
+    let tx = Queue {
+        tx,
+        inflight: inflight.clone(),
+        events: queue,
+    };
     let (ack_tx, ack_rx) = mpsc::sync_channel(1);
     if cmd_tx
         .send(Cmd::Register {
@@ -254,16 +303,16 @@ fn serve(
     )
     .is_ok()
     {
-        updates(&stream, cmd_tx, cgroup_id, &canon);
-        forward(&mut stream, &rx);
+        updates(&stream, cmd_tx, conn, cgroup_id, &canon);
+        forward(&mut stream, &rx, &inflight);
     }
     let _ = cmd_tx.send(Cmd::Unregister { conn, cgroup_id });
     tracing::info!(cgroup_id, conn, "unregistered");
 }
 
-/// Egress rule updates from the client, on their own thread; they can
-/// only ever address the cgroup this connection registered.
-fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, cgroup_id: u64, dir: &Path) {
+/// Egress rule updates and flush requests from the client, on their own
+/// thread; they can only ever address the cgroup this connection registered.
+fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, conn: u64, cgroup_id: u64, dir: &Path) {
     let Ok(read) = stream.try_clone() else {
         return;
     };
@@ -288,6 +337,13 @@ fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, cgroup_id: u64, dir: &Path
                             rules,
                         });
                     }
+                    Ok(ClientMsg::Flush { token }) => {
+                        let _ = cmd_tx.send(Cmd::Flush {
+                            conn,
+                            cgroup_id,
+                            token,
+                        });
+                    }
                     Ok(ClientMsg::Register { .. }) | Err(_) => {
                         tracing::warn!(cgroup_id, "ignored an invalid update");
                     }
@@ -298,10 +354,11 @@ fn updates(stream: &UnixStream, cmd_tx: &Sender<Cmd>, cgroup_id: u64, dir: &Path
 
 /// Write queued messages until the client goes away. Periodic `drops`
 /// messages double as a liveness check.
-fn forward(stream: &mut UnixStream, rx: &Receiver<ServerMsg>) {
+fn forward(stream: &mut UnixStream, rx: &Receiver<ServerMsg>, inflight: &AtomicUsize) {
     loop {
         match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(msg) => {
+                inflight.fetch_sub(1, Ordering::SeqCst);
                 if send(stream, &msg).is_err() {
                     return;
                 }
@@ -312,12 +369,115 @@ fn forward(stream: &mut UnixStream, rx: &Receiver<ServerMsg>) {
     }
 }
 
-type Subscribers = HashMap<u64, Vec<(u64, SyncSender<ServerMsg>)>>;
+/// Extra slots kept for control messages (loss reports and flush answers),
+/// so a full event queue cannot lose the flush barrier.
+const CONTROL_RESERVE: usize = 16;
+
+/// The sensor side of one client's queue. The channel holds `events` event
+/// slots plus `CONTROL_RESERVE`. `inflight` counts messages not yet written
+/// out, and events are admitted only while below `events`.
+struct Queue {
+    tx: SyncSender<ServerMsg>,
+    inflight: Arc<AtomicUsize>,
+    events: usize,
+}
+
+/// Outcome of offering a message to a client's queue.
+enum Offer {
+    Sent,
+    /// No room under the admission limit.
+    Full,
+    /// The client is gone; `remove` unregisters it.
+    Gone,
+}
+
+impl Queue {
+    /// Queue `msg` if fewer than `limit` messages are waiting. Never blocks.
+    /// Only the sensor thread offers, so the count cannot race upward.
+    fn offer(&self, msg: ServerMsg, limit: usize) -> Offer {
+        if self.inflight.fetch_add(1, Ordering::SeqCst) >= limit {
+            self.inflight.fetch_sub(1, Ordering::SeqCst);
+            return Offer::Full;
+        }
+        match self.tx.try_send(msg) {
+            Ok(()) => Offer::Sent,
+            Err(e) => {
+                self.inflight.fetch_sub(1, Ordering::SeqCst);
+                match e {
+                    TrySendError::Full(_) => Offer::Full,
+                    TrySendError::Disconnected(_) => Offer::Gone,
+                }
+            }
+        }
+    }
+}
+
+/// One connection's share of a cgroup's events.
+struct Sub {
+    conn: u64,
+    queue: Queue,
+    /// Events this connection's queue refused because the client was not
+    /// reading fast enough. Cumulative; every `drops` message carries it.
+    queue_dropped: u64,
+}
+
+type Subscribers = HashMap<u64, Vec<Sub>>;
+
+/// Queue `msg` for every subscriber of a cgroup. A full queue means a
+/// stalled client: that client's drop count goes up, and the other sessions
+/// are not blocked. A disconnected queue is left to `remove`.
+fn fan_out(subs: &mut [Sub], msg: &ServerMsg) {
+    for sub in subs {
+        match sub.queue.offer(msg.clone(), sub.queue.events) {
+            Offer::Sent | Offer::Gone => {}
+            Offer::Full => {
+                if sub.queue_dropped == 0 {
+                    tracing::warn!(
+                        conn = sub.conn,
+                        "client is not reading fast enough; dropping its events"
+                    );
+                }
+                sub.queue_dropped += 1;
+            }
+        }
+    }
+}
+
+impl Sub {
+    /// The loss report: ring-buffer total plus this connection's queue
+    /// count. Heartbeats pass the event limit and never use the reserve; the
+    /// next report carries the same cumulative numbers.
+    fn report(&self, total: u64, limit: usize) -> Offer {
+        self.queue.offer(
+            ServerMsg::Drops {
+                total,
+                queue_dropped: self.queue_dropped,
+            },
+            limit,
+        )
+    }
+}
+
+/// Periodic liveness and loss report to every connection of a cgroup.
+fn heartbeat(subs: &[Sub], total: u64) {
+    for sub in subs {
+        sub.report(total, sub.queue.events);
+    }
+}
+
+/// Answer a flush request: the loss report, then `Flushed`, both through the
+/// control reserve, so a full event queue cannot lose them. Never blocks.
+fn answer_flush(sub: &Sub, token: u64, total: u64) {
+    let limit = sub.queue.events + CONTROL_RESERVE;
+    sub.report(total, limit);
+    let _ = sub.queue.offer(ServerMsg::Flushed { token }, limit);
+}
 
 fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
     let mut decoder = Decoder::new();
     let mut subs: Subscribers = HashMap::new();
     let mut last_drops = Instant::now();
+    let mut flushes: Vec<(u64, u64, u64)> = Vec::new();
     loop {
         while let Ok(cmd) = cmds.try_recv() {
             match cmd {
@@ -341,7 +501,11 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                         })
                     });
                     decoder.set_workspace(cgroup_id, workspace);
-                    subs.entry(cgroup_id).or_default().push((conn, tx));
+                    subs.entry(cgroup_id).or_default().push(Sub {
+                        conn,
+                        queue: tx,
+                        queue_dropped: 0,
+                    });
                     let _ = ack.try_send(Ok(not_enforced));
                 }
                 Cmd::Egress {
@@ -355,6 +519,11 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                         tracing::error!(cgroup_id, error = %e, "egress update failed");
                     }
                 }
+                Cmd::Flush {
+                    conn,
+                    cgroup_id,
+                    token,
+                } => flushes.push((conn, cgroup_id, token)),
                 Cmd::Unregister { conn, cgroup_id } => {
                     remove(&mut sensor, &mut decoder, &mut subs, cgroup_id, conn);
                 }
@@ -380,11 +549,19 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
                 process: d.process,
                 body: d.body,
             };
-            if let Some(list) = subs.get(&d.cgroup_id) {
-                for (_, tx) in list {
-                    // A full queue means a stalled client: count it as a drop
-                    // rather than blocking every session.
-                    let _ = tx.try_send(msg.clone());
+            if let Some(list) = subs.get_mut(&d.cgroup_id) {
+                fan_out(list, &msg);
+            }
+        }
+        // `poll` drained the ring buffer, so everything the kernel queued
+        // before these requests arrived is now ahead of the answer in the
+        // connection's queue.
+        // The loss report goes first, so the client sees every drop known at
+        // the barrier before it stops reading.
+        for (conn, cgroup_id, token) in flushes.drain(..) {
+            if let Some(list) = subs.get(&cgroup_id) {
+                for sub in list.iter().filter(|s| s.conn == conn) {
+                    answer_flush(sub, token, sensor.drops().unwrap_or(0));
                 }
             }
         }
@@ -392,9 +569,7 @@ fn sensor_loop(mut sensor: Sensor, cmds: &Receiver<Cmd>, pause: Duration) {
             last_drops = Instant::now();
             let total = sensor.drops().unwrap_or(0);
             for list in subs.values() {
-                for (_, tx) in list {
-                    let _ = tx.try_send(ServerMsg::Drops { total });
-                }
+                heartbeat(list, total);
             }
         }
     }
@@ -408,11 +583,143 @@ fn remove(
     conn: u64,
 ) {
     if let Some(list) = subs.get_mut(&cgroup_id) {
-        list.retain(|(c, _)| *c != conn);
+        for sub in list
+            .iter()
+            .filter(|s| s.conn == conn && s.queue_dropped > 0)
+        {
+            tracing::warn!(
+                conn,
+                cgroup_id,
+                dropped = sub.queue_dropped,
+                "client dropped events it did not read in time"
+            );
+        }
+        list.retain(|s| s.conn != conn);
         if list.is_empty() {
             subs.remove(&cgroup_id);
             let _ = sensor.unregister(cgroup_id);
             decoder.forget_cgroup(cgroup_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sub(conn: u64, events: usize) -> (Sub, Receiver<ServerMsg>, Arc<AtomicUsize>) {
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::sync_channel(events + CONTROL_RESERVE);
+        let queue = Queue {
+            tx,
+            inflight: inflight.clone(),
+            events,
+        };
+        (
+            Sub {
+                conn,
+                queue,
+                queue_dropped: 0,
+            },
+            rx,
+            inflight,
+        )
+    }
+
+    /// What the writer thread does: take the next message, freeing its slot.
+    fn take(rx: &Receiver<ServerMsg>, inflight: &AtomicUsize) -> Option<ServerMsg> {
+        let msg = rx.try_recv().ok()?;
+        inflight.fetch_sub(1, Ordering::SeqCst);
+        Some(msg)
+    }
+
+    fn drain(rx: &Receiver<ServerMsg>, inflight: &AtomicUsize) -> Vec<ServerMsg> {
+        std::iter::from_fn(|| take(rx, inflight)).collect()
+    }
+
+    fn msg(token: u64) -> ServerMsg {
+        ServerMsg::Flushed { token }
+    }
+
+    #[test]
+    fn a_client_that_stops_reading_has_its_drops_counted_and_reported() {
+        let (s, rx, inflight) = sub(1, 2);
+        let mut subs = vec![s];
+        for token in 0..5 {
+            fan_out(&mut subs, &msg(token));
+        }
+        // Two fit in the queue; the other three were refused and counted.
+        assert_eq!(subs[0].queue_dropped, 3);
+        // The client reads again: the two queued messages arrive first, then
+        // the next heartbeat reports the loss.
+        assert_eq!(take(&rx, &inflight), Some(msg(0)));
+        assert_eq!(take(&rx, &inflight), Some(msg(1)));
+        heartbeat(&subs, 7);
+        assert_eq!(
+            take(&rx, &inflight),
+            Some(ServerMsg::Drops {
+                total: 7,
+                queue_dropped: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn a_client_that_keeps_up_has_no_drops() {
+        let (s, rx, inflight) = sub(1, 2);
+        let mut subs = vec![s];
+        for token in 0..10 {
+            fan_out(&mut subs, &msg(token));
+            assert_eq!(take(&rx, &inflight), Some(msg(token)));
+        }
+        assert_eq!(subs[0].queue_dropped, 0);
+    }
+
+    #[test]
+    fn a_stalled_client_does_not_drop_events_for_a_reading_client() {
+        let (slow, _slow_rx, _) = sub(1, 1);
+        let (fast, fast_rx, fast_inflight) = sub(2, 8);
+        let mut subs = vec![slow, fast];
+        for token in 0..4 {
+            fan_out(&mut subs, &msg(token));
+            assert_eq!(take(&fast_rx, &fast_inflight), Some(msg(token)));
+        }
+        assert_eq!(subs[0].queue_dropped, 3);
+        assert_eq!(subs[1].queue_dropped, 0);
+    }
+
+    #[test]
+    fn a_gone_client_is_not_counted_as_dropping() {
+        let (s, rx, _) = sub(1, 1);
+        drop(rx);
+        let mut subs = vec![s];
+        fan_out(&mut subs, &msg(0));
+        assert_eq!(subs[0].queue_dropped, 0);
+    }
+
+    #[test]
+    fn a_full_queue_still_gets_the_flush_barrier_and_the_final_count() {
+        let (s, rx, inflight) = sub(1, 2);
+        let mut subs = vec![s];
+        for token in 0..5 {
+            fan_out(&mut subs, &msg(token));
+        }
+        assert_eq!(subs[0].queue_dropped, 3);
+        // The queue is full: a heartbeat is refused, the barrier is not.
+        heartbeat(&subs, 42);
+        assert_eq!(subs[0].queue.inflight.load(Ordering::SeqCst), 2);
+        answer_flush(&subs[0], 9, 42);
+        assert_eq!(
+            drain(&rx, &inflight),
+            vec![
+                msg(0),
+                msg(1),
+                ServerMsg::Drops {
+                    total: 42,
+                    queue_dropped: 3,
+                },
+                msg(9),
+            ]
+        );
     }
 }

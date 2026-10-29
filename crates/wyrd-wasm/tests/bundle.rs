@@ -142,6 +142,7 @@ fn bundle(content: bool) -> (Vec<u8>, Manifest, Manifest) {
             withheld_files: u64::from(content),
             redaction: Redaction::Standard,
             divergences: |_| Ok(json!([])),
+            annotations: None,
         },
         &SigningKey::from_bytes(&[3; 32]),
     )
