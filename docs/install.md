@@ -25,6 +25,7 @@ wyrdline-<arch>-unknown-linux-gnu.tar.gz    wyrdline/bin/{wyrd,wyrdd,wyrd-sensor
                                             wyrdline/share/wyrdline/studio, deploy/ (sensor unit, AppArmor profile)
 wyrdline_<version>_<amd64|arm64>.deb         /usr/bin binaries, the sensor unit and AppArmor profile, the Studio
 wyrdline-<binary>-<target>.cdx.json          CycloneDX SBOM per binary and target
+wyrdline-hub-<version>.tgz                   the Hub Helm chart, its default image is this version's
 SHA256SUMS                                   sha256sum lines for every asset
 SHA256SUMS.sigstore.json                     cosign keyless signature over SHA256SUMS
 ```
