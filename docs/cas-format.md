@@ -99,10 +99,30 @@ again: it is staged, and its rename replaces the bad file in the same commit,
 so both barriers cover the replacement. Nothing is deleted before the new
 file is in place.
 
-Durable callers (`put`, `put_stream`, `put_manifest`, bundle import) write one
-chunk on their own: `sync_data`, rename, then sync the chunk's directory. A
-chunk that already verifies is synced by its directory, which covers a rename
-made by another batch that is still waiting for its second barrier.
+Durable callers (`put`, `put_stream`, `put_manifest`, `snapshot`, bundle
+import) write one chunk on their own, in this order:
+
+1. Create any missing fan-out directories (`chunks/ab`, `chunks/ab/cd`). After
+   each new directory is made, its parent is synced before anything is written
+   under it. A directory another process made first is synced the same way.
+2. Write the compressed chunk to `tmp/` and sync its data.
+3. Rename it to its chunk name.
+4. Sync the chunk's directory, so the new name is on disk.
+
+A chunk that already verifies is synced by its directory, which covers a
+rename made by another batch that is still waiting for its second barrier.
+Staged writes (the checkpoint path) create their directories without syncing
+them: the first `syncfs` of the commit covers them, before any rename.
+
+Opening a store applies the same rule to `chunks/` and `tmp/`. The `FORMAT`
+marker is written to a staging file, synced, renamed into place, and its
+directory synced.
+
+The tests in `crates/wyrd-cas/tests/durable_order.rs` record these steps,
+across threads, and check the order: every created directory is synced in its
+parent (or covered by a `syncfs`) before a file is renamed into it, and every
+rename is followed by a sync of its directory. A power cut is not simulated;
+the order is checked, not the disk.
 
 ### Staging files after a crash
 
