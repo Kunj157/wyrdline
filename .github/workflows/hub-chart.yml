@@ -12,6 +12,7 @@ on:
       - deploy/docker/**
       - crates/wyrd-hub/**
       - .github/workflows/hub-chart.yml
+      - scripts/release/stamp-chart.sh
   push:
     branches: [dev]
     paths:
@@ -20,6 +21,7 @@ on:
       - deploy/docker/**
       - crates/wyrd-hub/**
       - .github/workflows/hub-chart.yml
+      - scripts/release/stamp-chart.sh
   workflow_dispatch:
 
 permissions:
@@ -65,6 +67,20 @@ jobs:
             --set ingress.host=hub.example.internal --set ingress.className=nginx \
             --set metrics.serviceMonitor.enabled=false \
             | kubeconform -strict -summary
+      - name: The repository chart needs an image; a stamped chart renders its release image
+        run: |
+          set -euo pipefail
+          base=(--set publicUrl=https://hub.example.internal --set database.existingSecret=hub-database
+            --set s3.endpoint=https://s3.example.internal --set s3.bucket=wyrd-bundles --set s3.existingSecret=hub-s3)
+          if helm template wyrdline-hub "$CHART" "${base[@]}" >/dev/null 2>err.txt; then
+            echo "::error::the repository chart rendered without an image (appVersion 0.0.0)"; exit 1
+          fi
+          grep -q 'image.tag or image.digest is required' err.txt
+          stamped=$(mktemp -d)
+          cp -r "$CHART/." "$stamped/"
+          scripts/release/stamp-chart.sh 1.0.0 "$stamped"
+          helm template wyrdline-hub "$stamped" "${base[@]}" | grep -q 'wyrdline-hub:1.0.0'
+
       - name: Missing secret values fail the render with a clear message
         run: |
           if helm template wyrdline-hub "$CHART" --set publicUrl=https://hub.example.internal >/dev/null 2>err.txt; then
