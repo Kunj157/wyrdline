@@ -88,16 +88,41 @@ wyrd rewind <session> --requests                     # the agent's rewind reques
 wyrd push session.wyrd --hub https://hub.example --org acme  # share it on a team Hub (token in WYRD_HUB_TOKEN)
 ```
 
-Capture adds +0.8 % to a debug `cargo build` on a workstation and +1.5 %
-on a hosted runner ([measurements](docs/results/perf-sensor.md)).
+Capture's overhead on a `cargo build` was between −1.3 % and +0.1 % across
+two runs on a shared machine ([performance](#performance)).
 
 ## Performance
 
-> **PLACEHOLDER (1.0).** The 1.0 performance numbers come from
-> `docs/results/perf-v1.0.md` (#165), which is not committed yet. This
-> section will be filled from that report only; until then the committed
-> measurements are linked from the sections above and from
-> [limitations](docs/limitations.md).
+Measured for 1.0 on ws11, a shared 24-core machine: other users' sessions
+ran during every measurement, with load averages of 4–7 during the Cell
+runs and 2–10 during the sensor runs. The numbers are noisy. The sensor
+overhead tests compare interleaved runs and report medians. Run 2 is the
+committed revision; run 1 is the earlier code, which differs only in the
+victim-shop wrapper and the paced test. Method, both runs, and how to
+reproduce them: [performance at v1.0](docs/results/perf-v1.0.md).
+
+| Target | Measured | Result |
+|---|---|---|
+| Event loss at 50 k events/s | 49 863 events/s (run 2): 200 000 received, 0 dropped | met |
+| Checkpoint p95, 200 files, 50 MB delta (target ≤ 150 ms) | p95 7.22 s; median 5.52 s over 20 rounds | **missed**, tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239) |
+| Rewind p95, 1 GB workspace (target ≤ 2 s) | p95 1.16 s; median 0.93 s over 10 rounds | met |
+| Denied-connect latency, p99 | 2.3–2.6 µs | met; the report explains why it is not compared with allowed connects |
+| Allowed-connect latency added, p99 (target ≤ 50 µs) | +0.2 µs (run 2), +1.4 µs (run 1) | met |
+| Overhead on `cargo build`, captured (target ≤ 5 %) | +0.1 % (run 2), −1.3 % (run 1) | met |
+| Overhead on the `pnpm test` workload, captured | −0.5 % (run 2), −0.2 % (run 1), on a 120 ms workload | met, but the workload is too short to trust ([#240](https://github.com/Kunj157/wyrdline/issues/240)) |
+| Judge cost per session | not measured: needs a live `ANTHROPIC_API_KEY` | not measured ([#212](https://github.com/Kunj157/wyrdline/issues/212)) |
+
+**The checkpoint target is missed.** Checkpoint p95 is 7.22 s against a
+150 ms target, about 40× over. Even the fastest of the 20 rounds (5.00 s)
+misses it. The cost has not been profiled yet; it is tracked in
+[#239](https://github.com/Kunj157/wyrdline/issues/239).
+
+On the syscall-dense stress workload (about 7 000 effects per run), a captured
+session costs +9.4 % (run 2) and +9.7 % (run 1). That is above the 5 % budget
+the plan sets for build and test workloads, and inside the 12 % regression
+bound. The earlier sensor numbers and the design history are in
+[sensor performance](docs/results/perf-sensor.md) and
+[Studio performance](docs/results/studio-perf.md).
 
 ## How it compares
 

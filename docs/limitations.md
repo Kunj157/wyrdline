@@ -53,7 +53,7 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
 |---|---|
 | `wyrd-sensord` not running, or no systemd user manager (the Cell gets no cgroup of its own) | No kernel effects at all. Tool calls, MCP traffic, OTLP spans, policy decisions, and checkpoints are still recorded; the correlator has nothing to attribute; the divergence rules that judge effects (writes, reads, connects, unlinks: most of D002–D008) cannot fire; `on-effect` and `exec-deny` do not run; the egress allow-list is **not** enforced. |
 | Sensor connection lost mid-run | `meta.sensor.lost`, Degraded; effects between loss and `meta.sensor.resumed` are missing. |
-| Ring-buffer overflow | Effects were dropped; the count is recorded in-chain (`drops_since_last` on the next event) and `wyrd run` warns. The ring buffer is 64 MiB by default (`wyrd-sensord --ringbuf-mb`); in measurements it held 200 000 events/s with zero loss ([sensor performance](results/perf-sensor.md)). Events a slow client's queue refuses are counted the same way (#217). A loss after a session's last captured effect has no later effect to carry the count, so it does not reach the ledger; fixing that needs a ledger schema change. |
+| Ring-buffer overflow | Effects were dropped; the count is recorded in-chain (`drops_since_last` on the next event) and `wyrd run` warns. The ring buffer is 64 MiB by default (`wyrd-sensord --ringbuf-mb`); in the 1.0 measurements (run 2) it received 200 000 events paced at 49 863 events/s with none dropped, and 216 439 events/s unpaced with none dropped ([performance](results/perf-v1.0.md)). Events a slow client's queue refuses are counted the same way (#217). A loss after a session's last captured effect has no later effect to carry the count, so it does not reach the ledger; fixing that needs a ledger schema change. |
 | Landlock ABI < 4 | TCP port rules cannot be enforced; the session says so and is Degraded. |
 | Landlock, cgroup v2, or overlayfs in user namespaces absent | No Cell mode: `wyrd run` needs `--observe`, which records intent (and effects, if the sensor runs) but has no sandbox, no checkpoints, no rewind, and does not enforce the policy's kernel rules. |
 | BPF LSM not enabled | Exec denial is detect-and-stop (below). Nothing else changes; BPF LSM is optional. |
@@ -117,7 +117,8 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
   at lower confidence. The regex claim extractor alone scores F1 0.86
   on the committed eval set ([baseline](results/evals-baseline.json));
   the model-backed extractor adds recall, costs money (capped at
-  `WYRD_LLM_MAX_COST_USD`, 0.50 by default), and only ever adds claims
+  `WYRD_LLM_MAX_COST_USD`, 0.50 by default; the cost per session has not
+  been measured from live runs, [#212](https://github.com/Kunj157/wyrdline/issues/212)), and only ever adds claims
   whose quote is a verbatim substring of the transcript.
 - **Redaction is pattern-based.** The `standard` level catches known
   secret formats, auth headers, URL passwords, and high-entropy tokens;
@@ -165,6 +166,10 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
 
 ## Operational
 
+- **Checkpoints are slow for large changes.** At 1.0 the checkpoint p95
+  was 7.22 s for 200 files and a 50 MB delta, against a 150 ms target; the
+  target is missed and tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239)
+  ([performance](results/perf-v1.0.md)).
 - `wyrd-sensord` runs as root, not as a dedicated user. After it attaches
   its programs it keeps only `CAP_BPF`; the unit's comments explain why it
   is not a dedicated user yet ([install](install.md#3-install-the-sensor)).
