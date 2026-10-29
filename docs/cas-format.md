@@ -8,7 +8,7 @@ Used for Cell checkpoints and, later, bundle content.
 <root>/
 ├── FORMAT                 # "wyrdline.cas.v1"
 ├── chunks/ab/cd/<hex>     # zstd(level 3) of the chunk bytes; <hex> = BLAKE3 of the *uncompressed* bytes
-└── tmp/                   # staging for atomic writes (write → fsync → rename)
+└── tmp/                   # staging for atomic writes (write → rename; see Durability)
 ```
 
 Every read decompresses and re-hashes the chunk; a mismatch is reported as
@@ -64,3 +64,31 @@ materialising), symlinks have targets, only files have chunks.
 
 Mark from root manifest hashes, sweep every unreferenced chunk. `dry_run`
 reports without deleting.
+
+## Durability
+
+`put`, `put_stream`, `put_manifest` and `snapshot` are durable: when they
+return, the chunk, its directory entry and the write are on disk (the file
+is synced, renamed, and the chunk directory is synced).
+
+A checkpoint uses the `_unsynced` variants inside the freeze and then one
+`Cas::sync()`, which is a `syncfs` on the store's filesystem:
+
+1. inside the freeze, changed files are chunked and written to `tmp/`, then
+   renamed into `chunks/`, with no sync;
+2. the cgroup is thawed;
+3. the manifest is written and renamed, with no sync;
+4. `Cas::sync()` (the barrier);
+5. only then is the `CheckpointCreated` event appended to the ledger.
+
+So the ledger never names a chunk or manifest that is not on disk: a crash
+before step 5 leaves at most unreferenced chunks, which `gc` removes. The
+crash ordering is argued from the steps above; a unit test checks the
+read-back of an unsynced batch after `sync`, not a crash.
+
+An unsynced chunk may already exist when a later durable `put` finds it, so
+a durable `put` of an existing chunk also calls `sync()` before returning.
+
+The earlier per-chunk `put` did not sync the directory after the rename, so
+a crash could lose a chunk the ledger named. The durable path now does.
+
