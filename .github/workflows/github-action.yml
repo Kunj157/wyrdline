@@ -40,6 +40,7 @@ jobs:
           bash integrations/github-action/tests/install.test.sh
           bash integrations/github-action/tests/sensord.test.sh
           bash integrations/github-action/tests/hub-upload.test.sh
+          bash integrations/github-action/tests/action-hub-step.test.sh
       - name: shellcheck
         run: shellcheck integrations/github-action/scripts/*.sh integrations/github-action/tests/*.sh
       - name: The example workflow is valid
