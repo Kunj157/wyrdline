@@ -138,6 +138,10 @@ impl Ledger {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )?;
         configure(&conn)?;
+        // The schema is the file's first commit, and the session record already
+        // says the ledger exists. Commit it fully synced: with `synchronous=NORMAL`
+        // a crash could leave an empty file. Later appends keep NORMAL.
+        conn.pragma_update(None, "synchronous", "FULL")?;
         conn.execute_batch(SCHEMA_SQL)?;
         conn.execute_batch(projections::SCHEMA_SQL)?;
         let tx = conn.unchecked_transaction()?;
@@ -152,6 +156,7 @@ impl Ledger {
             )?;
         }
         tx.commit()?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         Ok(Ledger {
             conn,
             path,
@@ -168,6 +173,28 @@ impl Ledger {
         let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         configure(&conn)?;
         Self::from_conn(conn, path)
+    }
+
+    /// Make every event appended so far durable: `synchronous=FULL`, then a
+    /// full checkpoint of the write-ahead log into the database file, which
+    /// resets the log. SQLite's `NORMAL` does not sync a commit, so this is
+    /// the barrier for the one point that needs it: a session's events must be
+    /// on disk before the session is made visible (import). Ordinary appends
+    /// do not call it.
+    pub fn sync(&self) -> Result<()> {
+        self.conn.pragma_update(None, "synchronous", "FULL")?;
+        let busy: i64 =
+            self.conn
+                .query_row(&format!("PRAGMA wal_checkpoint({})", "TRUNCATE"), [], |r| {
+                    r.get(0)
+                })?;
+        self.conn.pragma_update(None, "synchronous", "NORMAL")?;
+        if busy != 0 {
+            return Err(LedgerError::Commit(
+                "the log could not be checkpointed (a reader is busy)".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Open read-only (used by `verify`).

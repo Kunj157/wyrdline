@@ -480,3 +480,26 @@ fn throughput_at_least_150k_events_per_second() {
     eprintln!("ledger ingest: {rate:.0} events/s");
     assert!(rate >= 150_000.0, "{rate:.0} events/s");
 }
+
+#[test]
+fn sync_moves_the_appended_events_into_the_database_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.wyrdledger");
+    let mut l = Ledger::create(&path, "sess-sync").unwrap();
+    l.append(sample(3)).unwrap();
+    let wal = dir.path().join("s.wyrdledger-wal");
+    // Appends are in the write-ahead log, not yet in the database file.
+    assert!(
+        std::fs::metadata(&wal).map_or(0, |m| m.len()) > 0,
+        "the appends are in the log"
+    );
+    l.sync().unwrap();
+    // The checkpoint resets the log, so the events now live in the database file.
+    assert_eq!(
+        std::fs::metadata(&wal).map_or(0, |m| m.len()),
+        0,
+        "the log was reset"
+    );
+    assert_eq!(l.events_after(0, 100).unwrap().len(), 3);
+    verify(&path).unwrap();
+}
