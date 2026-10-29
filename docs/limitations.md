@@ -5,7 +5,7 @@ when the machine lacks a capability. Everything here is also stated
 where it applies (the threat model, the policy guide, `wyrd doctor`);
 this page collects it.
 
-## Not in the first release
+## Out of scope for 1.0
 
 By decision (plan scope, not for lack of time):
 
@@ -53,7 +53,7 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
 |---|---|
 | `wyrd-sensord` not running, or no systemd user manager (the Cell gets no cgroup of its own) | No kernel effects at all. Tool calls, MCP traffic, OTLP spans, policy decisions, and checkpoints are still recorded; the correlator has nothing to attribute; the divergence rules that judge effects (writes, reads, connects, unlinks: most of D002–D008) cannot fire; `on-effect` and `exec-deny` do not run; the egress allow-list is **not** enforced. |
 | Sensor connection lost mid-run | `meta.sensor.lost`, Degraded; effects between loss and `meta.sensor.resumed` are missing. |
-| Ring-buffer overflow | Effects were dropped; the count is recorded in-chain (`drops_since_last` on the next event) and `wyrd run` warns. The ring buffer is 64 MiB by default (`wyrd-sensord --ringbuf-mb`); in measurements it held 200 000 events/s with zero loss ([sensor performance](results/perf-sensor.md)). |
+| Ring-buffer overflow | Effects were dropped; the count is recorded in-chain (`drops_since_last` on the next event) and `wyrd run` warns. The ring buffer is 64 MiB by default (`wyrd-sensord --ringbuf-mb`); in the 1.0 measurements (run 2) it received 200 000 events paced at 49 863 events/s with none dropped, and 216 439 events/s unpaced with none dropped ([performance](results/perf-v1.0.md)). Events a slow client's queue refuses are counted the same way (#217). A loss after a session's last captured effect has no later effect to carry the count, so it does not reach the ledger; fixing that needs a ledger schema change. |
 | Landlock ABI < 4 | TCP port rules cannot be enforced; the session says so and is Degraded. |
 | Landlock, cgroup v2, or overlayfs in user namespaces absent | No Cell mode: `wyrd run` needs `--observe`, which records intent (and effects, if the sensor runs) but has no sandbox, no checkpoints, no rewind, and does not enforce the policy's kernel rules. |
 | BPF LSM not enabled | Exec denial is detect-and-stop (below). Nothing else changes; BPF LSM is optional. |
@@ -102,7 +102,8 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
 - **Attribution has confidence levels.** `direct` (1.0) comes from a
   matched exec or a touched target path; `window` (0.8) from a single
   open call window; `ambiguous` lists candidates and picks none. The
-  kernel keeps 8 arguments of 64 bytes each per exec, so a wrapped
+  kernel keeps the first 8 arguments of each exec, up to 63 bytes of
+  each, so a wrapped
   command (`bash -c -l "source …; eval '<cmd>'"`) is matched by its
   window rather than its text. The published precision and recall
   ([attribution](results/attribution.md)) are on synthetic sessions
@@ -116,7 +117,8 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
   at lower confidence. The regex claim extractor alone scores F1 0.86
   on the committed eval set ([baseline](results/evals-baseline.json));
   the model-backed extractor adds recall, costs money (capped at
-  `WYRD_LLM_MAX_COST_USD`, 0.50 by default), and only ever adds claims
+  `WYRD_LLM_MAX_COST_USD`, 0.50 by default; the cost per session has not
+  been measured from live runs, [#212](https://github.com/Kunj157/wyrdline/issues/212)), and only ever adds claims
   whose quote is a verbatim substring of the transcript.
 - **Redaction is pattern-based.** The `standard` level catches known
   secret formats, auth headers, URL passwords, and high-entropy tokens;
@@ -133,17 +135,28 @@ The short version: Claude Code is wired automatically and verified
 against recorded payloads and real runs; Codex CLI and Gemini CLI need
 a one-time hook registration and have **not been verified in a live
 run** on the development machine; a generic MCP client is covered only
-for the servers you wrap with `wyrd mcp-proxy`; OTLP covers
-`execute_tool` spans. Kernel effects are captured for every agent
+for the servers you wrap with `wyrd mcp-proxy`; `wyrd mcp` lets an agent
+read its own session and request a rewind, which a person must confirm;
+OTLP covers `execute_tool` spans. Kernel effects are captured for every agent
 regardless.
+
+The MCP gateway's tool pins (a tool that changes its description or schema
+is flagged, D009) are kept in each session's `mcp-pins.json`, so they survive
+a restart of that session's gateway (#233). They are per session: a server
+that changes between two separate `wyrd run`s is not flagged. `wyrd mcp`
+returns session text as quoted data, cut at 200 items and 32 KiB per block
+(#235).
 
 ## Studio
 
 - WebGPU is used when the browser offers it, with Canvas2D and SVG
-  fallbacks and a table view. The 60 fps target at 200 000 events on a
-  laptop GPU has not been measured on real hardware
-  ([studio performance](results/studio-perf.md)); Canvas2D holds 60 fps
-  at 200 000 events in headless Chromium.
+  fallbacks and a table view. The committed measurements
+  ([studio performance](results/studio-perf.md)) are: Canvas2D at 60 fps
+  (p95 frame 16.8 ms) with 200 000 events in headless Chromium; WebGPU
+  on a CPU software rasteriser (SwiftShader) at 30 fps (p95 frame
+  33.2 ms) with the same events. The 60 fps target on a real GPU has not
+  been measured: there is no GPU on the development machine or the CI
+  runners.
 - Monotonic timestamps above 2^53 ns (about 104 days of uptime) lose
   precision in the browser; ordering always uses `seq`.
 - Offline replay (`?offline=`) accepts an events export from the same
@@ -153,6 +166,13 @@ regardless.
 
 ## Operational
 
+- **Checkpoints are slow for large changes.** At 1.0 the checkpoint p95
+  was 7.22 s for 200 files and a 50 MB delta, against a 150 ms target; the
+  target is missed and tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239)
+  ([performance](results/perf-v1.0.md)).
+- `wyrd-sensord` runs as root, not as a dedicated user. After it attaches
+  its programs it keeps only `CAP_BPF`; the unit's comments explain why it
+  is not a dedicated user yet ([install](install.md#3-install-the-sensor)).
 - `wyrd run` owns a live session. `wyrdd` reads the ledger read-only
   and reaches a running session only through its intent socket; a
   rewind or fork with relaunch requested from Studio starts a detached

@@ -76,7 +76,7 @@ CHANGE`. Unknown fields are rejected on decode.
 | | `intent.tool_call.finished` | `call_id`, status, exit code, short redacted summary, duration |
 | | `intent.tool_call.denied` | `call_id`, policy, reason |
 | | `intent.mcp.request`, `intent.mcp.response` | MCP traffic through the gateway, redacted |
-| effect | `effect.proc.exec`, `effect.proc.fork`, `effect.proc.exit` | program and argv (first 8 arguments, 64 bytes each), child pid, exit code |
+| effect | `effect.proc.exec`, `effect.proc.fork`, `effect.proc.exit` | program and argv (the first 8 arguments, up to 63 bytes each; a 64-byte kernel buffer with its terminator), child pid, exit code |
 | | `effect.file.open_write`, `effect.file.write`, `effect.file.rename`, `effect.file.unlink`, `effect.file.mkdir`, `effect.file.chmod`, `effect.file.truncate` | the path (and the second path for renames), whether it is inside the Cell |
 | | `effect.file.read_sensitive` | a read of a secret-classified path (path only; contents are never captured) |
 | | `effect.net.connect` | family, address, port, the most recent DNS name that resolved to the address in this session, verdict (`attempt` / `allowed` / `denied`) |
