@@ -3,6 +3,7 @@
 //! owns that cgroup. No network, no persistent storage.
 #![forbid(unsafe_code)]
 
+use rustix::thread::CapabilitySet;
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -91,6 +92,28 @@ fn main() {
     }
 }
 
+/// Capabilities the daemon keeps once the programs are attached. `CAP_BPF`
+/// is the one still in use: the `bpf()` syscalls that register cgroups,
+/// change egress rules, attach enforcement and read counters. The privileged
+/// tests run these paths with this set alone (`CAP_PERFMON` was dropped after
+/// a test run without it). Reading events from the ring buffer, `SO_PEERCRED`
+/// checks and cgroup `stat` calls need no capability. Dropped after loading:
+/// `CAP_PERFMON` (the tracepoint programs need it to load), `CAP_NET_ADMIN`
+/// (the connect programs need it to load), and `CAP_SYS_ADMIN`,
+/// `CAP_DAC_READ_SEARCH`, `CAP_SYS_RESOURCE`, which the unit does not grant.
+/// See deploy/systemd/wyrd-sensord.service.
+const RUNTIME_CAPS: CapabilitySet = CapabilitySet::BPF;
+
+fn keep_runtime_caps() -> Result<(), String> {
+    let mut sets = rustix::thread::capabilities(None).map_err(|e| format!("capget: {e}"))?;
+    sets.effective &= RUNTIME_CAPS;
+    sets.permitted &= RUNTIME_CAPS;
+    sets.inheritable = CapabilitySet::empty();
+    rustix::thread::set_capabilities(None, sets).map_err(|e| format!("capset: {e}"))?;
+    tracing::info!("kept the runtime capabilities only (BPF)");
+    Ok(())
+}
+
 fn run(args: &Args) -> Result<(), String> {
     let bytes = args
         .ringbuf_kb
@@ -114,6 +137,10 @@ fn run(args: &Args) -> Result<(), String> {
     std::fs::set_permissions(&args.socket, std::fs::Permissions::from_mode(0o666))
         .map_err(|e| e.to_string())?;
     tracing::info!(socket = %args.socket.display(), "listening");
+    // Once the socket exists, before any thread starts: capabilities are per
+    // thread, and threads inherit the set they are created with. Creating the
+    // socket needed CAP_DAC_OVERRIDE for a directory the daemon does not own.
+    keep_runtime_caps()?;
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
     std::thread::Builder::new()

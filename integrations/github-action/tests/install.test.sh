@@ -16,10 +16,13 @@ asset="wyrdline-${arch}-unknown-linux-gnu.tar.gz"
 # A release directory: binaries in a subdirectory, as cargo-dist lays out.
 make_release() {
   local dir=$1
-  mkdir -p "$dir/pkg/wyrdline"
-  printf '#!/bin/sh\necho "wyrd 0.0.0-test"\n' >"$dir/pkg/wyrdline/wyrd"
-  printf '#!/bin/sh\nexit 0\n' >"$dir/pkg/wyrdline/wyrd-sensord"
-  chmod +x "$dir/pkg/wyrdline/"*
+  # The real layout: binaries in bin/, and an AppArmor profile that has the
+  # same file name as a binary (the arm64 release run picked it up).
+  mkdir -p "$dir/pkg/wyrdline/bin" "$dir/pkg/wyrdline/deploy/apparmor"
+  printf '#!/bin/sh\necho "wyrd 0.0.0-test"\n' >"$dir/pkg/wyrdline/bin/wyrd"
+  printf '#!/bin/sh\nexit 0\n' >"$dir/pkg/wyrdline/bin/wyrd-sensord"
+  printf 'abi <abi/4.0>,\ninclude <tunables/global>\n' >"$dir/pkg/wyrdline/deploy/apparmor/wyrd"
+  chmod +x "$dir/pkg/wyrdline/bin/"*
   tar -czf "$dir/$asset" -C "$dir/pkg" wyrdline
   (cd "$dir" && sha256sum "$asset" >SHA256SUMS)
 }
@@ -116,9 +119,9 @@ cp "$tmp/sums.bak" "$rel/SHA256SUMS"
 
 expect 1 "missing release: refused" "WYRD_RELEASE_BASE=file://$tmp/nowhere"
 
-expect 0 "prebuilt binaries via wyrd-path" "WYRD_PATH=$rel/pkg/wyrdline"
-rm "$rel/pkg/wyrdline/wyrd-sensord"
-expect 1 "wyrd-path without wyrd-sensord: refused" "WYRD_PATH=$rel/pkg/wyrdline"
+expect 0 "prebuilt binaries via wyrd-path" "WYRD_PATH=$rel/pkg/wyrdline/bin"
+rm "$rel/pkg/wyrdline/bin/wyrd-sensord"
+expect 1 "wyrd-path without wyrd-sensord: refused" "WYRD_PATH=$rel/pkg/wyrdline/bin"
 
 echo "install.sh: $pass passed, $fail failed"
 [ "$fail" = 0 ]
