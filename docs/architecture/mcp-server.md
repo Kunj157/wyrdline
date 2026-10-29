@@ -20,6 +20,39 @@ a tool error (`isError: true`); malformed calls are JSON-RPC errors
 JSON are answered with an error and serving continues. The server speaks
 protocol revisions 2024-11-05, 2025-03-26, and 2025-06-18 over stdio.
 
+## Untrusted text
+
+Much of what these tools return was written by the agent or by programs it
+ran: a rewind reason, command lines, file names, transcript quotes in
+divergence evidence, and tool summaries. The tools return it as data, not
+prose:
+
+- Every tool result opens with fixed text from wyrdline (a `request_rewind`
+  result begins `status: pending human confirmation (set by wyrdline)`,
+  then its fixed message). Session data follows in one block between
+  `<<<DATA` and `DATA>>>`, as JSON.
+- Control characters, ANSI escapes, bidi and zero-width characters, line
+  breaks, and the Unicode tag block are shown as visible escapes (for
+  example `\u{1b}`, `\n`). A literal backslash is escaped too, so a
+  written escape cannot be mistaken for one. `<` and `>` are escaped in the
+  block, so no data can close it early.
+- Each string is bounded at 1000 characters; a cut is marked
+  `…[truncated: N more characters]`.
+- Each list keeps its first 200 items, and the JSON in the block is at most
+  32 KiB. When anything is left out, the fixed text says how many entries
+  were left out and that the tools take no paging arguments; the result
+  then carries `wyrdline_omitted_entries` in `structuredContent`. A short
+  result has neither.
+- `structuredContent` carries the same sanitized values.
+- Protocol errors are fixed prose. An unknown tool is `unknown tool` and an
+  unknown method is `method not found`; the name the agent sent appears
+  only in the JSON-RPC `data`, as a quoted block.
+- A tool that fails (`isError: true`) returns its message as a quoted block
+  too, because the message can echo the agent's input.
+
+The same rule applies to a human reading a result: the block is data, and
+only the fixed text is wyrdline's own.
+
 ## Binding
 
 The server serves exactly one session:
@@ -94,8 +127,8 @@ wyrd rewind <id> --requests
 Recorded results: `tools/list --strict` lists all five tools with their
 input schemas and annotations (four read-only, `request_rewind` not
 read-only and not destructive). `list_checkpoints` answers with the
-checkpoint `c1`. `request_rewind` answers `pending human confirmation`
-with `isError: false`, the request is listed as `pending` by
+checkpoint `c1`. `request_rewind` answers with the fixed status line
+`status: pending human confirmation (set by wyrdline)` and `isError: false`, the request is listed as `pending` by
 `wyrd rewind <id> --requests`, and the session is unchanged until a human
 decides. Unknown checkpoints and seqs come back as tool errors
 (`isError: true`); that path, and the rest of the protocol behaviour, is
