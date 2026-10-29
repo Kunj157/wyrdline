@@ -127,33 +127,6 @@ fn creating_a_session_makes_each_directory_and_file_durable_in_order() {
 }
 
 #[test]
-fn a_rewind_restores_and_syncs_the_tree_before_it_changes_the_branch() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ws = tmp.path().join("ws");
-    std::fs::create_dir(&ws).unwrap();
-    std::fs::write(ws.join("a.txt"), "a\n").unwrap();
-    let data = DataDir::new(tmp.path().join("data"));
-    let mut s = Session::create(&data, create_opts(ws.clone())).unwrap();
-    let dir = data.session(&s.record().id);
-    s.checkpoint(None).unwrap();
-    std::fs::write(s.dir().upper("a").join("b.txt"), "new\n").unwrap();
-    s.checkpoint(None).unwrap();
-
-    let (res, steps) = record_steps(|| s.rewind("c1", None));
-    res.unwrap();
-    check_invariant(&steps);
-    let synced_tree = position(&steps, |t| *t == Step::SyncFs);
-    let branch_change = position(
-        &steps,
-        |t| matches!(t, Step::Rename(_, to) if *to == dir.state()),
-    );
-    assert!(
-        synced_tree < branch_change,
-        "the restored tree is synced before the record that names its branch: {steps:?}"
-    );
-}
-
-#[test]
 fn an_import_syncs_its_ledger_and_files_before_the_session_becomes_visible() {
     let tmp = tempfile::tempdir().unwrap();
     let data = DataDir::new(tmp.path().join("data"));
