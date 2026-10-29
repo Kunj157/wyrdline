@@ -60,10 +60,10 @@ deny-rust:
 deny-web:
 	$(PNPM) audit --prod --audit-level high
 
-test-perf: ## Throughput and overhead measurements (release build, needs sudo; cleaned afterwards)
-	$(CARGO) nextest run --workspace --release --locked --features wyrd-sensord/privileged-tests \
-		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1
-	$(CARGO) clean --release
+test-perf: ## Throughput, overhead and latency measurements (release build, needs sudo; cleaned afterwards)
+	s=0; $(CARGO) nextest run --workspace --release --locked --features wyrd-sensord/privileged-tests \
+		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1 --no-fail-fast || s=$$?; \
+		$(CARGO) clean --release; exit $$s
 
 e2e-build:
 	$(CARGO) build --locked -p wyrdd --bin wyrdd --example e2e_fixture
@@ -94,8 +94,9 @@ test-integration: ## Privileged Cell, scenario, and sensor tests (through passwo
 test-escape: ## The escape suite: an agent in a Cell tries to get around every enforcement layer (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test escape
 
-test-hub: ## Hub tests, including Postgres 17 and MinIO in containers (needs Docker)
-	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests
+test-hub: ## Hub lint and tests with analytics (DuckDB), Postgres 17 and MinIO in containers (needs Docker)
+	$(CARGO) clippy --locked -p wyrd-hub --all-targets --features wyrd-hub/container-tests,wyrd-hub/analytics -- -D warnings
+	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests,wyrd-hub/analytics
 
 demo: ## The plan §2 demo with the scripted agent: victim shop, Cell, sensor, default policy (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test demo --no-capture

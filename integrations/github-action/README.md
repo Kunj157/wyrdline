@@ -90,6 +90,22 @@ needed (`.github/workflows/github-action.yml`).
 `session-id`, `bundle-path`, `divergence-count` (open), `agent-exit-code`,
 `artifact-url`, `sensor` (`running` or `degraded`).
 
+## Uploading a bundle to a Hub
+
+`integrations/github-action/scripts/hub-upload.sh` uploads a `.wyrd` bundle
+to a Hub from a job with `permissions: id-token: write`. Set `WYRD_HUB_URL`,
+`WYRD_HUB_ORG`, and `WYRD_BUNDLE`; it exchanges the job's OIDC token for an
+upload token and uploads the bundle. A bundle the organisation already has
+is reported, not stored twice. It writes two outputs to `$GITHUB_OUTPUT`:
+
+- `hub-bundle-id`: the bundle's id on the Hub.
+- `hub-bundle-url`: `<hub>/api/v1/bundles/<id>`, the bundle's API resource
+  (the JSON record; `/download` on the same path fetches the file). The Hub
+  has no page per bundle, so this is an API address, not a web page.
+
+The `hub-url` input above is reserved and does not upload yet; call the
+script from a workflow step.
+
 ## Release asset contract
 
 The installer expects, per release: `wyrdline-<arch>-unknown-linux-gnu.tar.gz`

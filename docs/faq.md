@@ -70,14 +70,13 @@ is invisible to the sensor ([sensor](architecture/sensor.md)).
 
 ### How much does capture cost?
 
-Under 2 % on a `cargo build` with the sensor capturing (+0.8 % on the
-workstation, +1.5 % on a hosted runner), and 0.2–1.2 % for every other
-process on the machine while the sensor is loaded; a syscall-dense
-stress workload costs 6–9 %. The sensor sustained 196 692 events/s with
-zero drops. Numbers and method:
-[sensor performance](results/perf-sensor.md). A denied connect adds
-nothing measurable (2.8 µs at p99, less than an allowed one):
-[enforcement](results/enforcement.md).
+On a `cargo build` with the sensor capturing, the overhead measured between
+−1.3 % and +0.1 % across two runs on a shared machine. A syscall-dense stress
+workload (about 7 000 effects per run) costs +9.4 % and +9.7 % in the same two
+runs, above the 5 % budget for build and test workloads. The sensor received
+200 000 events paced at 49 863 events/s with none dropped. Numbers, machine,
+and method: [performance at v1.0](results/perf-v1.0.md). The enforcement
+latency of a denied connect is in [enforcement](results/enforcement.md).
 
 ### Where does my data go?
 
@@ -149,20 +148,19 @@ Export it (`wyrd export <session> -o x.wyrd`, strict redaction by
 default) and give them the file. Any `wyrd` verifies it
 ([bundle format](bundle-format.md)); Studio opens the bundle
 offline (`wyrd open`, or its file picker and drag-and-drop), as well as
-an events export. The
-Hub (Phase 12, in progress) is the team server for bundles: roles,
-search, and shared annotations.
+an events export. To share a session with a whole team, upload the
+bundle to the Hub: see [the Hub](hub.md).
 
 ### Does it run in CI?
 
-A GitHub Action is being assembled in `integrations/github-action`
-(Phase 13): its installer downloads a release and verifies the checksum
-and the cosign signature, its sensor script installs and starts
-`wyrd-sensord` on the runner and refuses to run the agent unprotected
-unless told otherwise, and its reporter renders the divergences as a
-job summary and one pull-request comment. The composite action that
-ties them around `wyrd run` is in place (#160); the Hub upload through
-the job's OIDC token (no secret to store) is open as #161.
+Yes. The GitHub Action in `integrations/github-action` runs `wyrd run`
+around your agent on a runner. Its installer downloads a release and
+verifies the checksum and the cosign signature; its sensor script
+installs and starts `wyrd-sensord` on the runner and refuses to run the
+agent unprotected unless `WYRD_ALLOW_DEGRADED=true` is set; and its
+reporter renders the divergences as a job summary and one pull-request
+comment. A job can also upload its bundle to a Hub with the job's OIDC
+token, so no secret is stored ([the Hub](hub.md)).
 
 ### What does it not do?
 

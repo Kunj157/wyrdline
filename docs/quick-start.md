@@ -11,6 +11,8 @@ installed.
 wyrd doctor
 ```
 
+Example output (an Ubuntu 24.04 workstation; yours will differ):
+
 ```
 Wyrdline doctor — kernel 6.17.0-14-generic
 
@@ -63,14 +65,15 @@ What happens:
   (or Studio) lists and answers it; unanswered after `--ask-timeout`
   (30 s) it is denied.
 
-`wyrd run` prints the session id at start and a summary at the end:
+`wyrd run` prints the session id at start and a summary at the end
+(the counts below are placeholders):
 
 ```
-wyrd: session 01k7… started
-wyrd: policy default b3:3f9c…
+wyrd: session <id> started
+wyrd: policy default b3:<hash>…
 …
-wyrd: session 01k7… finished (exit 0); branch a, 12 checkpoint(s)
-wyrd: 3 divergence(s); see `wyrd divergences 01k7…`
+wyrd: session <id> finished (exit <code>); branch a, <n> checkpoint(s)
+wyrd: <n> divergence(s); see `wyrd divergences <id>`
 ```
 
 Useful variants:
@@ -97,15 +100,16 @@ wyrd divergences <session>          # claims and effects that disagree (rules D0
 wyrd tail <session>                 # follow a session that is still running
 ```
 
-`wyrd graph` prints one block per tool call:
+`wyrd graph` prints one block per tool call. Illustrative output, with
+made-up ids and counts:
 
 ```
-● toolu_01Hx… Bash pnpm test -- cart  [finished]  41 effect(s)
-       312  direct    exec /usr/bin/node /home/dev/shop/node_modules/.bin/vitest run cart
-       318  direct    write /home/dev/shop/node_modules/.vite/results.json
-○ not caused by a single tool call: 2
-       401  ambiguous     write /home/dev/shop/dist/out.js (one of toolu_01Jk…, toolu_01Jm…)
-9 call(s), 211 effect(s): ambiguous 2, direct 203, window 6
+● <tool call id> Bash <command>  [finished]  <n> effect(s)
+       <seq>  direct    exec <program> <args>
+       <seq>  direct    write <path>
+○ not caused by a single tool call: <n>
+       <seq>  ambiguous     write <path> (one of <call id>, <call id>)
+<n> call(s), <n> effect(s): ambiguous <n>, direct <n>, window <n>
 ```
 
 `--plane` takes `meta`, `intent`, `effect`, `state`, `guard`, or
@@ -140,6 +144,17 @@ wyrd apply <session> head           # write it; refuses (exit 4) if you changed 
 
 Old branches are never modified; `apply` is the only command that
 touches the real working tree.
+
+An agent connected through `wyrd mcp` can ask for a rewind but cannot do
+one itself. The request is recorded in the ledger and waits for you:
+
+```sh
+wyrd rewind <session> --requests              # the agent's pending requests
+wyrd rewind <session> --confirm <id> --relaunch   # rewind; the request id is the event's seq
+wyrd rewind <session> --reject <id> --note "…"    # or decline it
+```
+
+The same confirm and reject actions are in Studio's session view.
 
 ## 5. Seal, verify, export (10 s)
 

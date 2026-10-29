@@ -137,3 +137,43 @@ async fn sync_needs_the_database_and_says_so() {
     let text = common::get(&offline(), "/metrics").await.text();
     assert!(text.contains("wyrd_hub_sync_clients 0"), "{text}");
 }
+
+#[tokio::test]
+async fn serves_the_studio_with_its_own_csp() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("index.html"),
+        "<!doctype html><title>Studio</title>",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("app.js"), "console.log(1)").unwrap();
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let s3 = S3Config {
+        endpoint: format!("http://{}", closed.local_addr().unwrap()),
+        bucket: "wyrd-test".into(),
+        region: "us-east-1".into(),
+        access_key_id: "x".into(),
+        secret_access_key: Secret::new(common::throwaway()),
+    };
+    let mut config = common::config("postgres://nowhere.invalid/hub", s3.clone());
+    config.studio_dir = Some(dir.path().to_path_buf());
+    let app = app(Arc::new(AppState::new(config, Storage::new(s3))));
+    let page = common::get(&app, "/hub/search").await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(
+        page.text().contains("<title>Studio</title>"),
+        "single-page routes get index.html"
+    );
+    let csp = page.headers["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    assert_eq!(common::get(&app, "/app.js").await.text(), "console.log(1)");
+    let api = common::get(&app, "/api/v1/nope").await;
+    assert_eq!(api.status, StatusCode::NOT_FOUND);
+    assert_eq!(api.headers["content-type"], "application/problem+json");
+    assert!(
+        api.headers["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .starts_with("default-src 'none'")
+    );
+}

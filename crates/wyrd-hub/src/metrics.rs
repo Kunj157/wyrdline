@@ -48,6 +48,21 @@ const FAMILIES: &[(&str, &str, &str)] = &[
         "Retention sweeps run.",
     ),
     (
+        "wyrd_hub_query_seconds",
+        "histogram",
+        "Analytics query latency (stats, search).",
+    ),
+    (
+        "wyrd_hub_projection_rebuilds_total",
+        "counter",
+        "Parquet projections rebuilt from stored bundles.",
+    ),
+    (
+        "wyrd_hub_ci_token_exchanges_total",
+        "counter",
+        "GitHub Actions OIDC token exchanges by outcome.",
+    ),
+    (
         "wyrd_hub_ready",
         "gauge",
         "1 when the database is connected and migrated.",

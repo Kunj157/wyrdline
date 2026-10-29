@@ -21,18 +21,23 @@ Linux only, x86_64 or aarch64 ([requirements](#kernel-requirements)).
 Each GitHub release carries, for every architecture:
 
 ```
-wyrdline-x86_64-unknown-linux-gnu.tar.gz     the binaries
-wyrdline-aarch64-unknown-linux-gnu.tar.gz
+wyrdline-<arch>-unknown-linux-gnu.tar.gz    wyrdline/bin/{wyrd,wyrdd,wyrd-sensord,wyrd-hub},
+                                            wyrdline/share/wyrdline/studio, deploy/ (sensor unit, AppArmor profile)
+wyrdline_<version>_<amd64|arm64>.deb         /usr/bin binaries, the sensor unit and AppArmor profile, the Studio
+wyrdline-<binary>-<target>.cdx.json          CycloneDX SBOM per binary and target
 SHA256SUMS                                   sha256sum lines for every asset
 SHA256SUMS.sigstore.json                     cosign keyless signature over SHA256SUMS
 ```
 
-This is the contract the GitHub Action's installer relies on
-(`integrations/github-action/scripts/install.sh`); a release that lacks
-`SHA256SUMS` is refused by it. The release pipeline that produces these
-assets, the `.deb`, the SBOM, and the build provenance is tracked in
-issue #167; check the release notes of the version you install for the
-exact asset list.
+`<arch>` is `x86_64` or `aarch64`. Each asset also has a build-provenance
+attestation. The GitHub Action's installer relies on the archive and
+`SHA256SUMS` (`integrations/github-action/scripts/install.sh`); a release
+that lacks `SHA256SUMS` is refused by it. The `.deb` does not enable the
+sensor; the step below does.
+
+How the assets are built, signed, and checked for reproducibility, and how
+to verify them by hand, is in [releases](release.md). The Hub's container
+image and Helm chart are described in [the Hub](hub.md).
 
 ### 1. Download and verify
 
@@ -61,27 +66,30 @@ before you install: `wyrd-sensord` runs as root.
 ### 2. Install the binaries
 
 ```sh
-mkdir -p wyrdline && tar -xzf wyrdline-$(uname -m)-unknown-linux-gnu.tar.gz -C wyrdline
-sudo install -m 0755 wyrdline/wyrd wyrdline/wyrdd /usr/local/bin/
-sudo install -m 0755 wyrdline/wyrd-sensord /usr/local/bin/wyrd-sensord
+tar -xzf wyrdline-$(uname -m)-unknown-linux-gnu.tar.gz
+sudo install -m 0755 wyrdline/bin/wyrd wyrdline/bin/wyrdd wyrdline/bin/wyrd-sensord wyrdline/bin/wyrd-hub /usr/local/bin/
+sudo cp -R wyrdline/share/wyrdline /usr/local/share/
 wyrd --version
 ```
 
-Anywhere on `PATH` works for `wyrd` and `wyrdd` (the agent's hooks run
-`wyrd hook …`, so the agent must find `wyrd` too). `wyrdd` looks for the
-built Studio at `<prefix>/share/wyrdline/studio` next to its own
-`<prefix>/bin/wyrdd`; see [Studio](#studio) if the archive you installed
-has it somewhere else.
+`wyrd` must be on `PATH` for the agent too (the agent's hooks run
+`wyrd hook …`). `wyrdd` looks for the built Studio at
+`<prefix>/share/wyrdline/studio` next to its own `<prefix>/bin/wyrdd`,
+which is what the last command sets up for `/usr/local`; see
+[Studio](#studio) for other layouts.
 
 ### 3. Install the sensor
 
 The sensor is a systemd service. Its unit file is
 [`deploy/systemd/wyrd-sensord.service`](../deploy/systemd/wyrd-sensord.service):
 it starts `/usr/local/bin/wyrd-sensord --socket /run/wyrdline/sensord.sock`
-with only the capabilities loading tracepoint programs needs
-(`CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN`),
-no network (`PrivateNetwork=yes`, `AF_UNIX` only), a read-only system,
-and no access to home directories.
+as root, with a capability bounding set of `CAP_BPF CAP_PERFMON
+CAP_NET_ADMIN`: the capabilities loading its programs needs. Once the
+programs are attached it drops every capability except `CAP_BPF`, which
+its later `bpf()` calls use (#234). It runs as root rather than a dedicated
+user, because the unit's comments record why. It has no network
+(`PrivateNetwork=yes`, `AF_UNIX` only), a read-only system, no access to
+home directories, and a system-call filter.
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/Kunj157/wyrdline/$v/deploy/systemd/wyrd-sensord.service
@@ -102,7 +110,7 @@ a power of two); drops are counted in the ledger either way.
 
 `integrations/github-action/scripts/install.sh` does steps 1 and 2 for
 `wyrd` and `wyrd-sensord` (it needs `curl`, `tar`, `sha256sum`, and
-`cosign` when the release is signed):
+`cosign` unless the signature check is skipped):
 
 ```sh
 WYRD_VERSION=v1.0.0 WYRD_INSTALL_DIR=$HOME/.local/bin \
@@ -123,8 +131,8 @@ the directory to `GITHUB_PATH`.
 
 ### `.deb`
 
-A Debian package is part of the release pipeline (#167); its name and
-contents are listed in the release notes of each version. Verify its
+Each release ships a Debian package; its name and contents are listed in
+the release notes of that version. Verify its
 checksum against the signed `SHA256SUMS` as above before
 `sudo dpkg -i <file>.deb`, then check `wyrd doctor`: if the package
 did not enable the sensor, finish with step 3.
@@ -228,7 +236,7 @@ starts: `export WYRD_PRIVILEGED_HELPER=sudo` (passwordless sudo for
 | sessions, CAS, host signing key, uploaded policies | `$WYRD_DATA_DIR`, else `$XDG_DATA_HOME/wyrdline`, else `~/.local/share/wyrdline` (`sessions/<id>/ledger.wyrdledger`, `cas/`, `keys/host.key`, `policies/`) |
 | daemon token | `$XDG_STATE_HOME/wyrdline/token`, else `~/.local/state/wyrdline/token` (`wyrd token path`) |
 | daemon socket | `$WYRD_DAEMON_SOCKET`, else `$XDG_RUNTIME_DIR/wyrdline/wyrdd.sock` |
-| intent socket of a running session | `$XDG_RUNTIME_DIR/wyrdline/intent-<session>.sock` |
+| intent socket of a running session | `$XDG_RUNTIME_DIR/wyrdline/intent-<session>.sock`, else `/run/user/<uid>/wyrdline/` when that is your own runtime directory, else `intent.sock` in the session directory (#221). The path must be at most 107 bytes, so set a short `XDG_RUNTIME_DIR` if it does not fit. |
 | sensor socket | `$WYRD_SENSORD_SOCKET`, else `/run/wyrdline/sensord.sock` |
 | project configuration | `.wyrdline/config.toml`, `scope.toml`, `secrets.toml` in the workspace ([policy guide](policies/README.md)) |
 
