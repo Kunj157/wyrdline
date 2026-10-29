@@ -578,12 +578,21 @@ impl Session {
         if let Some(cg) = &frozen {
             cg.freeze()?;
         }
-        let snap = self.cas.snapshot(&self.dir.upper(&branch), base.as_ref());
+        // Chunks are written without a barrier here, inside the freeze, and
+        // made durable by one `sync` after the thaw and before the ledger
+        // records the checkpoint (see docs/cas-format.md).
+        let snap = self
+            .cas
+            .snapshot_unsynced(&self.dir.upper(&branch), base.as_ref());
         if let Some(cg) = &frozen {
             cg.thaw()?;
         }
         let (manifest, stats) = snap?;
-        let hash = self.cas.put_manifest(&manifest)?;
+        let hash = self.cas.put_manifest_unsynced(&manifest)?;
+        // The barrier: every chunk and the manifest are on disk before the
+        // ledger records a checkpoint that names them (also before the
+        // unchanged-checkpoint early return below).
+        self.cas.sync()?;
         if skip_unchanged
             && let Some(p) = &parent
             && p.manifest == hash.to_string()

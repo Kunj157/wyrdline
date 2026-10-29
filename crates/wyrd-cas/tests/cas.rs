@@ -307,3 +307,41 @@ fn special_files_are_skipped() {
     assert_eq!(stats.skipped_special, 1);
     assert_eq!(m.entries.len(), 0);
 }
+
+/// Durability cannot be observed in a unit test (a crash is not simulated).
+/// What can be checked: a batch written without a barrier, then one `sync`,
+/// reads back and verifies, and the unsynced path yields the same hashes as
+/// the durable one.
+#[test]
+fn an_unsynced_batch_reads_back_after_sync_and_matches_the_durable_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let durable = Cas::open(tmp.path().join("durable")).unwrap();
+    let batch = Cas::open(tmp.path().join("batch")).unwrap();
+    let ws = tmp.path().join("ws");
+    fs::create_dir(&ws).unwrap();
+    for i in 0..40u8 {
+        let body: Vec<u8> = (0..(20_000 + i as usize * 3_000))
+            .map(|j| (j as u8) ^ i)
+            .collect();
+        fs::write(ws.join(format!("f{i:02}")), body).unwrap();
+    }
+    let (m_durable, _) = durable.snapshot(&ws, None).unwrap();
+    let (m_batch, stats) = batch.snapshot_unsynced(&ws, None).unwrap();
+    assert_eq!(m_durable, m_batch, "the same tree gives the same manifest");
+    assert_eq!(stats.files_read, 40);
+    let mh = batch.put_manifest_unsynced(&m_batch).unwrap();
+    batch.sync().unwrap();
+    let back = batch.get_manifest(mh).unwrap();
+    assert_eq!(back, m_batch);
+    for e in &back.entries {
+        for c in &e.chunks {
+            batch.get(*c).expect("every chunk reads back and verifies");
+        }
+    }
+    // A chunk that was written unsynced and is deduplicated by a durable put
+    // is still covered by the barrier that put performs.
+    let body = vec![9u8; 5000];
+    let h = batch.put_unsynced(&body).unwrap();
+    assert_eq!(batch.put(&body).unwrap(), h);
+    assert_eq!(batch.get(h).unwrap(), body);
+}

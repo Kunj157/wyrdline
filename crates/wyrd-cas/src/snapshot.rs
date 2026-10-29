@@ -6,11 +6,12 @@ use std::io::Write as _;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_bytes::ByteBuf;
 
 use crate::manifest::{Entry, EntryKind, Manifest};
-use crate::{Cas, CasError, Result, io_err};
+use crate::{Cas, CasError, ChunkHash, Result, io_err};
 
 /// Statistics of a snapshot.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -25,6 +26,9 @@ pub struct SnapshotStats {
     /// FIFOs, sockets, and devices other than whiteouts are not captured.
     pub skipped_special: u64,
 }
+
+/// One file's stored chunks and size, or why it could not be stored.
+type Stored = (usize, Result<(Vec<ChunkHash>, u64)>);
 
 /// What [`Cas::materialize`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -47,18 +51,41 @@ fn is_opaque(path: &Path) -> bool {
 }
 
 impl Cas {
-    /// Snapshot `dir`. When `base` is given, files whose size, mtime, and
-    /// mode are unchanged reuse the base's chunk list without being read.
+    /// Snapshot `dir`, storing every changed file durably. When `base` is
+    /// given, files whose size, mtime, and mode are unchanged reuse the
+    /// base's chunk list without being read.
     pub fn snapshot(
         &self,
         dir: &Path,
         base: Option<&Manifest>,
+    ) -> Result<(Manifest, SnapshotStats)> {
+        self.snapshot_with(dir, base, true)
+    }
+
+    /// As [`Cas::snapshot`], without waiting for the disk. The result is not
+    /// durable until [`Cas::sync`] returns, and nothing may refer to it before.
+    pub fn snapshot_unsynced(
+        &self,
+        dir: &Path,
+        base: Option<&Manifest>,
+    ) -> Result<(Manifest, SnapshotStats)> {
+        self.snapshot_with(dir, base, false)
+    }
+
+    fn snapshot_with(
+        &self,
+        dir: &Path,
+        base: Option<&Manifest>,
+        durable: bool,
     ) -> Result<(Manifest, SnapshotStats)> {
         let base_index: HashMap<&[u8], &Entry> = base
             .map(|m| m.entries.iter().map(|e| (e.path.as_slice(), e)).collect())
             .unwrap_or_default();
         let mut entries = Vec::new();
         let mut stats = SnapshotStats::default();
+        // Changed files, read after the walk: each is chunked and stored by
+        // one of several workers, so a checkpoint is not one file at a time.
+        let mut pending: Vec<(usize, PathBuf)> = Vec::new();
         let mut stack: Vec<(PathBuf, Vec<u8>)> = vec![(dir.to_path_buf(), Vec::new())];
         while let Some((abs, rel)) = stack.pop() {
             let mut children: Vec<_> = fs::read_dir(&abs)
@@ -116,12 +143,7 @@ impl Cas {
                         entry.size = b.size;
                         entry.chunks.clone_from(&b.chunks);
                     } else {
-                        let f = fs::File::open(&path).map_err(io_err(&path))?;
-                        let (chunks, size) = self.put_stream(f)?;
-                        entry.size = size;
-                        entry.chunks = chunks;
-                        stats.files_read += 1;
-                        stats.bytes_read += size;
+                        pending.push((entries.len(), path.clone()));
                     }
                 } else {
                     stats.skipped_special += 1;
@@ -130,7 +152,49 @@ impl Cas {
                 entries.push(entry);
             }
         }
+        for (index, result) in self.store_files(&pending, durable) {
+            let (chunks, size) = result?;
+            entries[index].size = size;
+            entries[index].chunks = chunks;
+            stats.files_read += 1;
+            stats.bytes_read += size;
+        }
         Ok((Manifest::new(entries)?, stats))
+    }
+
+    /// Chunk and store each file, in parallel. The results are in no
+    /// particular order; the manifest is sorted by path, so it is the same
+    /// whatever the order.
+    fn store_files(&self, files: &[(usize, PathBuf)], durable: bool) -> Vec<Stored> {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZero::get)
+            .clamp(1, 8)
+            .min(files.len().max(1));
+        let next = AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
+                    s.spawn(|| {
+                        let mut done = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some((index, path)) = files.get(i) else {
+                                break;
+                            };
+                            let stored = fs::File::open(path)
+                                .map_err(io_err(path))
+                                .and_then(|f| self.put_stream_with(f, durable));
+                            done.push((*index, stored));
+                        }
+                        done
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap_or_default())
+                .collect()
+        })
     }
 
     /// Recreate `manifest` under `dest`, which must not exist or be empty.

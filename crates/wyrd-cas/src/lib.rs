@@ -36,6 +36,9 @@ pub const MIN_CHUNK: usize = 16 * 1024;
 pub const AVG_CHUNK: usize = 64 * 1024;
 pub const MAX_CHUNK: usize = 256 * 1024;
 
+/// Distinguishes staging files of concurrent writes within one process.
+static STAGING_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Format identifier written to `<root>/FORMAT`.
 pub const FORMAT_ID: &str = "wyrdline.cas.v1";
 
@@ -163,27 +166,66 @@ impl Cas {
         self.chunk_path(h).exists()
     }
 
-    /// Store bytes; returns their hash. Existing chunks are not rewritten.
+    /// Store bytes durably: when this returns, the chunk and its directory
+    /// entry are on disk. Existing chunks are not rewritten. Use
+    /// [`Cas::put_unsynced`] with one [`Cas::sync`] for a batch.
     pub fn put(&self, bytes: &[u8]) -> Result<ChunkHash> {
+        self.put_with(bytes, true)
+    }
+
+    /// Store bytes without waiting for the disk. The chunk is not durable
+    /// until [`Cas::sync`] returns; nothing may refer to it before then.
+    pub fn put_unsynced(&self, bytes: &[u8]) -> Result<ChunkHash> {
+        self.put_with(bytes, false)
+    }
+
+    fn put_with(&self, bytes: &[u8], durable: bool) -> Result<ChunkHash> {
         let h = ChunkHash::of(bytes);
         let path = self.chunk_path(h);
         if path.exists() {
+            // A chunk written without a barrier may still be in flight; a
+            // durable caller must not treat it as stored until the barrier.
+            if durable {
+                self.sync()?;
+            }
             return Ok(h);
         }
         let compressed = zstd::bulk::compress(bytes, ZSTD_LEVEL).map_err(io_err(&path))?;
         let dir = path.parent().unwrap_or(&self.root);
         fs::create_dir_all(dir).map_err(io_err(dir))?;
-        let tmp = self
-            .root
-            .join("tmp")
-            .join(format!("{}.{}", h.to_hex(), std::process::id()));
+        // Unique per call: two writers of the same chunk (parallel snapshot
+        // workers, or a repeated put) must not share a staging file.
+        let seq = STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp =
+            self.root
+                .join("tmp")
+                .join(format!("{}.{}.{seq}", h.to_hex(), std::process::id()));
         {
             let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
             f.write_all(&compressed).map_err(io_err(&tmp))?;
-            f.sync_data().map_err(io_err(&tmp))?;
+            if durable {
+                f.sync_data().map_err(io_err(&tmp))?;
+            }
         }
         fs::rename(&tmp, &path).map_err(io_err(&path))?;
+        if durable {
+            fs::File::open(dir)
+                .and_then(|d| d.sync_all())
+                .map_err(io_err(dir))?;
+        }
         Ok(h)
+    }
+
+    /// Make every write so far durable: one barrier for the whole store
+    /// filesystem (`syncfs`), covering data, renames and new directories.
+    /// Chunks and manifests written with the `_unsynced` methods are durable
+    /// once this returns.
+    pub fn sync(&self) -> Result<()> {
+        let dir = fs::File::open(&self.root).map_err(io_err(&self.root))?;
+        rustix::fs::syncfs(&dir).map_err(|e| CasError::Io {
+            path: self.root.clone(),
+            source: e.into(),
+        })
     }
 
     /// Read a chunk and verify its hash.
@@ -201,21 +243,35 @@ impl Cas {
         Ok(bytes)
     }
 
-    /// Chunk a stream and store every chunk. Returns the chunk list and total size.
+    /// Chunk a stream and store every chunk durably. Returns the chunk list and total size.
     pub fn put_stream(&self, reader: impl Read) -> Result<(Vec<ChunkHash>, u64)> {
+        self.put_stream_with(reader, true)
+    }
+
+    /// As [`Cas::put_stream`], without waiting for the disk (see [`Cas::sync`]).
+    pub fn put_stream_unsynced(&self, reader: impl Read) -> Result<(Vec<ChunkHash>, u64)> {
+        self.put_stream_with(reader, false)
+    }
+
+    fn put_stream_with(&self, reader: impl Read, durable: bool) -> Result<(Vec<ChunkHash>, u64)> {
         let mut chunks = Vec::new();
         let mut size = 0u64;
         for chunk in fastcdc::v2020::StreamCDC::new(reader, MIN_CHUNK, AVG_CHUNK, MAX_CHUNK) {
             let chunk = chunk.map_err(|e| CasError::Chunking(e.to_string()))?;
             size += chunk.length as u64;
-            chunks.push(self.put(&chunk.data)?);
+            chunks.push(self.put_with(&chunk.data, durable)?);
         }
         Ok((chunks, size))
     }
 
-    /// Store a manifest; returns its hash.
+    /// Store a manifest durably; returns its hash.
     pub fn put_manifest(&self, m: &Manifest) -> Result<ChunkHash> {
         self.put(&m.to_cbor()?)
+    }
+
+    /// Store a manifest without waiting for the disk (see [`Cas::sync`]).
+    pub fn put_manifest_unsynced(&self, m: &Manifest) -> Result<ChunkHash> {
+        self.put_unsynced(&m.to_cbor()?)
     }
 
     /// Load and validate a manifest.
