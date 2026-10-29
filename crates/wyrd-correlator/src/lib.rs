@@ -21,6 +21,7 @@
 //!
 //! Wyrdline's own hook helpers (`wyrd hook …`), which the agent spawns
 //! around every tool call, are `infrastructure` and never part of a call.
+#![forbid(unsafe_code)]
 
 #[cfg(feature = "synth")]
 pub mod synth;

@@ -16,6 +16,9 @@ pub struct Problem {
     pub status: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Extension members (RFC 9457 §3.2).
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Problem {
@@ -25,7 +28,15 @@ impl Problem {
             title: title.into(),
             status: status.as_u16(),
             detail: None,
+            extensions: serde_json::Map::new(),
         }
+    }
+
+    /// Add an extension member.
+    #[must_use]
+    pub fn with(mut self, key: &str, value: serde_json::Value) -> Self {
+        self.extensions.insert(key.into(), value);
+        self
     }
 
     #[must_use]

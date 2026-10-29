@@ -2,15 +2,19 @@
 //! Bundles are stored in S3-compatible object storage, their metadata,
 //! organisations, users, and the audit log in PostgreSQL.
 //! `docs/architecture/hub.md` describes the API and the deployment.
+#![forbid(unsafe_code)]
 
+pub mod access;
 pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod ingest;
 pub mod jwt;
 pub mod metrics;
 pub mod oidc;
 pub mod problem;
+pub mod retention;
 mod routes;
 pub mod storage;
 pub mod sync;
@@ -40,6 +44,8 @@ pub struct AppState {
     pub storage: Storage,
     /// `None` when no OIDC provider is configured (login disabled).
     pub oidc: Option<oidc::Provider>,
+    /// The CI issuer's signing keys (`POST /api/v1/ci/token`).
+    pub ci: oidc::Keys,
     pub metrics: metrics::Metrics,
     /// The annotation sync relay (`/api/v1/sync`).
     pub sync: Arc<sync::Relay>,
@@ -50,11 +56,13 @@ impl AppState {
     pub fn new(config: Config, storage: Storage) -> Self {
         let oidc = config.oidc.clone().map(oidc::Provider::new);
         let db = Arc::new(OnceLock::new());
+        let ci = oidc::Keys::new(config.ci.issuer.clone());
         AppState {
             config,
             db: Arc::clone(&db),
             storage,
             oidc,
+            ci,
             metrics: metrics::Metrics::default(),
             sync: sync::relay(db),
         }
@@ -89,7 +97,7 @@ impl AppState {
 
 /// The Hub's router.
 pub fn app(state: Arc<AppState>) -> Router {
-    routes::router()
+    routes::router(state.config.limits.max_upload_bytes)
         .layer(middleware::from_fn_with_state(state.clone(), observe))
         .layer(middleware::from_fn(secure_headers))
         .with_state(state)

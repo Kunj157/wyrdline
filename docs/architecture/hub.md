@@ -25,7 +25,13 @@ browser / wyrd CLI ──HTTPS──▶ wyrd-hub (Axum)
 | `WYRD_HUB_S3_REGION` | `us-east-1` | SigV4 region |
 | `WYRD_HUB_S3_ACCESS_KEY_ID`, `WYRD_HUB_S3_SECRET_ACCESS_KEY` | required | credentials |
 | `WYRD_HUB_OIDC_ISSUER`, `WYRD_HUB_OIDC_CLIENT_ID`, `WYRD_HUB_OIDC_CLIENT_SECRET` | unset | OIDC login; unset disables browser login |
+| `WYRD_HUB_CI_ISSUER` | `https://token.actions.githubusercontent.com` | OIDC issuer whose tokens `POST /api/v1/ci/token` accepts (GitHub Enterprise Server: `https://HOST/_services/token`) |
+| `WYRD_HUB_CI_AUDIENCE` | the public URL | `aud` claim those tokens must carry (the action requests it) |
+| `WYRD_HUB_CI_TOKEN_TTL_SECS` | `900` | lifetime of CI upload tokens, 60–3600 |
 | `WYRD_HUB_DATA_DIR` | `wyrd-hub-data` | local scratch (upload spooling, analytics projections) |
+| `WYRD_HUB_MAX_UPLOAD_BYTES` | 256 MiB | largest bundle accepted |
+| `WYRD_HUB_QUOTA_BYTES`, `WYRD_HUB_QUOTA_BUNDLES` | 10 GiB, 10 000 | quota of new organisations |
+| `WYRD_HUB_RETENTION_INTERVAL_SECS` | `3600` | retention sweep interval (0 disables) |
 | `WYRD_LOG` | `info` | log filter; logs are JSON lines on stderr |
 
 Secrets are wrapped so they never appear in `Debug` output or logs.
@@ -43,7 +49,9 @@ bucket. Until both are done:
 - `GET /metrics` — Prometheus text: `wyrd_hub_http_requests_total`
   (method, route template, status class),
   `wyrd_hub_http_request_duration_seconds`, `wyrd_hub_db_pool_connections`,
-  `wyrd_hub_ready`, plus feature counters added by later endpoints.
+  `wyrd_hub_ready`, `wyrd_hub_logins_total` (outcome),
+  `wyrd_hub_ci_token_exchanges_total` (outcome), plus feature counters
+  added by later endpoints.
 
 Every response carries `X-Request-ID` (a client value is kept when it is
 short visible ASCII, otherwise a ULID), and every request is logged with
@@ -63,7 +71,105 @@ migration, undo all of them, and apply them again.
 | `users` | OIDC `(issuer, subject)` identity, email and name for display |
 | `memberships` | `(org, user) → viewer \| member \| admin` |
 | `bundles` | verified manifest metadata, uploader-supplied repo, divergence rules, size, object key |
+| `oidc_logins`, `sessions`, `api_tokens` | login state, browser sessions, bearer tokens (hashed; `scope` `full` or `upload`) |
+| `ci_trust_rules` | per org: an exact GitHub `repository`, or an owner-wide `wildcard` (dangerous opt-in), optionally pinned to a `git_ref`; `enabled` |
 | `audit_logs` | actor, action, target, request id, details; append-only (a trigger rejects `UPDATE`, `DELETE`, `TRUNCATE`) |
+
+## Authentication
+
+**Browser login** is OpenID Connect, authorization code with PKCE:
+
+1. `GET /api/v1/auth/oidc/login?return_to=/path` stores a pending login
+   (hashed `state`, `nonce`, PKCE verifier; 10 minutes) bound to the
+   browser by an HttpOnly `wyrd_login` cookie, and redirects to the
+   provider.
+2. The provider redirects to `GET /api/v1/auth/oidc/callback?code&state`
+   (a client that handles the redirect itself may `POST` `{code, state}`
+   as JSON). The state is consumed once; the browser binding, expiry, the
+   code exchange (client secret + verifier), and the ID token (signature
+   against the provider's JWKS: RS256, ES256 or EdDSA, refreshed on an
+   unknown `kid` for key rotation; `iss`, `aud`/`azp`, `exp` with 60 s
+   leeway, `nonce`) are checked. Any failure answers 401 "Login failed"
+   without detail and is logged with its reason and counted in
+   `wyrd_hub_logins_total{outcome}`; an unreachable provider is 503.
+3. The user is found or created by `(issuer, subject)`, a **new** session
+   id is issued (no session fixation), and `wyrd_session` is set:
+   HttpOnly, SameSite=Lax, Path=/, 7 days; on HTTPS also `Secure` with the
+   `__Host-` prefix. Only `return_to` paths on the Hub itself are honoured.
+
+GitHub is the production identity provider through Dex's GitHub
+connector (GitHub's own OAuth does not issue ID tokens).
+
+**API tokens** (`Authorization: Bearer wyrdhub_…`) are created from a
+signed-in session with `POST /api/v1/tokens {name, org?, expires_in_days?}`
+(default 90, at most 365 days); the secret is shown once. A token acts as
+its user, optionally only in one organisation; tokens cannot create
+tokens. Removing a membership deletes the user's tokens for that org.
+
+Session ids, tokens, and login state are stored only as SHA-256 hashes.
+**CSRF:** a cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` must carry
+the Hub's own `Origin` (or `Sec-Fetch-Site: same-origin`), else 403;
+bearer-token requests are not subject to this.
+
+**Roles** per organisation: `viewer` < `member` < `admin`. Any signed-in
+user may create an organisation and becomes its admin; admins add,
+change, and remove members (by user id or email; the user must have
+signed in once) and cannot remove or demote the last admin (409).
+
+**Audit log:** every mutation writes an `audit_logs` row in the same
+transaction (actor, action, target, request id, details). Actions so far:
+`auth.login`, `auth.logout`, `org.create`, `org.member.set`,
+`org.member.remove`, `token.create`, `token.revoke`, `org.update`,
+`bundle.upload`, `bundle.delete`, `bundle.expire`. Admins read their
+organisation's log with `GET /api/v1/audit-logs?org=<slug>&limit=&before=`
+(newest first).
+
+## Bundles
+
+`POST /api/v1/orgs/{org}/bundles` (member) takes `multipart/form-data`
+with a `bundle` file and an optional `repo` label, and:
+
+1. streams the file to a spool file under `WYRD_HUB_DATA_DIR/uploads`,
+   refusing it with 413 as soon as it passes `WYRD_HUB_MAX_UPLOAD_BYTES`
+   (nothing is buffered in memory; the spool file is always removed);
+2. verifies it with `wyrd-bundle`'s reader (archive structure and size
+   limits, signature over the manifest, manifest, every file hash, the
+   ledger hash chain). A failure is **422** `bundle-rejected` with
+   `failed_check` and the full `checks` list;
+3. locks the organisation, answers 200 with the existing bundle if the
+   same manifest was uploaded before, and checks the quota: bundle count
+   (**429** `quota-bundles`) and stored bytes (**413** `quota-bytes`);
+4. stores the object at `bundles/<org id>/<bundle id>.wyrd`, then inserts
+   the row (session id, name, agent, signer fingerprint, event count,
+   divergence rules raised, size, repo) and the `bundle.upload` audit
+   entry in one transaction. If storage is down the answer is 503 and no
+   row exists; if the insert fails the object is deleted again.
+
+`GET /api/v1/orgs/{org}/bundles?repo=&rule=&since=&before=&limit=` lists
+newest first (`since` is an RFC 3339 time or date, `before` a bundle id
+for paging); `GET /api/v1/bundles/{bid}` shows one;
+`…/download` streams it back byte for byte; `DELETE` (admin) removes the
+row with a `bundle.delete` audit entry, then the object.
+
+**Retention:** admins set `PATCH /api/v1/orgs/{org} {"retention_days":
+N}` (1–3650, or `null` for none; audited as `org.update`). Every
+`WYRD_HUB_RETENTION_INTERVAL_SECS` the Hub deletes bundles older than
+that, each audited as `bundle.expire` by `system`.
+
+**Quotas:** every organisation starts with `WYRD_HUB_QUOTA_BYTES` and
+`WYRD_HUB_QUOTA_BUNDLES`. There is no self-service endpoint (an org admin
+would raise their own limit); the operator changes `orgs.quota_bytes` and
+`orgs.quota_bundles` in the database.
+
+**From the CLI:** `wyrd push file.wyrd --hub <url> --org <slug> [--repo
+owner/name]` with an API token in `WYRD_HUB_TOKEN`. It verifies the file
+locally first, then streams it. Exit codes: 0 uploaded (or already
+there), 1 usage or refused, 3 verification failed, 4 over quota, 5 Hub
+unreachable.
+
+Metrics: `wyrd_hub_uploads_total{outcome}` (`accepted`, `duplicate`,
+`rejected`, `too_large`, `over_quota`, `storage_error`, `error`),
+`wyrd_hub_bundle_verify_seconds`, `wyrd_hub_retention_sweeps_total`.
 
 ## API (`/api/v1`)
 
@@ -80,9 +186,11 @@ belong to answers **404**, exactly like one that does not exist.
 | `POST /api/v1/orgs`, `GET /api/v1/orgs/{org}` | signed in / viewer | #156 |
 | `GET /api/v1/orgs/{org}/members`, `PUT`/`DELETE …/members/{user}` | viewer / admin | #156 |
 | `GET /api/v1/audit-logs?org=` | admin | #156 |
+| `POST /api/v1/ci/token` | a GitHub Actions OIDC token | #161 |
+| `GET`/`POST /api/v1/orgs/{org}/ci-trust`, `DELETE …/ci-trust/{id}` | admin | #161 |
 | `POST /api/v1/orgs/{org}/bundles`, `GET …/bundles?repo=&rule=&since=` | member / viewer | #157 |
 | `GET /api/v1/bundles/{bid}`, `GET …/download`, `DELETE …` | viewer / viewer / admin | #157 |
-| `PATCH /api/v1/orgs/{org}` (quota, retention) | admin | #157 |
+| `PATCH /api/v1/orgs/{org}` (retention) | admin | #157 |
 | `GET /api/v1/orgs/{org}/stats`, `GET …/search?q=` | viewer | #158 |
 | `GET /api/v1/sync?bundle={bid}` (WebSocket) | viewer read-only, member+ write | #159 |
 
@@ -122,6 +230,70 @@ Automerge sync protocol for the annotation document of one bundle
   `too_large`, `invalid`), and the gauges `wyrd_hub_sync_clients`,
   `wyrd_hub_sync_documents`, `wyrd_hub_sync_document_bytes` (largest open
   document).
+
+### CI upload tokens (#161)
+
+A workflow uploads bundles without a stored secret. The GitHub Action
+(`integrations/github-action/scripts/hub-upload.sh`, with
+`permissions: id-token: write`) asks the runner for an OIDC token whose
+`aud` is the Hub's public URL and posts it:
+
+```
+POST /api/v1/ci/token
+{ "token": "<GitHub Actions OIDC JWT>", "org": "acme" }
+
+200 { "token": "wyrdci_…", "token_type": "Bearer", "scope": "upload",
+      "org": "acme", "expires_in": 900, "expires_at": "2026-10-21T12:15:00Z" }
+```
+
+The Hub verifies the JWT before touching the database: signature against
+the issuer's JWKS (discovery at `WYRD_HUB_CI_ISSUER`, cached for an hour,
+refreshed once on an unknown `kid` so key rotation works, at most every
+30 s), `iss`, `aud` (= `WYRD_HUB_CI_AUDIENCE`), `exp`/`nbf`/`iat` with
+60 s leeway, and that `repository` belongs to `repository_owner`. Then it
+looks for an **enabled trust rule** of the named organisation. A rule names
+one repository exactly: `{ "repository_owner": "acme-gh", "repository":
+"acme-gh/app" }`. Owner-wide rules are an explicit opt-in: `{
+"repository_owner": "acme-gh", "wildcard": true }` trusts every repository of
+that user or GitHub organisation. It is **dangerous**: every repository of the
+owner can then upload to the organisation, so the API refuses an owner-wide
+rule without `wildcard: true`, and the add is audited as `ci.trust.wildcard`
+with `dangerous: true`. A rule may also pin a git ref, `"git_ref":
+"refs/heads/main"` (exact, no globs): runs on any other ref are refused. Rules
+are added through `POST /api/v1/orgs/{org}/ci-trust`, and names match
+case-insensitively. An exact rule wins over an owner-wide one. The `enabled`
+flag is set by the server; a disabled rule trusts nothing. Answers: a token that fails verification
+→ **401** `ci-token-rejected` (reason only in the log and in
+`wyrd_hub_ci_token_exchanges_total{outcome="failure"}`); no matching rule (a
+different repository of the same owner included), a disabled rule, a ref
+the rule does not pin, or an unknown organisation → **403** `ci-not-trusted`
+with the same body for all of them; issuer unreachable or
+failing → **503** (the action retries).
+
+The minted token is an `api_tokens` row with `scope = 'upload'`,
+`expires_at` = now + `WYRD_HUB_CI_TOKEN_TTL_SECS`, owned by the
+repository's **CI identity**: a user `(issuer = the CI issuer,
+subject = repo:<owner/name>)` named `owner/name (GitHub Actions)`, which
+holds a `member` membership of the organisation (so uploads are attributed
+to it and the usual role checks apply). An upload-only token is accepted
+by exactly two routes — `POST /api/v1/orgs/{its org}/bundles` and
+`GET /api/v1/me` — and answers **403** `insufficient-scope` everywhere
+else. Removing a trust rule deletes the memberships (and live upload
+tokens) of CI identities no remaining rule covers. Every exchange writes
+an audit row `ci.token.exchange` (repository, owner and repository ids,
+actor, workflow ref, run id, ref, sha, event, expiry); rules are audited
+as `ci.trust.add` / `ci.trust.remove`.
+
+**Migration (`20261028120000_ci_trust_exact`, F-10).** Owner-wide rules made
+before the opt-in are kept as records (`wildcard = true`) but **disabled**, and
+the memberships and upload tokens they granted are revoked, so nothing from
+them stays valid. Exact rules are unchanged. To trust the owner again an admin
+deletes the disabled rule and adds it with `wildcard: true`. Rolling back the
+migration deletes the owner-wide, disabled and ref-pinned rules (the old schema
+cannot represent them) together with the access they granted.
+
+Environment binding is not available: the verified GitHub token carries no
+`environment` claim in this code, so a rule cannot pin one yet.
 
 ## Tests
 

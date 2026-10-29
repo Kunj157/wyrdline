@@ -35,10 +35,12 @@ needed (`.github/workflows/github-action.yml`).
    `wyrd-repository` (`wyrd-version`, default `latest`), or from prebuilt
    binaries in `wyrd-path`. The release's `SHA256SUMS` is always checked; its
    cosign keyless signature (`SHA256SUMS.sigstore.json`, issued to the
-   repository's `release.yml` workflow) is verified when present
-   (`verify-signature: auto`), required (`required`), or skipped (`skip`).
-   Signed releases start with the release pipeline (plan Phase 14); until
-   then `auto` warns that only the checksum was verified.
+   repository's `release.yml` workflow on the release tag) must verify. This
+   is the default (`verify-signature: required`): a release without a valid
+   signature is refused. `auto` verifies when a signature is present and warns
+   otherwise. `skip` (or `false`) installs without a signature check and
+   writes a loud warning to the log and the job summary. Prebuilt binaries
+   from `wyrd-path` are not downloaded and are not verified.
 2. **Start the sensor**: installs `deploy/systemd/wyrd-sensord.service`
    (the runner has passwordless sudo) and waits for its socket. If it does
    not come up, the step fails with the `wyrd doctor` report and the agent
@@ -80,13 +82,29 @@ needed (`.github/workflows/github-action.yml`).
 | `wyrd-version` | `latest` | Release tag to install. |
 | `wyrd-repository` | `Kunj157/wyrdline` | |
 | `wyrd-path` | | Prebuilt `wyrd` + `wyrd-sensord` directory (skips the download). |
-| `verify-signature` | `auto` | `auto`, `required`, or `skip`. |
+| `verify-signature` | `required` | `required` (default: refuse unsigned releases), `auto` (verify when signed, warn otherwise), or `skip` / `false` (no signature check, warned). |
 | `hub-url` | | **Reserved.** Hub upload with the job's GitHub OIDC token (`id-token: write`, no stored secret) comes with the Hub's CI token exchange; setting it now only prints a warning. |
 
 ## Outputs
 
 `session-id`, `bundle-path`, `divergence-count` (open), `agent-exit-code`,
 `artifact-url`, `sensor` (`running` or `degraded`).
+
+## Uploading a bundle to a Hub
+
+`integrations/github-action/scripts/hub-upload.sh` uploads a `.wyrd` bundle
+to a Hub from a job with `permissions: id-token: write`. Set `WYRD_HUB_URL`,
+`WYRD_HUB_ORG`, and `WYRD_BUNDLE`; it exchanges the job's OIDC token for an
+upload token and uploads the bundle. A bundle the organisation already has
+is reported, not stored twice. It writes two outputs to `$GITHUB_OUTPUT`:
+
+- `hub-bundle-id`: the bundle's id on the Hub.
+- `hub-bundle-url`: `<hub>/api/v1/bundles/<id>`, the bundle's API resource
+  (the JSON record; `/download` on the same path fetches the file). The Hub
+  has no page per bundle, so this is an API address, not a web page.
+
+The `hub-url` input above is reserved and does not upload yet; call the
+script from a workflow step.
 
 ## Release asset contract
 

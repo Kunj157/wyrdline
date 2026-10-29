@@ -104,6 +104,13 @@ fn count(st: &AppState, direction: &str, outcome: &str) {
     );
 }
 
+/// How long a closing socket keeps reading the client's frames.
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Send a close, then read until the client has answered it (or the grace
+/// period ends), discarding what it still sends. Dropping a socket with
+/// unread inbound data makes the kernel reset the connection, and a client
+/// can then lose the close and the reason it carries.
 async fn close(socket: &mut WebSocket, code: u16, reason: &str) {
     let _ = socket
         .send(Message::Close(Some(CloseFrame {
@@ -111,6 +118,10 @@ async fn close(socket: &mut WebSocket, code: u16, reason: &str) {
             reason: reason.into(),
         })))
         .await;
+    let _ = tokio::time::timeout(CLOSE_GRACE, async {
+        while socket.recv().await.is_some() {}
+    })
+    .await;
 }
 
 /// Tell the client why, then close. The client rolls back what it sent.

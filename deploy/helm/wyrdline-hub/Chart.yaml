@@ -1,0 +1,14 @@
+apiVersion: v2
+name: wyrdline-hub
+description: Wyrdline Hub, the self-hosted team server for shared bundles and dashboards. Uses an external PostgreSQL and S3-compatible bucket.
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
+home: https://github.com/Kunj157/wyrdline
+sources:
+  - https://github.com/Kunj157/wyrdline
+keywords:
+  - wyrdline
+  - hub
+annotations:
+  artifacthub.io/license: MIT

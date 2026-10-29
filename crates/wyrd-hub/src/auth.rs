@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, MatchedPath};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use ring::rand::SecureRandom as _;
@@ -16,6 +16,8 @@ use crate::{AppState, Problem, REQUEST_ID};
 pub const SESSION_SECS: i64 = 7 * 24 * 3600;
 /// Prefix of API tokens, so leaked ones are recognisable.
 pub const TOKEN_PREFIX: &str = "wyrdhub_";
+/// Prefix of upload-only tokens minted for CI (`POST /api/v1/ci/token`).
+pub const CI_TOKEN_PREFIX: &str = "wyrdci_";
 
 /// Organisation roles, ordered by power.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -134,6 +136,26 @@ pub enum Via {
     Token,
 }
 
+/// What a credential may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// Everything the user's roles allow.
+    #[default]
+    Full,
+    /// Only the bundle upload of the token's organisation (CI tokens).
+    Upload,
+}
+
+impl Scope {
+    pub fn parse(s: &str) -> Option<Scope> {
+        match s {
+            "full" => Some(Scope::Full),
+            "upload" => Some(Scope::Upload),
+            _ => None,
+        }
+    }
+}
+
 /// An authenticated caller.
 #[derive(Debug, Clone)]
 pub struct Caller {
@@ -141,7 +163,30 @@ pub struct Caller {
     /// A token restricted to one organisation (its id).
     pub token_org: Option<String>,
     pub via: Via,
+    pub scope: Scope,
     pub request_id: String,
+}
+
+/// Whether an upload-only token may call `method` on the matched route
+/// template `route` at `path`: the bundle upload of its own organisation
+/// (`org_slug`), and who-am-i.
+pub fn upload_scope_allows(method: &Method, route: &str, path: &str, org_slug: &str) -> bool {
+    if org_slug.is_empty() {
+        return false;
+    }
+    let segments = |s: &str| s.split('/').map(str::to_string).collect::<Vec<_>>();
+    match (method, segments(route).as_slice()) {
+        (&Method::GET, [_, api, v1, me]) => api == "api" && v1 == "v1" && me == "me",
+        (&Method::POST, [_, api, v1, orgs, org, bundles]) => {
+            api == "api"
+                && v1 == "v1"
+                && orgs == "orgs"
+                && org.starts_with('{')
+                && bundles == "bundles"
+                && segments(path).get(4).is_some_and(|s| s == org_slug)
+        }
+        _ => false,
+    }
 }
 
 fn unauthorized() -> Problem {
@@ -164,11 +209,14 @@ pub(crate) fn same_origin(state: &AppState, headers: &HeaderMap) -> bool {
     }
 }
 
-async fn by_token(pool: &PgPool, token: &str) -> Result<Option<(String, Option<String>)>, Problem> {
-    let row: Option<(String, Option<String>)> = db::query_as(
-        "UPDATE api_tokens SET last_used_at = now() \
+/// A live token: user, organisation (id and slug), and scope.
+type TokenRow = (String, Option<String>, Option<String>, String);
+
+async fn by_token(pool: &PgPool, token: &str) -> Result<Option<TokenRow>, Problem> {
+    let row: Option<TokenRow> = db::query_as(
+        "UPDATE api_tokens t SET last_used_at = now() \
          WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > now()) \
-         RETURNING user_id, org_id",
+         RETURNING user_id, org_id, (SELECT slug FROM orgs WHERE id = t.org_id), scope",
     )
     .bind(hash(token))
     .fetch_optional(pool)
@@ -200,13 +248,29 @@ impl FromRequestParts<Arc<AppState>> for Caller {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
         if let Some(token) = bearer {
-            let (user_id, token_org) = by_token(pool, token.trim())
+            let (user_id, token_org, org_slug, scope) = by_token(pool, token.trim())
                 .await?
                 .ok_or_else(unauthorized)?;
+            let scope = Scope::parse(&scope).ok_or_else(unauthorized)?;
+            if scope == Scope::Upload {
+                let route = parts
+                    .extensions
+                    .get::<MatchedPath>()
+                    .map_or("", MatchedPath::as_str);
+                let slug = org_slug.as_deref().unwrap_or_default();
+                if !upload_scope_allows(&parts.method, route, parts.uri.path(), slug) {
+                    return Err(Problem::new(
+                        StatusCode::FORBIDDEN,
+                        "insufficient-scope",
+                        "This token may only upload bundles to its organisation",
+                    ));
+                }
+            }
             return Ok(Caller {
                 user_id,
                 token_org,
                 via: Via::Token,
+                scope,
                 request_id,
             });
         }
@@ -224,6 +288,7 @@ impl FromRequestParts<Arc<AppState>> for Caller {
             user_id,
             token_org: None,
             via: Via::Session,
+            scope: Scope::Full,
             request_id,
         })
     }
@@ -251,6 +316,63 @@ mod tests {
         assert_eq!(a.len(), TOKEN_PREFIX.len() + 43);
         assert_eq!(hash(&a).len(), 64);
         assert_ne!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn upload_scope_is_one_route_of_one_org() {
+        let upload = "/api/v1/orgs/{org}/bundles";
+        assert!(upload_scope_allows(
+            &Method::POST,
+            upload,
+            "/api/v1/orgs/acme/bundles",
+            "acme"
+        ));
+        // Another organisation, another route, another method.
+        assert!(!upload_scope_allows(
+            &Method::POST,
+            upload,
+            "/api/v1/orgs/other/bundles",
+            "acme"
+        ));
+        assert!(!upload_scope_allows(
+            &Method::GET,
+            upload,
+            "/api/v1/orgs/acme/bundles",
+            "acme"
+        ));
+        assert!(!upload_scope_allows(
+            &Method::DELETE,
+            "/api/v1/bundles/{bid}",
+            "/api/v1/bundles/b1",
+            "acme"
+        ));
+        assert!(!upload_scope_allows(
+            &Method::GET,
+            "/api/v1/orgs/{org}/ci-trust",
+            "/api/v1/orgs/acme/ci-trust",
+            "acme"
+        ));
+        assert!(upload_scope_allows(
+            &Method::GET,
+            "/api/v1/me",
+            "/api/v1/me",
+            "acme"
+        ));
+        // No route template (unmatched) or no organisation: nothing.
+        assert!(!upload_scope_allows(
+            &Method::POST,
+            "",
+            "/api/v1/orgs/acme/bundles",
+            "acme"
+        ));
+        assert!(!upload_scope_allows(
+            &Method::POST,
+            upload,
+            "/api/v1/orgs//bundles",
+            ""
+        ));
+        assert_eq!(Scope::parse("upload"), Some(Scope::Upload));
+        assert_eq!(Scope::parse("admin"), None);
     }
 
     #[test]

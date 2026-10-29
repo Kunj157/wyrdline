@@ -1,4 +1,5 @@
 //! `wyrdd` binary: bind the unix socket and loopback TCP, then serve.
+#![forbid(unsafe_code)]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
