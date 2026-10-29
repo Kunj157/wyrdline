@@ -41,6 +41,12 @@ Two ways:
   optional ingress and autoscaling. It does not create PostgreSQL, the
   bucket, or any secret: you create the secrets and name them in the
   values.
+  The chart's default image is the release's own version
+  (`ghcr.io/kunj157/wyrdline-hub:<version>`); install the packaged chart
+  from the release (`wyrdline-hub-<version>.tgz`). A chart built from the
+  repository has no release image and refuses to render until you set
+  `image.tag` or `image.digest`. **In production set `image.digest`**: a
+  digest pins the exact image, and a tag can be moved.
 
 Required settings, both ways:
 
