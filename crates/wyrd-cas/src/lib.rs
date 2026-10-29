@@ -37,6 +37,7 @@ pub const AVG_CHUNK: usize = 64 * 1024;
 pub const MAX_CHUNK: usize = 256 * 1024;
 
 /// Distinguishes staging files of concurrent writes within one process.
+#[cfg(feature = "store")]
 static STAGING_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Format identifier written to `<root>/FORMAT`.
