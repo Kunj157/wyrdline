@@ -66,4 +66,9 @@ a throwaway variable so nothing is printed.
 {{- if .Values.ingress.enabled }}
 {{- $_ := required "ingress.host is required when ingress.enabled is true" .Values.ingress.host }}
 {{- end }}
+{{- /* A chart built from the repository has appVersion 0.0.0, which no
+       release publishes: refuse it rather than pull a tag that does not exist. */}}
+{{- if and (not .Values.image.digest) (not .Values.image.tag) (eq .Chart.AppVersion "0.0.0") }}
+{{- fail "image.tag or image.digest is required: this chart has no release image (appVersion 0.0.0). Set image.tag to a published Hub version, or install a released chart." }}
+{{- end }}
 {{- end }}

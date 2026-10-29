@@ -59,6 +59,46 @@ materialising), symlinks have targets, only files have chunks.
 - `materialize(manifest, dest)` requires an empty or absent destination,
   restores contents, modes, and mtimes (directories last, deepest first),
   and returns whiteouts and opaque directories for the Cell to apply.
+  `materialize` does not sync what it writes.
+
+### Rewind
+
+A rewind does not sync its restored tree, because a sync of the whole
+filesystem costs about half a second for a 1 GB tree. Its order:
+
+1. The new branch is recorded in the session record, durably, and made
+   current. The record is the only durable write that names the branch.
+2. The branch's tree is rebuilt from the content store: its directory is
+   cleared, `materialize` runs, and whiteouts and opaque markers are applied.
+   Nothing is synced.
+3. A marker, `branches/<id>/restored`, is written with this boot's id
+   (`/proc/sys/kernel/random/boot_id`). It is written without a sync.
+4. The rewind event is written to the ledger.
+
+A branch made by a rewind or a fork is restored again, before anything reads
+it or checkpoints it, unless its marker names this boot. `Session::open`
+does this check, and so does the checkpoint path, under the session lock.
+
+The crash states and why each is safe:
+
+- **Before step 1 is durable.** The record still names the old branch. The
+  new branch's directory, if any, is an unreferenced leftover, and the next
+  rewind clears it.
+- **After step 1, before step 3 is written.** The branch needs restoring, and
+  it gets it on the next open or checkpoint. The restore clears the directory
+  first, so a half-written tree is never kept.
+- **After step 3 in this boot, a process crash.** The page cache still holds
+  the completed tree, and the marker is trusted.
+- **After a reboot, any point after step 1.** The marker names the old boot,
+  so the branch is restored again. A marker that was never written, or a
+  marker whose write was lost, reads the same way.
+- **After step 3, before step 4.** The tree is complete and the event is
+  missing. This is the same window as before this change; the ledger event
+  is a record of the rewind, not what the restore depends on.
+
+Branch `a` (the session's first branch) is not restored this way. Its tree is
+the workspace's uncheckpointed edits, which a reboot can leave partly written.
+Those edits were never durable, and nothing here changes that.
 
 ## Garbage collection
 
@@ -99,10 +139,30 @@ again: it is staged, and its rename replaces the bad file in the same commit,
 so both barriers cover the replacement. Nothing is deleted before the new
 file is in place.
 
-Durable callers (`put`, `put_stream`, `put_manifest`, bundle import) write one
-chunk on their own: `sync_data`, rename, then sync the chunk's directory. A
-chunk that already verifies is synced by its directory, which covers a rename
-made by another batch that is still waiting for its second barrier.
+Durable callers (`put`, `put_stream`, `put_manifest`, `snapshot`, bundle
+import) write one chunk on their own, in this order:
+
+1. Create any missing fan-out directories (`chunks/ab`, `chunks/ab/cd`). After
+   each new directory is made, its parent is synced before anything is written
+   under it. A directory another process made first is synced the same way.
+2. Write the compressed chunk to `tmp/` and sync its data.
+3. Rename it to its chunk name.
+4. Sync the chunk's directory, so the new name is on disk.
+
+A chunk that already verifies is synced by its directory, which covers a
+rename made by another batch that is still waiting for its second barrier.
+Staged writes (the checkpoint path) create their directories without syncing
+them: the first `syncfs` of the commit covers them, before any rename.
+
+Opening a store applies the same rule to `chunks/` and `tmp/`. The `FORMAT`
+marker is written to a staging file, synced, renamed into place, and its
+directory synced.
+
+The tests in `crates/wyrd-cas/tests/durable_order.rs` record these steps,
+across threads, and check the order: every created directory is synced in its
+parent (or covered by a `syncfs`) before a file is renamed into it, and every
+rename is followed by a sync of its directory. A power cut is not simulated;
+the order is checked, not the disk.
 
 ### Staging files after a crash
 

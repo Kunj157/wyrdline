@@ -13,7 +13,9 @@ replicaCount: 2
 
 image:
   repository: ghcr.io/kunj157/wyrdline-hub
-  # Defaults to the chart's appVersion when empty. Prefer a digest in production.
+  # Defaults to the chart's appVersion when empty (a released chart carries its
+  # release version). Prefer `digest` in production: a digest pins the exact
+  # image, and a tag can be moved.
   tag: ""
   digest: ""
   pullPolicy: IfNotPresent

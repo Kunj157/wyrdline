@@ -79,8 +79,20 @@ inputs:
   hub-url:
     description: >-
       Wyrdline Hub to upload the bundle to with the job's GitHub OIDC token (needs
-      `id-token: write`). Reserved: the upload is not available in this version.
+      `id-token: write` and a trust rule on the Hub for this repository). Empty
+      keeps the bundle as a workflow artifact only. An upload that fails fails
+      this step, with the Hub's reason.
     default: ""
+  hub-org:
+    description: >-
+      Organisation on the Hub to upload to (its slug); required with hub-url.
+    default: ""
+  hub-upload-required:
+    description: >-
+      `true` (the default) fails the step when the upload fails. `false` turns the
+      failure into a warning, for jobs where the Hub is optional; the bundle is
+      still a workflow artifact either way.
+    default: "true"
 
 outputs:
   session-id:
@@ -101,6 +113,12 @@ outputs:
   sensor:
     description: Kernel capture state at start, running or degraded.
     value: ${{ steps.sensord.outputs.sensor }}
+  hub-bundle-id:
+    description: The bundle's id on the Hub; empty when no upload ran or it failed with hub-upload-required false.
+    value: ${{ steps.hub.outputs.hub-bundle-id }}
+  hub-bundle-url:
+    description: The bundle's API resource on the Hub (<hub>/api/v1/bundles/<id>); empty as for hub-bundle-id.
+    value: ${{ steps.hub.outputs.hub-bundle-url }}
 
 runs:
   using: composite
@@ -153,11 +171,32 @@ runs:
         retention-days: ${{ inputs.artifact-retention-days }}
         if-no-files-found: error
 
+    # Runs after the agent, whatever its exit code, so the evidence of a failed
+    # run reaches the Hub too. The step gets no secret: the job's OIDC token is
+    # requested from the runner and exchanged for an upload token that only
+    # uploads to hub-org. A failure fails the step with the script's message,
+    # unless hub-upload-required is false.
     - name: Upload the bundle to the Hub
+      id: hub
       if: always() && inputs.hub-url != '' && steps.run.outputs.bundle-path != ''
       shell: bash
+      env:
+        WYRD_HUB_URL: ${{ inputs.hub-url }}
+        WYRD_HUB_ORG: ${{ inputs.hub-org }}
+        WYRD_BUNDLE: ${{ steps.run.outputs.bundle-path }}
+        WYRD_UPLOAD_REQUIRED: ${{ inputs.hub-upload-required }}
       run: |
-        echo "::warning::wyrdline: hub-url is set, but Hub upload (GitHub OIDC token exchange) is not available in this version of the action; the bundle is only a workflow artifact"
+        set +e
+        "$GITHUB_ACTION_PATH/scripts/hub-upload.sh"
+        code=$?
+        if [ "$code" -ne 0 ]; then
+          if [ "$WYRD_UPLOAD_REQUIRED" = false ]; then
+            echo "::warning::wyrdline: the Hub upload failed; hub-upload-required is false, so the job continues (the bundle is still a workflow artifact)"
+            exit 0
+          fi
+          echo "::error::wyrdline: the Hub upload failed; set hub-upload-required: false to continue without it"
+          exit "$code"
+        fi
 
     - name: Divergence summary and PR comment
       if: always() && steps.run.outputs.session-id != ''

@@ -83,28 +83,60 @@ needed (`.github/workflows/github-action.yml`).
 | `wyrd-repository` | `Kunj157/wyrdline` | |
 | `wyrd-path` | | Prebuilt `wyrd` + `wyrd-sensord` directory (skips the download). |
 | `verify-signature` | `required` | `required` (default: refuse unsigned releases), `auto` (verify when signed, warn otherwise), or `skip` / `false` (no signature check, warned). |
-| `hub-url` | | **Reserved.** Hub upload with the job's GitHub OIDC token (`id-token: write`, no stored secret) comes with the Hub's CI token exchange; setting it now only prints a warning. |
+| `hub-url` | | Hub to upload the bundle to with the job's GitHub OIDC token (`id-token: write`, no stored secret). Empty keeps the bundle as a workflow artifact only. Needs `hub-org` and a trust rule on the Hub. |
+| `hub-org` | | Organisation on the Hub to upload to (its slug); required with `hub-url`. |
+| `hub-upload-required` | `true` | `true`: a failed upload fails the step, with the Hub's reason. `false`: it becomes a warning and the job continues. |
 
 ## Outputs
 
 `session-id`, `bundle-path`, `divergence-count` (open), `agent-exit-code`,
-`artifact-url`, `sensor` (`running` or `degraded`).
+`artifact-url`, `sensor` (`running` or `degraded`), `hub-bundle-id` and
+`hub-bundle-url` (set when the bundle was uploaded to the Hub; empty
+otherwise).
 
 ## Uploading a bundle to a Hub
 
-`integrations/github-action/scripts/hub-upload.sh` uploads a `.wyrd` bundle
-to a Hub from a job with `permissions: id-token: write`. Set `WYRD_HUB_URL`,
-`WYRD_HUB_ORG`, and `WYRD_BUNDLE`; it exchanges the job's OIDC token for an
-upload token and uploads the bundle. A bundle the organisation already has
-is reported, not stored twice. It writes two outputs to `$GITHUB_OUTPUT`:
+Set `hub-url` and `hub-org` and the action uploads the bundle after the agent
+has run, whatever its exit code, so a failed run's evidence reaches the Hub
+too. It needs a job with `permissions: id-token: write`, and an organisation
+admin on the Hub must have added a trust rule for the repository
+(`docs/hub.md`, "From GitHub Actions"). The upload does not run without
+`hub-url` and a bundle.
 
-- `hub-bundle-id`: the bundle's id on the Hub.
-- `hub-bundle-url`: `<hub>/api/v1/bundles/<id>`, the bundle's API resource
-  (the JSON record; `/download` on the same path fetches the file). The Hub
-  has no page per bundle, so this is an API address, not a web page.
+```yaml
+permissions:
+  contents: read
+  id-token: write          # the upload's OIDC token
+  pull-requests: write     # the PR comment
+steps:
+  - uses: Kunj157/wyrdline/integrations/github-action@<sha>   # pin a release
+    with:
+      command: claude -p 'fix the failing test'
+      hub-url: https://hub.example.com
+      hub-org: acme
+    # Outputs: hub-bundle-id, hub-bundle-url
+```
 
-The `hub-url` input above is reserved and does not upload yet; call the
-script from a workflow step.
+**Failure is loud by default.** A missing `id-token: write` permission, a
+Hub that refuses the trust rule, an unreachable Hub, or a refused bundle
+fails the step with the reason from `scripts/hub-upload.sh` (the same message
+the script gives on its own). Nothing falls back silently. Set
+`hub-upload-required: false` for jobs where the Hub is optional: the same
+failure is then a warning, and the job continues. The bundle is still the
+workflow artifact either way.
+
+The agent step never gets a token. The upload step gets only the Hub URL,
+the organisation, and the bundle path; the GitHub OIDC token is requested
+from the runner by the upload script and exchanged for an upload token that
+can only upload to `hub-org`.
+
+The outputs are set for both a new upload and a bundle the organisation
+already has. `hub-bundle-url` is the bundle's API resource
+(`<hub>/api/v1/bundles/<id>`, the JSON record; `/download` on the same path
+fetches the file). The Hub has no page per bundle.
+
+The same script can run from your own step, with `WYRD_HUB_URL`,
+`WYRD_HUB_ORG` and `WYRD_BUNDLE` set (`scripts/hub-upload.sh`).
 
 ## Release asset contract
 

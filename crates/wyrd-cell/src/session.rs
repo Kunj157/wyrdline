@@ -139,8 +139,21 @@ fn event(body: EventBody) -> Event {
     }
 }
 
+/// Marker in a branch directory: the boot id in which its tree was restored.
+const RESTORED: &str = "restored";
+
+/// This boot's id. It changes on every reboot. `None` where it is unavailable.
+fn boot_id() -> Option<String> {
+    fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Create a directory and its missing parents, each new entry synced in its
+/// parent before anything is written under it.
 fn mkdirs(p: &Path) -> Result<()> {
-    fs::create_dir_all(p).map_err(io_err(p))
+    Ok(wyrd_cas::create_dirs_durable(p)?)
 }
 
 impl Session {
@@ -203,6 +216,8 @@ impl Session {
         };
         state::save(&dir, &rec)?;
         let mut ledger = Ledger::create(dir.ledger(), &id)?;
+        // The database file's name is an entry in the session directory.
+        wyrd_cas::sync_dir(dir.root())?;
         ledger.append(vec![event(EventBody::SessionStarted(SessionStarted {
             session_id: id,
             agent_kind: opts.agent_kind,
@@ -250,12 +265,20 @@ impl Session {
         let dir = data.session(&id);
         let rec = state::load(&dir)?;
         let cas = Cas::open(data.cas())?;
-        Ok(Session {
+        let mut session = Session {
             data: data.clone(),
             dir,
             rec,
             cas,
-        })
+        };
+        // Before anything reads the session's current branch, make sure its tree
+        // is restored in this boot (an interrupted rewind is redone here).
+        if session.needs_restore(&session.rec.current_branch.clone()) {
+            let _lock = state::lock(&session.dir.lock())?;
+            session.reload()?;
+            session.ensure_restored()?;
+        }
+        Ok(session)
     }
 
     /// All sessions, newest first.
@@ -561,6 +584,9 @@ impl Session {
                 "observe-mode sessions have no checkpoints".into(),
             ));
         }
+        // A branch that was never confirmed restored in this boot is restored
+        // before it is snapshotted, so a checkpoint never records half a tree.
+        self.ensure_restored()?;
         let branch = self.rec.current_branch.clone();
         let parent = self.rec.branch_head(&branch).cloned().or_else(|| {
             // A fresh branch starts from the checkpoint it was forked from.
@@ -601,6 +627,7 @@ impl Session {
         }
         let id = self.rec.next_checkpoint_id();
         let duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+        wyrd_cas::note_step(wyrd_cas::Step::LedgerAppend);
         let seq = self.append(vec![EventBody::CheckpointCreated(CheckpointCreated {
             checkpoint_id: id.clone(),
             branch_id: branch.clone(),
@@ -678,14 +705,93 @@ impl Session {
     }
 
     /// [`Session::rewind`] with the session lock already held.
+    ///
+    /// The branch is recorded before its tree is restored, so a restore that is
+    /// interrupted leaves a branch that `ensure_restored` redoes before anything
+    /// reads or checkpoints it (see `docs/cas-format.md`, "Rewind").
     fn rewind_locked(&mut self, target: &str, fork_name: Option<&str>) -> Result<Branch> {
         let cp = self.resolve(target)?;
         if self.stop()? {
             self.set_status(SessionState::Rewinding, Some("stopped the agent to rewind"))?;
         }
-        let manifest = self.manifest(&cp.manifest)?;
         let id = self.rec.next_branch_id();
-        let upper = self.dir.upper(&id);
+        let name = fork_name.map_or_else(|| id.clone(), str::to_string);
+        if self.rec.branch(&name).is_some() {
+            return Err(CellError::Invalid(format!("branch {name} already exists")));
+        }
+        let branch = Branch {
+            id: id.clone(),
+            name: name.clone(),
+            forked_from: Some(cp.id.clone()),
+            created_ms: now_ms(),
+        };
+        let previous = self.rec.current_branch.clone();
+        self.rec.branches.push(branch.clone());
+        self.rec.current_branch.clone_from(&id);
+        state::save(&self.dir, &self.rec)?;
+        let restored = self
+            .restore_branch(&id)
+            .and_then(|()| mkdirs(&self.dir.work(&id)));
+        if let Err(e) = restored {
+            // Nothing was restored for the caller: put the record back as it was.
+            self.rec.branches.retain(|b| b.id != id);
+            self.rec.current_branch = previous;
+            state::save(&self.dir, &self.rec)?;
+            return Err(e);
+        }
+        self.append(vec![match fork_name {
+            Some(_) => EventBody::CheckpointForked(CheckpointForked {
+                checkpoint_id: cp.id,
+                branch_id: id,
+                name,
+            }),
+            None => EventBody::CheckpointRewound(CheckpointRewound {
+                checkpoint_id: cp.id,
+                branch_id: id,
+                irreversible_seqs: Vec::new(),
+            }),
+        }])?;
+        self.set_status(SessionState::Paused, Some("rewound"))?;
+        Ok(branch)
+    }
+
+    /// The manifest a branch's tree must match: its latest checkpoint, or the
+    /// checkpoint it was forked from while it has none.
+    fn restore_target(&self, branch: &Branch) -> Result<String> {
+        if let Some(head) = self.rec.branch_head(&branch.id) {
+            return Ok(head.manifest.clone());
+        }
+        let from = branch
+            .forked_from
+            .as_deref()
+            .ok_or_else(|| CellError::Invalid(format!("branch {} has no source", branch.id)))?;
+        self.rec
+            .checkpoint(from)
+            .map(|c| c.manifest.clone())
+            .ok_or_else(|| CellError::Invalid(format!("checkpoint {from} is missing")))
+    }
+
+    /// Rebuild a branch's tree from the content store, from scratch. The
+    /// restored marker is written only after the restore has returned, and it
+    /// records this boot, so it is trusted only until the next boot (see
+    /// `needs_restore`).
+    fn restore_branch(&self, id: &str) -> Result<()> {
+        let branch = self
+            .rec
+            .branch(id)
+            .cloned()
+            .ok_or_else(|| CellError::Invalid(format!("no branch {id}")))?;
+        let manifest = self.manifest(&self.restore_target(&branch)?)?;
+        let marker = self.dir.branch(id).join(RESTORED);
+        match fs::remove_file(&marker) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(&marker)(e)),
+        }
+        let upper = self.dir.upper(id);
+        if upper.exists() {
+            fs::remove_dir_all(&upper).map_err(io_err(&upper))?;
+        }
         let report = self.cas.materialize(&manifest, &upper)?;
         for w in &report.whiteouts {
             nix::sys::stat::mknod(
@@ -705,34 +811,40 @@ impl Session {
             )
             .map_err(|e| CellError::Sys(format!("opaque {}: {e}", d.display())))?;
         }
-        mkdirs(&self.dir.work(&id))?;
-        let name = fork_name.map_or_else(|| id.clone(), str::to_string);
-        if self.rec.branch(&name).is_some() {
-            return Err(CellError::Invalid(format!("branch {name} already exists")));
+        // Written without a sync on purpose. Within this boot the page cache
+        // keeps it and the tree together. After a reboot the boot id differs,
+        // and the branch is restored again.
+        if let Some(boot) = boot_id() {
+            fs::write(&marker, boot).map_err(io_err(&marker))?;
         }
-        let branch = Branch {
-            id: id.clone(),
-            name: name.clone(),
-            forked_from: Some(cp.id.clone()),
-            created_ms: now_ms(),
+        Ok(())
+    }
+
+    /// Whether a branch's tree must be restored before anything uses it: it
+    /// was made by a rewind or fork, and it was not restored in this boot.
+    /// Without a boot id, every such branch is restored.
+    fn needs_restore(&self, id: &str) -> bool {
+        let Some(branch) = self.rec.branch(id) else {
+            return false;
         };
-        self.rec.branches.push(branch.clone());
-        self.rec.current_branch.clone_from(&id);
-        state::save(&self.dir, &self.rec)?;
-        self.append(vec![match fork_name {
-            Some(_) => EventBody::CheckpointForked(CheckpointForked {
-                checkpoint_id: cp.id,
-                branch_id: id,
-                name,
-            }),
-            None => EventBody::CheckpointRewound(CheckpointRewound {
-                checkpoint_id: cp.id,
-                branch_id: id,
-                irreversible_seqs: Vec::new(),
-            }),
-        }])?;
-        self.set_status(SessionState::Paused, Some("rewound"))?;
-        Ok(branch)
+        if branch.forked_from.is_none() || self.rec.mode != CaptureMode::Cell {
+            return false;
+        }
+        let Some(boot) = boot_id() else {
+            return true;
+        };
+        fs::read_to_string(self.dir.branch(id).join(RESTORED)).map_or(true, |s| s.trim() != boot)
+    }
+
+    /// Redo the current branch's restore if it is needed. The caller holds the
+    /// session lock.
+    fn ensure_restored(&mut self) -> Result<()> {
+        let current = self.rec.current_branch.clone();
+        if self.needs_restore(&current) {
+            tracing::warn!(branch = %current, "restoring a branch whose rewind was not confirmed in this boot");
+            self.restore_branch(&current)?;
+        }
+        Ok(())
     }
 
     /// Every event of the ledger, in order.
@@ -1140,9 +1252,12 @@ impl Session {
             };
             let mut ledger = Ledger::create(staging.ledger(), &id)?;
             ledger.append(spec.events.clone())?;
+            // The session becomes visible at the rename below, so its events must be on disk first.
+            ledger.sync()?;
+            wyrd_cas::note_step(wyrd_cas::Step::SyncFile(staging.ledger()));
             let source = serde_json::to_vec_pretty(&spec.source)
                 .map_err(|e| CellError::Invalid(e.to_string()))?;
-            fs::write(staging.import(), source).map_err(io_err(&staging.import()))?;
+            wyrd_cas::write_durable(&staging.import(), &source)?;
             state::save(&staging, &rec)?;
             Ok(rec)
         })();
@@ -1154,10 +1269,16 @@ impl Session {
             }
         };
         let dir = data.session(&id);
+        wyrd_cas::note_step(wyrd_cas::Step::Rename(
+            staging.root().to_path_buf(),
+            dir.root().to_path_buf(),
+        ));
         if let Err(e) = fs::rename(staging.root(), dir.root()) {
             let _ = fs::remove_dir_all(staging.root());
             return Err(io_err(dir.root())(e));
         }
+        // The new session's name is an entry in `sessions/`.
+        wyrd_cas::sync_dir(&data.sessions())?;
         Ok(Session {
             data: data.clone(),
             dir,

@@ -41,6 +41,12 @@ Two ways:
   optional ingress and autoscaling. It does not create PostgreSQL, the
   bucket, or any secret: you create the secrets and name them in the
   values.
+  The chart's default image is the release's own version
+  (`ghcr.io/kunj157/wyrdline-hub:<version>`); install the packaged chart
+  from the release (`wyrdline-hub-<version>.tgz`). A chart built from the
+  repository has no release image and refuses to render until you set
+  `image.tag` or `image.digest`. **In production set `image.digest`**: a
+  digest pins the exact image, and a tag can be moved.
 
 Required settings, both ways:
 
@@ -143,7 +149,8 @@ steps. It sets two outputs for both a new upload and a bundle the
 organisation already has: `hub-bundle-id` (the bundle's id) and
 `hub-bundle-url`, the bundle's API resource, `<hub>/api/v1/bundles/<id>`.
 The Hub has no page per bundle, so the URL is an API address. The Action's
-`hub-url` input is reserved and does not upload yet.
+`hub-url` and `hub-org` inputs upload the bundle after the agent runs; a failed
+upload fails the step unless `hub-upload-required` is `false`.
 
 ## Browse and download
 

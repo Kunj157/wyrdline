@@ -368,16 +368,24 @@ fn overhead_of_capture_on_victim_shop_tests() {
         |_, _| {},
     );
     o.report("victim-shop tests", rounds);
-    assert!(
-        o.pct(o.captured) <= 5.0,
-        "capture overhead {:.1}% exceeds 5%",
-        o.pct(o.captured)
-    );
-    assert!(
-        o.pct(o.unregistered) <= 5.0,
-        "attached-but-filtered overhead {:.1}% exceeds 5%",
-        o.pct(o.unregistered)
-    );
+    // The workload runs for about 90-150 ms, so a few milliseconds of runner
+    // noise is several percent: three release rehearsals in a row measured
+    // attached-but-filtered at 5.1, 5.5 and 10.7 %, once above the captured
+    // figure, which does strictly more work. Releases report it; the nightly
+    // (WYRD_PERF_STRICT=1) enforces it until the measurement is fixed (#240).
+    // The cargo-build and syscall-dense tests keep gating overhead.
+    if std::env::var("WYRD_PERF_STRICT").as_deref() == Ok("1") {
+        assert!(
+            o.pct(o.captured) <= 5.0,
+            "capture overhead {:.1}% exceeds 5%",
+            o.pct(o.captured)
+        );
+        assert!(
+            o.pct(o.unregistered) <= 5.0,
+            "attached-but-filtered overhead {:.1}% exceeds 5%",
+            o.pct(o.unregistered)
+        );
+    }
 }
 
 /// Worst case, not the plan's target workload: a syscall-dense script

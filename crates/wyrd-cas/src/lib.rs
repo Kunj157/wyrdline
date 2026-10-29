@@ -117,9 +117,78 @@ pub(crate) fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CasError + '
     }
 }
 
-/// Make a directory's entries durable.
+/// One durable step of a write, in the order it was taken.
 #[cfg(feature = "store")]
-fn sync_dir(dir: &Path) -> Result<()> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// A directory was created. Its parent must be synced before a file is
+    /// renamed into it, by a `SyncDir` of the parent or a `SyncFs`.
+    Mkdir(PathBuf),
+    /// A directory's entries were synced.
+    SyncDir(PathBuf),
+    /// Every file system change so far was synced (`syncfs`).
+    SyncFs,
+    /// A file's data was synced.
+    SyncFile(PathBuf),
+    /// A file was renamed `(from, to)`.
+    Rename(PathBuf, PathBuf),
+    /// A ledger event was appended (noted by the caller, see [`note_step`]).
+    LedgerAppend,
+}
+
+/// The steps of the recording in progress, from any thread, or `None`.
+#[cfg(feature = "store")]
+static STEPS: std::sync::Mutex<Option<Vec<Step>>> = std::sync::Mutex::new(None);
+
+/// Serialises recordings, so two tests never see each other's steps.
+#[cfg(feature = "store")]
+static RECORDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(feature = "store")]
+fn step(s: Step) {
+    if let Some(v) = STEPS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_mut()
+    {
+        v.push(s);
+    }
+}
+
+/// Record a durable step taken by a caller of this crate, so the caller's own
+/// steps appear in [`record_steps`] in order. Test support.
+#[doc(hidden)]
+#[cfg(feature = "store")]
+pub fn note_step(s: Step) {
+    step(s);
+}
+
+/// Run `f` and return its result with every durable step taken while it ran,
+/// from any thread, in the order they were taken. For tests that pin the
+/// order of writes. Recordings are serialised. Steps taken by other threads
+/// that are not part of `f` are recorded too, so `f` must be the only writer.
+#[doc(hidden)]
+#[cfg(feature = "store")]
+pub fn record_steps<R>(f: impl FnOnce() -> R) -> (R, Vec<Step>) {
+    let _guard = RECORDING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *STEPS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Vec::new());
+    let out = f();
+    let steps = STEPS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .unwrap_or_default();
+    (out, steps)
+}
+
+/// Sync a directory's entries, so names created or renamed in it are on disk.
+#[cfg(feature = "store")]
+pub fn sync_dir(dir: &Path) -> Result<()> {
+    step(Step::SyncDir(dir.to_path_buf()));
     fs::File::open(dir)
         .and_then(|d| d.sync_all())
         .map_err(io_err(dir))
@@ -154,6 +223,81 @@ fn sweep_staging(tmp: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Write `path` durably. The bytes go to a staging file beside it, which is
+/// synced and renamed over `path`; then the directory is synced, so the new
+/// name is on disk. A crash leaves the old file or the new one, never a
+/// partial one. The parent directory must exist.
+#[cfg(feature = "store")]
+pub fn write_durable(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut staged_name = path.file_name().map_or_else(
+        || std::ffi::OsString::from("file"),
+        std::ffi::OsString::from,
+    );
+    staged_name.push(format!(".tmp.{}", std::process::id()));
+    let tmp = path.with_file_name(staged_name);
+    {
+        let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
+        f.write_all(bytes).map_err(io_err(&tmp))?;
+        step(Step::SyncFile(tmp.clone()));
+        f.sync_data().map_err(io_err(&tmp))?;
+    }
+    step(Step::Rename(tmp.clone(), path.to_path_buf()));
+    fs::rename(&tmp, path).map_err(io_err(path))?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    sync_dir(parent)
+}
+
+/// Create `dir` and any missing parents, syncing each parent before anything
+/// is written under the new directory (see `docs/cas-format.md`).
+#[cfg(feature = "store")]
+pub fn create_dirs_durable(dir: &Path) -> Result<()> {
+    create_dirs(dir, true)
+}
+
+/// Make every file system change so far durable, on the file system that
+/// holds `path` (one `syncfs`).
+#[cfg(feature = "store")]
+pub fn sync_fs_of(path: &Path) -> Result<()> {
+    step(Step::SyncFs);
+    let f = fs::File::open(path).map_err(io_err(path))?;
+    rustix::fs::syncfs(&f).map_err(|e| CasError::Io {
+        path: path.to_path_buf(),
+        source: e.into(),
+    })
+}
+
+/// Create `dir` and any missing parents. A new directory is an entry in its
+/// parent. With `sync`, the parent is synced straight after each directory is
+/// made, before anything is written under it; a directory another process made
+/// first is synced the same way, since that process may not have synced it.
+/// Without `sync`, the caller must sync before any file is renamed in (a
+/// `syncfs` does that).
+#[cfg(feature = "store")]
+fn create_dirs(dir: &Path, sync: bool) -> Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = dir.parent() {
+        create_dirs(parent, sync)?;
+    }
+    match fs::create_dir(dir) {
+        Ok(()) => {
+            step(Step::Mkdir(dir.to_path_buf()));
+            if let (true, Some(parent)) = (sync, dir.parent()) {
+                sync_dir(parent)?;
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if let (true, Some(parent)) = (sync, dir.parent()) {
+                sync_dir(parent)?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(io_err(dir)(e)),
+    }
 }
 
 /// Result of [`Cas::gc`].
@@ -214,15 +358,15 @@ impl Cas {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         let chunks = root.join("chunks");
-        fs::create_dir_all(&chunks).map_err(io_err(&chunks))?;
+        create_dirs(&chunks, true)?;
         let tmp = root.join("tmp");
-        fs::create_dir_all(&tmp).map_err(io_err(&tmp))?;
+        create_dirs(&tmp, true)?;
         sweep_staging(&tmp)?;
         let marker = root.join("FORMAT");
         match fs::read_to_string(&marker) {
             Ok(s) if s.trim() == FORMAT_ID => {}
             Ok(other) => return Err(CasError::Format(other)),
-            Err(_) => fs::write(&marker, format!("{FORMAT_ID}\n")).map_err(io_err(&marker))?,
+            Err(_) => write_durable(&marker, format!("{FORMAT_ID}\n").as_bytes())?,
         }
         Ok(Cas { root })
     }
@@ -257,15 +401,18 @@ impl Cas {
             return Ok(h);
         }
         let path = self.chunk_path(h);
-        fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+        create_dirs(&dir, true)?;
         let compressed = zstd::bulk::compress(bytes, ZSTD_LEVEL).map_err(io_err(&path))?;
         let tmp = self.staging_path(h);
         {
             let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
             f.write_all(&compressed).map_err(io_err(&tmp))?;
+            step(Step::SyncFile(tmp.clone()));
             f.sync_data().map_err(io_err(&tmp))?;
         }
+        step(Step::Rename(tmp.clone(), path.clone()));
         fs::rename(&tmp, &path).map_err(io_err(&path))?;
+        // The chunk's name is an entry in its directory: sync that after the rename.
         sync_dir(&dir)?;
         Ok(h)
     }
@@ -280,7 +427,9 @@ impl Cas {
         }
         let path = self.chunk_path(h);
         let dir = self.chunk_dir(h);
-        fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+        // No sync here: the commit's first `syncfs` makes these directories durable,
+        // before any file is renamed into them.
+        create_dirs(&dir, false)?;
         let compressed = zstd::bulk::compress(bytes, ZSTD_LEVEL).map_err(io_err(&path))?;
         let tmp = self.staging_path(h);
         // Registered before the write, so a failed write is removed with the batch.
@@ -302,6 +451,7 @@ impl Cas {
     pub fn commit(&self, mut staged: Staged) -> Result<()> {
         self.sync()?;
         for (tmp, path) in staged.files.drain(..) {
+            step(Step::Rename(tmp.clone(), path.clone()));
             fs::rename(&tmp, &path).map_err(io_err(&path))?;
         }
         self.sync()
@@ -334,6 +484,7 @@ impl Cas {
     /// Make every write so far durable: one barrier for the whole store
     /// filesystem (`syncfs`), covering data, renames and new directories.
     pub fn sync(&self) -> Result<()> {
+        step(Step::SyncFs);
         let dir = fs::File::open(&self.root).map_err(io_err(&self.root))?;
         rustix::fs::syncfs(&dir).map_err(|e| CasError::Io {
             path: self.root.clone(),
