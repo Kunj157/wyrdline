@@ -142,5 +142,16 @@ contains "$LAST_OUT" "already at" "says so"
 expect 1 "stamp-version: rejects a non-version" "$stamp" latest "$ws"
 check cargo metadata --locked --offline --format-version 1 --manifest-path "$ws/Cargo.toml"
 
+# ---- stamp-chart.sh --------------------------------------------------------
+chartdir="$tmp/chart"
+mkdir -p "$chartdir"
+cp -r "$root/deploy/helm/wyrdline-hub/." "$chartdir/"
+expect 0 "stamp-chart: sets version and appVersion" "$root/scripts/release/stamp-chart.sh" 1.2.3-rc.1 "$chartdir"
+contains "$chartdir/Chart.yaml" '^version: 1.2.3-rc.1$' "chart version stamped"
+contains "$chartdir/Chart.yaml" '^appVersion: "1.2.3-rc.1"$' "appVersion stamped (the default image tag)"
+expect 0 "stamp-chart: idempotent" "$root/scripts/release/stamp-chart.sh" 1.2.3-rc.1 "$chartdir"
+expect 1 "stamp-chart: rejects a non-version" "$root/scripts/release/stamp-chart.sh" latest "$chartdir"
+check helm lint --strict "$chartdir" -f "$root/deploy/helm/wyrdline-hub/ci/kind-values.yaml"
+
 echo "release scripts: $pass passed, $fail failed"
 [ "$fail" = 0 ]
