@@ -363,7 +363,15 @@ jobs:
           WYRD_INSTALL_DIR: ${{ runner.temp }}/tampered-bin
         run: |
           cp -R assets "$RUNNER_TEMP/tampered"
-          sed -i '1s/^./0/' "$RUNNER_TEMP/tampered/SHA256SUMS"
+          # Flip the first hex digit to a different one. Overwriting it with a
+          # fixed digit left the file unchanged whenever it already was that
+          # digit (v0.13.0: line 1 started with 0), so nothing was tested.
+          sums="$RUNNER_TEMP/tampered/SHA256SUMS"
+          if [ "$(head -c1 "$sums")" = 0 ]; then d=1; else d=0; fi
+          sed -i "1s/^./$d/" "$sums"
+          if cmp -s assets/SHA256SUMS "$sums"; then
+            echo "::error::the tampered SHA256SUMS is identical to the signed one"; exit 1
+          fi
           if bash integrations/github-action/scripts/install.sh; then
             echo "::error::install.sh accepted a SHA256SUMS that no longer matches its signature"; exit 1
           fi
