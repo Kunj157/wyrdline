@@ -2,6 +2,7 @@
 
 mod auth;
 pub(crate) mod bundles;
+mod ci;
 mod health;
 mod orgs;
 mod sync;
@@ -18,4 +19,5 @@ pub fn router(max_upload_bytes: u64) -> Router<Arc<AppState>> {
         .merge(auth::router())
         .merge(orgs::router())
         .merge(sync::router())
+        .merge(ci::router())
 }

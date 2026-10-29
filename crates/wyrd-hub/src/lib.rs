@@ -44,6 +44,8 @@ pub struct AppState {
     pub storage: Storage,
     /// `None` when no OIDC provider is configured (login disabled).
     pub oidc: Option<oidc::Provider>,
+    /// The CI issuer's signing keys (`POST /api/v1/ci/token`).
+    pub ci: oidc::Keys,
     pub metrics: metrics::Metrics,
     /// The annotation sync relay (`/api/v1/sync`).
     pub sync: Arc<sync::Relay>,
@@ -54,11 +56,13 @@ impl AppState {
     pub fn new(config: Config, storage: Storage) -> Self {
         let oidc = config.oidc.clone().map(oidc::Provider::new);
         let db = Arc::new(OnceLock::new());
+        let ci = oidc::Keys::new(config.ci.issuer.clone());
         AppState {
             config,
             db: Arc::clone(&db),
             storage,
             oidc,
+            ci,
             metrics: metrics::Metrics::default(),
             sync: sync::relay(db),
         }
