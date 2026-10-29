@@ -6,8 +6,12 @@
 #   wyrdline-<arch>-unknown-linux-gnu.tar.gz   the binaries
 #   SHA256SUMS                                 sha256sum lines for the assets
 #   SHA256SUMS.sigstore.json                   cosign keyless bundle over SHA256SUMS
-# The checksum is always verified. The signature is verified when present
-# (WYRD_VERIFY_SIGNATURE=auto), required (=required), or skipped (=skip).
+# The checksum is always verified. The signature must verify: the default
+# (WYRD_VERIFY_SIGNATURE=required) refuses a release without a valid
+# signature. =auto verifies when present and warns otherwise; =skip (or
+# =false) installs without a signature check, with a warning in the log and
+# the job summary. Prebuilt binaries (WYRD_PATH) are not downloads and skip
+# this check.
 #
 # Env: WYRD_VERSION (tag or "latest"), WYRD_REPOSITORY, WYRD_PATH,
 #      WYRD_VERIFY_SIGNATURE, WYRD_INSTALL_DIR, WYRD_RELEASE_BASE (tests),
@@ -21,12 +25,20 @@ die() {
 
 repo=${WYRD_REPOSITORY:-Kunj157/wyrdline}
 version=${WYRD_VERSION:-latest}
-verify=${WYRD_VERIFY_SIGNATURE:-auto}
+verify=${WYRD_VERIFY_SIGNATURE:-required}
 dest=${WYRD_INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/wyrdline/bin}
 identity=${WYRD_SIGNER_IDENTITY:-^https://github\.com/${repo}/\.github/workflows/release\.yml@refs/tags/v}
 
-case "$verify" in auto | required | skip) ;; *) die "verify-signature must be auto, required, or skip (got '$verify')" ;; esac
+case "$verify" in auto | required | skip | false) ;; *) die "verify-signature must be required, auto, or skip (got '$verify')" ;; esac
+if [ "$verify" = false ]; then verify=skip; fi
 mkdir -p "$dest"
+
+# Warnings also go to the job summary, so an unverified install is visible
+# on the run page and not only in the log.
+note() {
+  echo "::warning::wyrdline install: $*"
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '> **Warning:** %s\n\n' "$*" >>"$GITHUB_STEP_SUMMARY"; fi
+}
 
 publish() {
   "$dest/wyrd" --version >/dev/null || die "the installed wyrd does not run"
@@ -70,9 +82,9 @@ fetch SHA256SUMS || die "the release has no SHA256SUMS; refusing an unverified i
 signed=false
 if fetch SHA256SUMS.sigstore.json; then signed=true; fi
 case "$verify:$signed" in
-  skip:*) echo "::warning::wyrdline install: signature verification skipped (verify-signature: skip)" ;;
-  required:false) die "the release has no SHA256SUMS.sigstore.json and verify-signature is required" ;;
-  auto:false) echo "::warning::wyrdline install: the release is not signed; only its checksum was verified" ;;
+  skip:*) note "SIGNATURE VERIFICATION DISABLED (verify-signature: false/skip). The release is installed without a signature check; only its checksum, which comes from the same host, was verified. Use the default (required) unless you accept that." ;;
+  required:false) die "the release has no valid SHA256SUMS.sigstore.json and verify-signature is required (the default). Use a signed release, or set verify-signature: skip to accept an unsigned one." ;;
+  auto:false) note "the release is not signed; only its checksum was verified (verify-signature: auto)" ;;
   *:true)
     command -v cosign >/dev/null || die "cosign is needed to verify the release signature"
     cosign verify-blob \
@@ -92,7 +104,9 @@ echo "wyrdline: $asset checksum verified"
 mkdir -p "$work/x"
 tar -xzf "$work/$asset" -C "$work/x" --no-same-owner
 for b in wyrd wyrd-sensord; do
-  found=$(find "$work/x" -type f -name "$b" | head -n 1)
+  # Only the binaries in bin/: the tarball also holds deploy/apparmor/wyrd, which
+  # has the same name and was picked up on arm64 (find order is not fixed).
+  found=$(find "$work/x" -type f -path "*/bin/$b" | head -n 1)
   [ -n "$found" ] || die "$asset has no $b"
   install -m 0755 "$found" "$dest/$b"
 done

@@ -12,6 +12,7 @@ export default defineConfig({
   testDir: ".",
   testMatch: /.*\.spec\.ts/,
   globalSetup: "./global-setup.ts",
+  // The Hub-backed specs have their own config (playwright.hub.config.ts).
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -22,7 +23,7 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: /perf-webgpu\.spec\.ts/,
+      testIgnore: [/perf-webgpu\.spec\.ts/, /[\\/]hub[\\/]/],
     },
     ...(webgpu
       ? [

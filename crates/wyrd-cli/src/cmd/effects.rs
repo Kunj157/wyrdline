@@ -118,8 +118,72 @@ impl EffectGuard {
 const BATCH: usize = 500;
 const FLUSH_EVERY: Duration = Duration::from_millis(50);
 const RECONNECT_EVERY: Duration = Duration::from_secs(1);
-/// After the agent exits, keep reading this long for in-flight events.
-const DRAIN: Duration = Duration::from_millis(300);
+/// After the agent exits, wait at most this long for the sensor to confirm
+/// that every queued event was delivered.
+const DRAIN_BOUND: Duration = Duration::from_secs(5);
+
+/// The end of capture: a flush barrier sent to the sensor when the agent
+/// exited, answered once every event queued before it has been delivered.
+#[derive(Debug)]
+struct Drain {
+    token: u64,
+    since: Instant,
+    /// Events that arrived after the agent exited.
+    received: u64,
+}
+
+impl Drain {
+    fn confirmed_by(&self, msg: &ServerMsg) -> bool {
+        let done = matches!(msg, ServerMsg::Flushed { token } if *token == self.token);
+        if done {
+            tracing::info!(events = self.received, "sensor confirmed delivery");
+        }
+        done
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        now.duration_since(self.since) >= DRAIN_BOUND
+    }
+}
+
+/// Loss counters seen on the capture connection, and loss not yet attributed
+/// to an event (it goes out as the next event's `drops_since_last`).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DropCount {
+    /// Last ring-buffer total the daemon reported (daemon-wide).
+    ring: Option<u64>,
+    /// Last count of events this connection's queue refused.
+    queue: u64,
+    pending: u64,
+}
+
+/// Which loss counters grew in one `drops` report.
+#[derive(Debug, PartialEq, Eq)]
+struct Grew {
+    ring: bool,
+    queue: bool,
+}
+
+impl DropCount {
+    /// Fold one `drops` report in.
+    fn observe(&mut self, total: u64, queue_dropped: u64) -> Grew {
+        let ring_prev = *self.ring.get_or_insert(total);
+        self.pending += total.saturating_sub(ring_prev);
+        self.ring = Some(total);
+        self.pending += queue_dropped.saturating_sub(self.queue);
+        let queue = queue_dropped > self.queue;
+        self.queue = queue_dropped;
+        Grew {
+            ring: total > ring_prev,
+            queue,
+        }
+    }
+
+    /// The daemon counts each connection's queue from zero.
+    fn new_connection(&mut self) {
+        self.queue = 0;
+    }
+}
 
 /// Handle to the capture thread.
 #[derive(Debug)]
@@ -225,6 +289,26 @@ impl Ctx {
         match Ledger::open(&self.ledger).and_then(|mut l| l.append(events)) {
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "could not append kernel effects"),
+        }
+    }
+
+    /// Record that some effects were lost, without marking the session
+    /// degraded (the loss is counted in `drops_since_last`).
+    fn warn_lost(&self, msg: &str) {
+        if let Ok(mut w) = self.warning.lock() {
+            w.get_or_insert_with(|| msg.into());
+        }
+    }
+
+    /// Fold a `drops` report in, warning when loss grew. The queue loss means
+    /// this client fell behind the sensor.
+    fn on_drops(&self, seen: &mut DropCount, total: u64, queue_dropped: u64) {
+        let grew = seen.observe(total, queue_dropped);
+        if grew.ring {
+            self.warn_lost("the sensor's ring buffer overflowed; some effects were lost");
+        }
+        if grew.queue {
+            self.warn_lost("wyrd could not keep up with the sensor; some effects were lost");
         }
     }
 
@@ -355,6 +439,43 @@ impl Ctx {
         })
     }
 
+    /// The agent exited: ask the sensor for a delivery barrier.
+    fn start_drain(&self, client: &mut Option<SensorClient>, batch: &mut Vec<Event>) -> Drain {
+        let d = Drain {
+            token: wyrd_cell::mono_ns(),
+            since: Instant::now(),
+            received: 0,
+        };
+        if let Some(c) = client.as_ref()
+            && let Err(e) = c.send_flush(d.token)
+        {
+            self.append(std::mem::take(batch));
+            self.lost(&format!("lost the sensor connection: {e}"));
+            *client = None;
+        }
+        d
+    }
+
+    /// The bound passed without the barrier's answer: say so, never silently.
+    fn drain_unconfirmed(&self, d: &Drain, batch: &mut Vec<Event>) {
+        tracing::warn!(events = d.received, "sensor did not confirm delivery");
+        self.append(std::mem::take(batch));
+        self.lost(&format!(
+            "wyrd-sensord did not confirm delivery within {} s after the agent exited; \
+             its last effects may be missing",
+            DRAIN_BOUND.as_secs()
+        ));
+    }
+
+    fn reconnect(&self) -> Option<SensorClient> {
+        let c = self.connect().ok()?;
+        self.append(vec![meta(EventBody::SensorResumed(SensorResumed {
+            dropped: 0,
+        }))]);
+        let _ = Session::mark_recovered(&self.data, &self.session_id);
+        Some(c)
+    }
+
     fn run(self, ready: &mpsc::SyncSender<()>) {
         let mut client = match self.connect() {
             Ok(c) => Some(c),
@@ -367,36 +488,31 @@ impl Ctx {
         if self.cgroup.is_none() {
             return;
         }
-        let mut drops_total: Option<u64> = None;
-        let mut pending_drops = 0u64;
+        let mut seen = DropCount::default();
         let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
         let mut last_flush = Instant::now();
         let mut last_attempt = Instant::now();
-        let mut stopping: Option<Instant> = None;
+        let mut drain: Option<Drain> = None;
         let mut refreshed = Instant::now();
         let mut current = self.egress.as_ref().map(|e| e.rules(&resolve));
         loop {
             self.refresh_egress(client.as_ref(), &mut refreshed, &mut current);
-            if stopping.is_none() && self.stop.load(Ordering::SeqCst) {
-                stopping = Some(Instant::now());
+            if drain.is_none() && self.stop.load(Ordering::SeqCst) {
+                drain = Some(self.start_drain(&mut client, &mut batch));
             }
-            if stopping.is_some_and(|t| t.elapsed() >= DRAIN) {
+            if let Some(d) = drain.as_ref().filter(|d| d.expired(Instant::now())) {
+                self.drain_unconfirmed(d, &mut batch);
                 break;
             }
             let Some(c) = client.as_mut() else {
-                if stopping.is_some() {
+                if drain.is_some() {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
                 if last_attempt.elapsed() >= RECONNECT_EVERY {
                     last_attempt = Instant::now();
-                    if let Ok(c) = self.connect() {
-                        self.append(vec![meta(EventBody::SensorResumed(SensorResumed {
-                            dropped: 0,
-                        }))]);
-                        let _ = Session::mark_recovered(&self.data, &self.session_id);
-                        client = Some(c);
-                    }
+                    client = self.reconnect();
+                    seen.new_connection();
                 }
                 continue;
             };
@@ -407,8 +523,12 @@ impl Ctx {
                     process,
                     body,
                 })) => {
+                    drain = drain.map(|d| Drain {
+                        received: d.received + 1,
+                        ..d
+                    });
                     let drops =
-                        u32::try_from(std::mem::take(&mut pending_drops)).unwrap_or(u32::MAX);
+                        u32::try_from(std::mem::take(&mut seen.pending)).unwrap_or(u32::MAX);
                     let guard = self.guard_for(&body);
                     let stop = self.guard.as_ref().and_then(|g| g.check(&body));
                     batch.push(event(ts_mono_ns, Some(process), drops, body));
@@ -419,18 +539,11 @@ impl Ctx {
                         self.effect_denied(&mut batch, &reason);
                     }
                 }
-                Ok(Some(ServerMsg::Drops { total })) => {
-                    let prev = *drops_total.get_or_insert(total);
-                    if total > prev {
-                        pending_drops += total - prev;
-                        if let Ok(mut w) = self.warning.lock() {
-                            w.get_or_insert_with(|| {
-                                "the sensor's ring buffer overflowed; some effects were lost".into()
-                            });
-                        }
-                    }
-                    drops_total = Some(total);
-                }
+                Ok(Some(ServerMsg::Drops {
+                    total,
+                    queue_dropped,
+                })) => self.on_drops(&mut seen, total, queue_dropped),
+                Ok(Some(msg)) if drain.as_ref().is_some_and(|d| d.confirmed_by(&msg)) => break,
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     self.append(std::mem::take(&mut batch));
@@ -462,6 +575,62 @@ impl Ctx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drop_counts_add_up_loss_across_reports_and_reconnects() {
+        let mut seen = DropCount::default();
+        // The first report is the baseline: loss before it was not seen here.
+        assert_eq!(
+            seen.observe(4, 0),
+            Grew {
+                ring: false,
+                queue: false,
+            }
+        );
+        assert_eq!(seen.pending, 0);
+        // Ring-buffer loss grows daemon-wide; queue loss grows this connection.
+        assert_eq!(
+            seen.observe(6, 5),
+            Grew {
+                ring: true,
+                queue: true,
+            }
+        );
+        assert_eq!(seen.pending, 2 + 5);
+        // Unchanged counts add nothing.
+        assert_eq!(
+            seen.observe(6, 5),
+            Grew {
+                ring: false,
+                queue: false,
+            }
+        );
+        assert_eq!(seen.pending, 7);
+        // A reconnect starts the daemon's queue count again from zero, so
+        // its first losses must count, even below the old total.
+        seen.new_connection();
+        seen.observe(6, 0);
+        seen.observe(6, 3);
+        assert_eq!(seen.pending, 10);
+    }
+
+    #[test]
+    fn drain_ends_on_its_own_flush_answer_or_the_bound() {
+        let since = Instant::now();
+        let d = Drain {
+            token: 7,
+            since,
+            received: 0,
+        };
+        assert!(d.confirmed_by(&ServerMsg::Flushed { token: 7 }));
+        assert!(!d.confirmed_by(&ServerMsg::Flushed { token: 8 }));
+        assert!(!d.confirmed_by(&ServerMsg::Drops {
+            total: 0,
+            queue_dropped: 0,
+        }));
+        assert!(!d.expired(since + DRAIN_BOUND.saturating_sub(Duration::from_millis(1))));
+        assert!(d.expired(since + DRAIN_BOUND));
+    }
 
     #[test]
     fn egress_rules_combine_prefixes_with_resolved_hosts() {

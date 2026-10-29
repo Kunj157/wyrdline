@@ -76,10 +76,27 @@ pub struct ListCheckpointsArgs {
 pub struct RewindArgs {
     session: String,
     /// Checkpoint id (`c3`), branch name, or `head`.
-    target: String,
+    #[arg(required_unless_present_any = ["requests", "confirm", "reject"])]
+    target: Option<String>,
     /// Start the agent again on the new branch.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["requests", "reject"])]
     relaunch: bool,
+    /// List the rewind requests the agent made (`wyrd mcp`).
+    #[arg(long, conflicts_with_all = ["target", "confirm", "reject"])]
+    requests: bool,
+    /// Confirm the agent's rewind request with this id: rewind to the
+    /// checkpoint it names.
+    #[arg(long, value_name = "REQUEST", conflicts_with_all = ["target", "reject"])]
+    confirm: Option<u64>,
+    /// Reject the agent's rewind request with this id.
+    #[arg(long, value_name = "REQUEST", conflicts_with = "target")]
+    reject: Option<u64>,
+    /// Why a request is rejected (stored in the ledger).
+    #[arg(long, requires = "reject")]
+    note: Option<String>,
+    /// JSON output (with `--requests`).
+    #[arg(long, requires = "requests")]
+    json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -520,7 +537,92 @@ fn rewind_or_fork(
 }
 
 pub fn rewind(a: &RewindArgs) -> anyhow::Result<u8> {
-    rewind_or_fork(&a.session, &a.target, None, a.relaunch)
+    if a.requests {
+        return rewind_requests(&a.session, a.json);
+    }
+    if let Some(id) = a.reject {
+        let mut s = Session::open(&data(), &a.session)?;
+        let r = s.reject_rewind(id, "cli", a.note.clone())?;
+        writeln!(
+            out(),
+            "wyrd: rejected rewind request {} (to {}); nothing was rewound",
+            r.id,
+            r.checkpoint_id
+        )?;
+        return Ok(exit::OK);
+    }
+    if let Some(id) = a.confirm {
+        let mut s = Session::open(&data(), &a.session)?;
+        let b = s.confirm_rewind(id, "cli")?;
+        writeln!(
+            out(),
+            "wyrd: confirmed rewind request {id}; now on branch {} (from {})",
+            b.name,
+            b.forked_from.as_deref().unwrap_or("-")
+        )?;
+        return if a.relaunch {
+            run_session(&mut s, None, None)
+        } else {
+            Ok(exit::OK)
+        };
+    }
+    let target = a.target.as_deref().context("a checkpoint is required")?;
+    rewind_or_fork(&a.session, target, None, a.relaunch)
+}
+
+/// Agent-written text for the terminal: control characters (escape
+/// sequences, newlines) become spaces.
+fn printable(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// `wyrd rewind <session> --requests`: the agent's rewind requests,
+/// pending ones marked.
+fn rewind_requests(session: &str, json: bool) -> anyhow::Result<u8> {
+    let s = Session::open(&data(), session)?;
+    let reqs = s.rewind_requests()?;
+    let mut o = out();
+    if json {
+        serde_json::to_writer_pretty(&mut o, &serde_json::json!({ "requests": reqs }))?;
+        writeln!(o)?;
+        return Ok(exit::OK);
+    }
+    if reqs.is_empty() {
+        writeln!(o, "no rewind requests")?;
+    }
+    let id = &s.record().id;
+    for r in &reqs {
+        let status = match r.status {
+            wyrd_cell::requests::RequestStatus::Pending => "pending".to_string(),
+            wyrd_cell::requests::RequestStatus::Confirmed => {
+                format!("confirmed ({})", r.decided_by.as_deref().unwrap_or("-"))
+            }
+            wyrd_cell::requests::RequestStatus::Rejected => {
+                format!("rejected ({})", r.decided_by.as_deref().unwrap_or("-"))
+            }
+        };
+        writeln!(
+            o,
+            "{:<6} to {:<5} {:<20} via {}: {}",
+            r.id,
+            r.checkpoint_id,
+            status,
+            r.source,
+            printable(&r.reason)
+        )?;
+    }
+    if reqs
+        .iter()
+        .any(|r| r.status == wyrd_cell::requests::RequestStatus::Pending)
+    {
+        writeln!(
+            o,
+            "decide with `wyrd rewind {id} --confirm <id>` or `--reject <id>`"
+        )?;
+    }
+    Ok(exit::OK)
 }
 
 pub fn fork(a: &ForkArgs) -> anyhow::Result<u8> {

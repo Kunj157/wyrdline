@@ -122,6 +122,7 @@ pub fn otlp_env(
 
 #[cfg(test)]
 mod tests {
+    // nosemgrep: wyrd-no-lint-allow-for-unwrap-on-input-paths -- inside #[cfg(test)] mod tests; the allow is test-only.
     #![allow(clippy::unwrap_used)]
     use super::*;
 

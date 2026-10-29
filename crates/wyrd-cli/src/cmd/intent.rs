@@ -195,7 +195,10 @@ pub struct Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
+        // No new connection can reach the socket once its file is gone; let
+        // the answers already in flight finish before the process exits.
         let _ = std::fs::remove_file(&self.socket);
+        wyrd_adapters::server::drain(std::time::Duration::from_secs(2));
         for f in &self.private_files {
             let _ = std::fs::remove_file(f);
         }
@@ -218,15 +221,7 @@ fn agent_user_config() -> PathBuf {
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)
-        .and_then(|mut f| f.write_all(bytes))
+    wyrd_adapters::asks::write_private_atomic(path, bytes)
         .with_context(|| format!("writing {}", path.display()))
 }
 
@@ -274,7 +269,8 @@ fn ingest(
     .with_views(Arc::new(super::mcp::views::RunViews {
         data: data.clone(),
         session: rec.id.clone(),
-    }));
+    }))
+    .with_mcp_pins(session.dir().root().join(wyrd_adapters::mcp::PINS_FILE))?;
     if let Some(p) = guard.policy {
         ingest = ingest.with_policy(Arc::new(super::guard::WasmToolPolicy::new(
             p,

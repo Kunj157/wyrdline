@@ -3,6 +3,7 @@
 //! One SQLite file per session. The `events` table is the chain; every
 //! other table is a projection that can be rebuilt with [`Ledger::reindex`].
 //! See `docs/ledger-format.md` for the exact on-disk format.
+#![forbid(unsafe_code)]
 
 mod chain;
 mod key;
