@@ -135,7 +135,7 @@ fn read_all(mut client: SensorClient, done: &AtomicBool) -> Seen {
                 }
                 last_event = Instant::now();
             }
-            Ok(Some(ServerMsg::Drops { total })) => seen.drops = total,
+            Ok(Some(ServerMsg::Drops { total, .. })) => seen.drops = total,
             Ok(Some(_)) | Err(_) => {}
             Ok(None) => break,
         }

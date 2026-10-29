@@ -260,6 +260,34 @@ impl Client {
         }
     }
 
+    /// Push local changes until the Hub refuses them, and return what it sent
+    /// back, through its close. Each Hub sync frame is answered with another
+    /// push, since the protocol decides what a push carries from what the Hub
+    /// has said so far; the deadline bounds the wait. Once the Hub answers
+    /// with anything else, it has refused and closed, so nothing more is sent.
+    async fn push_until_refused(&mut self) -> Vec<Message> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut out = Vec::new();
+        loop {
+            self.push().await;
+            assert!(Instant::now() < deadline, "the Hub never refused the write");
+            let frame =
+                match tokio::time::timeout(Duration::from_millis(250), self.socket.next()).await {
+                    Err(_) => continue,
+                    Ok(None) => return out,
+                    Ok(Some(frame)) => frame.expect("a readable frame"),
+                };
+            if self.apply(&frame) {
+                continue;
+            }
+            // Only the refusal (a text note) and the close come back other
+            // than as sync frames. Stop pushing now: the Hub has closed.
+            out.push(frame);
+            out.extend(self.drain().await);
+            return out;
+        }
+    }
+
     /// The next frames: everything until the socket closes.
     async fn drain(&mut self) -> Vec<Message> {
         let mut out = Vec::new();
@@ -350,10 +378,12 @@ async fn viewers_follow_but_their_changes_are_rejected() {
     let mut v = connect(&base, "b1", Auth::Token(&s.viewer)).await.unwrap();
     assert_eq!(v.hello().await, "viewer");
     assert_eq!(v.wait_for("shared").await, 7);
+    // A push sends only what the Hub is known to lack, so the viewer must
+    // have caught up with the Hub's heads before its write can be sent.
+    v.sync_up().await;
 
     v.put("mine", 1);
-    v.push().await;
-    let frames = v.drain().await;
+    let frames = v.push_until_refused().await;
     let text = frames
         .iter()
         .find_map(|f| match f {

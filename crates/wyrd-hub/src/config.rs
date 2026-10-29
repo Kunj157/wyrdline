@@ -47,6 +47,25 @@ pub struct OidcConfig {
     pub client_secret: Secret,
 }
 
+/// The GitHub Actions OIDC issuer whose tokens `POST /api/v1/ci/token`
+/// exchanges for upload tokens (`docs/architecture/hub.md`).
+pub const DEFAULT_CI_ISSUER: &str = "https://token.actions.githubusercontent.com";
+/// Default lifetime of a CI upload token, in seconds.
+pub const DEFAULT_CI_TOKEN_TTL_SECS: i64 = 900;
+
+/// CI token exchange: which issuer is trusted, which audience its tokens
+/// must name, and how long the upload tokens live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiConfig {
+    /// `https://token.actions.githubusercontent.com`, or a GitHub
+    /// Enterprise Server's `https://HOST/_services/token`.
+    pub issuer: String,
+    /// The `aud` claim workflows request (default: the public URL).
+    pub audience: String,
+    /// 60–3600.
+    pub token_ttl_secs: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub listen: SocketAddr,
@@ -57,8 +76,32 @@ pub struct Config {
     pub s3: S3Config,
     /// `None`: login is disabled (API tokens only).
     pub oidc: Option<OidcConfig>,
+    pub ci: CiConfig,
     /// Local scratch: upload spooling and analytics projections.
     pub data_dir: PathBuf,
+    pub limits: Limits,
+}
+
+/// Upload size, the quota new organisations get, and the retention sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Largest bundle accepted, in bytes (refused while streaming).
+    pub max_upload_bytes: u64,
+    pub quota_bytes: i64,
+    pub quota_bundles: i64,
+    /// Seconds between retention sweeps; 0 disables the sweep.
+    pub retention_interval_secs: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_upload_bytes: 256 << 20,
+            quota_bytes: 10 << 30,
+            quota_bundles: 10_000,
+            retention_interval_secs: 3600,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -134,6 +177,38 @@ impl Config {
                 })
             }
         };
+        let number = |name: &'static str, default: u64| -> Result<u64, ConfigError> {
+            match var(name) {
+                None => Ok(default),
+                Some(v) => v.parse::<u64>().map_err(|_| ConfigError::Invalid {
+                    name,
+                    reason: "expected a whole number".into(),
+                }),
+            }
+        };
+        let d = Limits::default();
+        let signed = |name: &'static str, v: u64| {
+            i64::try_from(v).map_err(|_| ConfigError::Invalid {
+                name,
+                reason: "too large".into(),
+            })
+        };
+        let limits = Limits {
+            max_upload_bytes: number("WYRD_HUB_MAX_UPLOAD_BYTES", d.max_upload_bytes)?,
+            quota_bytes: signed(
+                "WYRD_HUB_QUOTA_BYTES",
+                number("WYRD_HUB_QUOTA_BYTES", d.quota_bytes.unsigned_abs())?,
+            )?,
+            quota_bundles: signed(
+                "WYRD_HUB_QUOTA_BUNDLES",
+                number("WYRD_HUB_QUOTA_BUNDLES", d.quota_bundles.unsigned_abs())?,
+            )?,
+            retention_interval_secs: number(
+                "WYRD_HUB_RETENTION_INTERVAL_SECS",
+                d.retention_interval_secs,
+            )?,
+        };
+        let ci = load_ci(&var, &public_url)?;
         Ok(Config {
             listen,
             public_url,
@@ -141,10 +216,40 @@ impl Config {
             db_max_connections,
             s3,
             oidc,
+            ci,
             data_dir: var("WYRD_HUB_DATA_DIR")
                 .map_or_else(|| "wyrd-hub-data".into(), PathBuf::from),
+            limits,
         })
     }
+}
+
+/// The CI token exchange settings (`WYRD_HUB_CI_*`).
+fn load_ci(
+    var: &impl Fn(&str) -> Option<String>,
+    public_url: &str,
+) -> Result<CiConfig, ConfigError> {
+    let ci_issuer = var("WYRD_HUB_CI_ISSUER")
+        .unwrap_or_else(|| DEFAULT_CI_ISSUER.into())
+        .trim_end_matches('/')
+        .to_string();
+    check_url("WYRD_HUB_CI_ISSUER", &ci_issuer)?;
+    let token_ttl_secs = match var("WYRD_HUB_CI_TOKEN_TTL_SECS") {
+        None => DEFAULT_CI_TOKEN_TTL_SECS,
+        Some(v) => v
+            .parse::<i64>()
+            .ok()
+            .filter(|n| (60..=3600).contains(n))
+            .ok_or(ConfigError::Invalid {
+                name: "WYRD_HUB_CI_TOKEN_TTL_SECS",
+                reason: "expected a number of seconds from 60 to 3600".into(),
+            })?,
+    };
+    Ok(CiConfig {
+        issuer: ci_issuer,
+        audience: var("WYRD_HUB_CI_AUDIENCE").unwrap_or_else(|| public_url.to_string()),
+        token_ttl_secs,
+    })
 }
 
 fn check_url(name: &'static str, url: &str) -> Result<(), ConfigError> {
@@ -199,7 +304,26 @@ mod tests {
         assert_eq!(c.s3.endpoint, "http://127.0.0.1:7733");
         assert_eq!(c.s3.region, "us-east-1");
         assert_eq!(c.db_max_connections, 10);
+        assert_eq!(c.limits, Limits::default());
         assert!(c.oidc.is_none());
+        assert_eq!(c.ci.issuer, DEFAULT_CI_ISSUER);
+        assert_eq!(c.ci.audience, "http://127.0.0.1:7730");
+        assert_eq!(c.ci.token_ttl_secs, DEFAULT_CI_TOKEN_TTL_SECS);
+    }
+
+    #[test]
+    fn ci_exchange_is_configurable() {
+        let mut m = base();
+        m.insert(
+            "WYRD_HUB_CI_ISSUER",
+            "https://ghes.example/_services/token/".into(),
+        );
+        m.insert("WYRD_HUB_CI_AUDIENCE", "wyrd-hub".into());
+        m.insert("WYRD_HUB_CI_TOKEN_TTL_SECS", "120".into());
+        let c = load(&m).unwrap();
+        assert_eq!(c.ci.issuer, "https://ghes.example/_services/token");
+        assert_eq!(c.ci.audience, "wyrd-hub");
+        assert_eq!(c.ci.token_ttl_secs, 120);
     }
 
     #[test]
@@ -221,6 +345,11 @@ mod tests {
             ("WYRD_HUB_S3_ENDPOINT", "minio:9000"),
             ("WYRD_HUB_DB_MAX_CONNECTIONS", "0"),
             ("WYRD_HUB_OIDC_ISSUER", "ftp://idp"),
+            ("WYRD_HUB_MAX_UPLOAD_BYTES", "-1"),
+            ("WYRD_HUB_QUOTA_BYTES", "18446744073709551615"),
+            ("WYRD_HUB_CI_ISSUER", "token.actions.githubusercontent.com"),
+            ("WYRD_HUB_CI_TOKEN_TTL_SECS", "30"),
+            ("WYRD_HUB_CI_TOKEN_TTL_SECS", "86400"),
         ] {
             let mut m = base();
             m.insert(k, v.into());

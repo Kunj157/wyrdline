@@ -11,6 +11,7 @@
 //! Sync messages are untrusted input: each is size-limited, a document may
 //! not grow past [`Limits::max_document`], and a viewer's messages may not
 //! carry changes.
+#![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::io;

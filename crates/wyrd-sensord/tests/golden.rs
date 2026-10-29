@@ -274,7 +274,7 @@ fn privileged_drops_are_counted_with_a_tiny_ring_buffer() {
     let start = Instant::now();
     let mut drops = 0;
     while start.elapsed() < Duration::from_secs(15) && drops == 0 {
-        if let Ok(Some(ServerMsg::Drops { total })) = client.recv() {
+        if let Ok(Some(ServerMsg::Drops { total, .. })) = client.recv() {
             drops = total;
         }
     }
@@ -282,6 +282,75 @@ fn privileged_drops_are_counted_with_a_tiny_ring_buffer() {
         drops > 0,
         "a 4 KiB ring buffer must overflow under 3000 creates"
     );
+}
+
+#[test]
+fn privileged_a_stalled_client_sees_its_own_queue_drops() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    // A 16-event client queue: a client that stops reading overflows it.
+    let d = daemon(tmp.path(), &["--client-queue", "16"]);
+    let g = gated(
+        tmp.path(),
+        "stall",
+        &format!(
+            "cd {}; i=0; while [ $i -lt 3000 ]; do : > f$i; i=$((i+1)); done; sleep 2",
+            ws.display()
+        ),
+    );
+    let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
+    g.release();
+    // Stop reading while the workload runs, then read until the loss shows.
+    std::thread::sleep(Duration::from_secs(3));
+    client.set_timeout(Some(Duration::from_secs(10))).unwrap();
+    let start = Instant::now();
+    let mut lost = 0;
+    while start.elapsed() < Duration::from_secs(20) && lost == 0 {
+        if let Ok(Some(ServerMsg::Drops { queue_dropped, .. })) = client.recv() {
+            lost = queue_dropped;
+        }
+    }
+    assert!(
+        lost > 0,
+        "a client that stopped reading must see its own queue drops"
+    );
+}
+
+#[test]
+fn privileged_flush_is_answered_after_every_queued_event() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    // A lagging reader: events sit in the ring buffer well past the old
+    // fixed 300 ms drain.
+    let d = daemon(tmp.path(), &["--read-pause-ms", "800"]);
+    let mut g = gated(
+        tmp.path(),
+        "flush",
+        &format!("cd {}; echo x > last.txt; exit 5", ws.display()),
+    );
+    let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
+    g.release();
+    g.child.wait().unwrap();
+    client.send_flush(42).unwrap();
+    client.set_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut events = Vec::new();
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < Duration::from_secs(15), "no flush answer");
+        match client.recv().unwrap() {
+            Some(ServerMsg::Event { process, body, .. }) => events.push((process.pid, body)),
+            Some(ServerMsg::Flushed { token }) => {
+                assert_eq!(token, 42);
+                break;
+            }
+            Some(_) => {}
+            None => panic!("daemon closed the connection"),
+        }
+    }
+    let got = summary(&events, &ws);
+    assert_eq!(got, vec!["write last.txt", "exit 5"], "\nfull: {events:#?}");
 }
 
 /// Connect outcomes printed by the workload, one `name=result` per line.
@@ -456,5 +525,97 @@ for host in ('10.255.255.1', '10.255.255.2'):
     assert_eq!(
         std::fs::read_to_string(&out).unwrap(),
         "10.255.255.1 denied\n10.255.255.2 not-denied\n"
+    );
+}
+
+/// The daemon started by `daemon()` for `socket`. Matched on the program name
+/// and on the socket path in its command line: `sudo` has another program
+/// name, and the other tests in this file run their own daemons on their own
+/// sockets, so a name match alone could pick the wrong process.
+fn daemon_pid(socket: &Path) -> u32 {
+    let wanted = socket.as_os_str().as_encoded_bytes();
+    for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+            continue;
+        };
+        let argv0 = cmdline.split(|b| *b == 0).next().unwrap_or_default();
+        let names_socket = cmdline.windows(wanted.len()).any(|w| w == wanted);
+        if argv0.ends_with(b"wyrd-sensord") && names_socket {
+            return pid;
+        }
+    }
+    panic!("no wyrd-sensord process for {}", socket.display());
+}
+
+/// `(thread id, CapEff, CapPrm, CapInh)` of every thread of `pid`. Capability
+/// sets are per thread, so a thread created before the drop would keep its
+/// old set: every thread is checked, not only the leader.
+fn thread_caps(pid: u32) -> Vec<(u32, u64, u64, u64)> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(format!("/proc/{pid}/task"))
+        .unwrap()
+        .flatten()
+    {
+        let tid: u32 = entry.file_name().to_str().unwrap().parse().unwrap();
+        let status = std::fs::read_to_string(entry.path().join("status")).unwrap();
+        out.push((
+            tid,
+            cap_mask(&status, "CapEff:"),
+            cap_mask(&status, "CapPrm:"),
+            cap_mask(&status, "CapInh:"),
+        ));
+    }
+    out
+}
+
+/// The capability mask in a `/proc/<pid>/status` line such as `CapEff:`.
+fn cap_mask(status: &str, field: &str) -> u64 {
+    let line = status
+        .lines()
+        .find(|l| l.starts_with(field))
+        .unwrap_or_else(|| panic!("{field} missing"));
+    let hex = line.split_whitespace().nth(1).unwrap();
+    u64::from_str_radix(hex, 16).unwrap()
+}
+
+#[test]
+fn privileged_runtime_capabilities_are_bpf_only() {
+    // CAP_BPF = 39 (linux/capability.h). The daemon keeps only what the
+    // runtime needs: see RUNTIME_CAPS in wyrd-sensord.
+    const RUNTIME: u64 = 1 << 39;
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let d = daemon(tmp.path(), &[]);
+    // Read after the daemon is listening, so the drop has run.
+    let pid = daemon_pid(&d.socket);
+    let threads = thread_caps(pid);
+    assert!(!threads.is_empty());
+    for (tid, eff, prm, inh) in &threads {
+        assert_eq!(*eff, RUNTIME, "thread {tid}: effective set after attach");
+        assert_eq!(*prm, RUNTIME, "thread {tid}: permitted set after attach");
+        assert_eq!(*inh, 0, "thread {tid}: inheritable set after attach");
+    }
+    // Capture still works with the reduced set: a session is registered and
+    // its scripted effects are reported (the golden sequence test covers the
+    // full sequence; this proves the path is live).
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let g = gated(
+        tmp.path(),
+        "caps",
+        &format!("cd {}; echo x > a.txt; exit 0", ws.display()),
+    );
+    let mut client = SensorClient::connect(&d.socket, &g.cgroup, &ws).unwrap();
+    g.release();
+    let events = collect(&mut client, g.child.id());
+    assert!(
+        summary(&events, &ws).iter().any(|s| s == "write a.txt"),
+        "{events:#?}"
     );
 }
