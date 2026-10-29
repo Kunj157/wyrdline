@@ -3,7 +3,7 @@
 The Hub is the team server for Wyrdline bundles. Members upload signed
 `.wyrd` bundles (from `wyrd push`, or from a GitHub Actions job), and
 they can browse and download them. Analytics and search across an
-organisation's sessions are in #220 (see below).
+organisation's sessions are described below.
 
 The Hub verifies every upload before storing it: the signature, every
 file hash, and the ledger's hash chain. A bundle that does not verify is
@@ -15,8 +15,8 @@ This page is for the people who run a Hub and for the people who upload
 to it. The architecture and the full API are in
 [the Hub's architecture page](architecture/hub.md).
 
-Everything on this page is in the release except analytics and search,
-which are in #220 and not merged yet (see [analytics](#analytics-and-search)).
+Everything on this page is in the release. Analytics and search are in
+their own section, [analytics and search](#analytics-and-search).
 
 ## What you need
 
@@ -154,15 +154,20 @@ The Hub has no page per bundle, so the URL is an API address. The Action's
 
 ## Analytics and search
 
-The analytics endpoints (`GET /api/v1/orgs/{org}/stats`, and event
-search), the search endpoint (`GET /api/v1/orgs/{org}/search?q=`), and the
-Studio pages (the dashboard at `/hub` and search at `/hub/search`) are in
-#220, which is not merged yet. Until it is, none of them exist in a Hub
-built from dev.
+The statistics endpoint (`GET /api/v1/orgs/{org}/stats`) and the search
+endpoint (`GET /api/v1/orgs/{org}/search?q=`) are part of the Hub. So are
+the Studio pages: the dashboard at `/hub` and search at `/hub/search`,
+served when the Hub is given a Studio build with `WYRD_HUB_STUDIO_DIR`.
 
-When #220 lands, the analytics need a Hub built with the `analytics` Cargo
-feature. The default container image does not enable it. A Hub without it
-answers `501` for those endpoints; listing and downloading bundles still work.
+The analytics need a Hub built with the `analytics` Cargo feature. The
+default container image does not enable it. A Hub without it answers `501`
+for the statistics and search endpoints; listing and downloading bundles
+still work.
+
+Search takes a query of terms such as `repo:owner/repo rule:D002 path:src/`.
+The filters `rule:`, `repo:`, `agent:`, and `session:` match bundles;
+`path:`, `kind:`, `host:`, `exe:`, and `tool:` match events, and need the
+`analytics` feature.
 
 The statistics cover the 500 most recent bundles of the organisation. The
 capture-overhead figure is always `null` per session: overhead is a
