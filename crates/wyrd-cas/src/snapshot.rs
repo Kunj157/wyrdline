@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_bytes::ByteBuf;
 
 use crate::manifest::{Entry, EntryKind, Manifest};
-use crate::{Cas, CasError, ChunkHash, Result, io_err};
+use crate::{Cas, CasError, ChunkHash, Result, Staged, io_err};
 
 /// Statistics of a snapshot.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,7 +51,7 @@ fn is_opaque(path: &Path) -> bool {
 }
 
 impl Cas {
-    /// Snapshot `dir`, storing every changed file durably. When `base` is
+    /// Snapshot `dir` and store every changed file durably. When `base` is
     /// given, files whose size, mtime, and mode are unchanged reuse the
     /// base's chunk list without being read.
     pub fn snapshot(
@@ -59,24 +59,19 @@ impl Cas {
         dir: &Path,
         base: Option<&Manifest>,
     ) -> Result<(Manifest, SnapshotStats)> {
-        self.snapshot_with(dir, base, true)
+        let mut staged = Staged::default();
+        let snap = self.snapshot_staged(dir, base, &mut staged)?;
+        self.commit(staged)?;
+        Ok(snap)
     }
 
-    /// As [`Cas::snapshot`], without waiting for the disk. The result is not
-    /// durable until [`Cas::sync`] returns, and nothing may refer to it before.
-    pub fn snapshot_unsynced(
+    /// As [`Cas::snapshot`], but the changed files are only staged, into
+    /// `staged`. Nothing is visible until [`Cas::commit`].
+    pub fn snapshot_staged(
         &self,
         dir: &Path,
         base: Option<&Manifest>,
-    ) -> Result<(Manifest, SnapshotStats)> {
-        self.snapshot_with(dir, base, false)
-    }
-
-    fn snapshot_with(
-        &self,
-        dir: &Path,
-        base: Option<&Manifest>,
-        durable: bool,
+        staged: &mut Staged,
     ) -> Result<(Manifest, SnapshotStats)> {
         let base_index: HashMap<&[u8], &Entry> = base
             .map(|m| m.entries.iter().map(|e| (e.path.as_slice(), e)).collect())
@@ -152,7 +147,16 @@ impl Cas {
                 entries.push(entry);
             }
         }
-        for (index, result) in self.store_files(&pending, durable) {
+        let (stored, batch) = self.stage_files(&pending);
+        staged.files.extend(batch.into_files());
+        if stored.len() != pending.len() {
+            // A worker died without reporting: never build a manifest with a
+            // file's chunks missing.
+            return Err(CasError::Manifest(
+                "a snapshot worker did not finish".into(),
+            ));
+        }
+        for (index, result) in stored {
             let (chunks, size) = result?;
             entries[index].size = size;
             entries[index].chunks = chunks;
@@ -162,20 +166,21 @@ impl Cas {
         Ok((Manifest::new(entries)?, stats))
     }
 
-    /// Chunk and store each file, in parallel. The results are in no
-    /// particular order; the manifest is sorted by path, so it is the same
-    /// whatever the order.
-    fn store_files(&self, files: &[(usize, PathBuf)], durable: bool) -> Vec<Stored> {
+    /// Chunk and stage each file, in parallel. Each worker has its own batch,
+    /// merged after the join. The manifest is sorted by path, so it does not
+    /// depend on the order in which the workers finish.
+    fn stage_files(&self, files: &[(usize, PathBuf)]) -> (Vec<Stored>, Staged) {
         let workers = std::thread::available_parallelism()
             .map_or(1, std::num::NonZero::get)
             .clamp(1, 8)
             .min(files.len().max(1));
         let next = AtomicUsize::new(0);
-        std::thread::scope(|s| {
+        let parts: Vec<(Vec<Stored>, Staged)> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..workers)
                 .map(|_| {
                     s.spawn(|| {
                         let mut done = Vec::new();
+                        let mut batch = Staged::default();
                         loop {
                             let i = next.fetch_add(1, Ordering::Relaxed);
                             let Some((index, path)) = files.get(i) else {
@@ -183,18 +188,46 @@ impl Cas {
                             };
                             let stored = fs::File::open(path)
                                 .map_err(io_err(path))
-                                .and_then(|f| self.put_stream_with(f, durable));
+                                .and_then(|f| self.stage_stream(f, &mut batch));
                             done.push((*index, stored));
                         }
-                        done
+                        (done, batch)
                     })
                 })
                 .collect();
             handles
                 .into_iter()
-                .flat_map(|h| h.join().unwrap_or_default())
+                .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
                 .collect()
-        })
+        });
+        let mut all = Staged::default();
+        let mut stored = Vec::new();
+        for (done, batch) in parts {
+            stored.extend(done);
+            all.files.extend(batch.into_files());
+        }
+        (stored, all)
+    }
+
+    /// Chunk a stream and stage every chunk.
+    fn stage_stream(
+        &self,
+        reader: impl std::io::Read,
+        staged: &mut Staged,
+    ) -> Result<(Vec<ChunkHash>, u64)> {
+        let mut chunks = Vec::new();
+        let mut size = 0u64;
+        for chunk in fastcdc::v2020::StreamCDC::new(
+            reader,
+            crate::MIN_CHUNK,
+            crate::AVG_CHUNK,
+            crate::MAX_CHUNK,
+        ) {
+            let chunk = chunk.map_err(|e| CasError::Chunking(e.to_string()))?;
+            size += chunk.length as u64;
+            chunks.push(self.stage(&chunk.data, staged)?);
+        }
+        Ok((chunks, size))
     }
 
     /// Recreate `manifest` under `dest`, which must not exist or be empty.

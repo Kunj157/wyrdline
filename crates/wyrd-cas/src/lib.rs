@@ -117,6 +117,45 @@ pub(crate) fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CasError + '
     }
 }
 
+/// Make a directory's entries durable.
+#[cfg(feature = "store")]
+fn sync_dir(dir: &Path) -> Result<()> {
+    fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(io_err(dir))
+}
+
+/// Remove staging files left by a process that is no longer running. A file
+/// whose process id is alive, or is this process's, is kept: it may be a
+/// write in progress.
+#[cfg(feature = "store")]
+fn sweep_staging(tmp: &Path) -> Result<()> {
+    let own = std::process::id();
+    for path in read_dir(tmp)? {
+        let pid = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.split('.').nth(1))
+            .and_then(|p| p.parse::<i32>().ok());
+        let Some(pid) = pid else { continue };
+        if pid.unsigned_abs() == own {
+            continue;
+        }
+        let alive = match rustix::process::Pid::from_raw(pid) {
+            // EPERM: the process exists but belongs to someone else.
+            Some(p) => match rustix::process::test_kill_process(p) {
+                Ok(()) => true,
+                Err(e) => e == rustix::io::Errno::PERM,
+            },
+            None => false,
+        };
+        if !alive {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    Ok(())
+}
+
 /// Result of [`Cas::gc`].
 #[cfg(feature = "store")]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -124,6 +163,42 @@ pub struct GcReport {
     pub kept: usize,
     pub deleted: usize,
     pub bytes_freed: u64,
+}
+
+/// The chunks of one batch (a checkpoint), written under staging names and
+/// not yet visible. [`Cas::commit`] makes them visible. A batch that is dropped
+/// before its commit removes its staging files.
+#[cfg(feature = "store")]
+#[derive(Debug, Default)]
+pub struct Staged {
+    /// `(staging file, chunk path)` pairs not yet renamed into place.
+    pub(crate) files: Vec<(PathBuf, PathBuf)>,
+}
+
+#[cfg(feature = "store")]
+impl Staged {
+    /// Staged files not yet committed.
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    /// Take the staged files out of this batch (which then removes nothing).
+    pub(crate) fn into_files(mut self) -> Vec<(PathBuf, PathBuf)> {
+        std::mem::take(&mut self.files)
+    }
+}
+
+#[cfg(feature = "store")]
+impl Drop for Staged {
+    fn drop(&mut self) {
+        for (tmp, _) in &self.files {
+            let _ = fs::remove_file(tmp);
+        }
+    }
 }
 
 /// A chunk store rooted at a directory.
@@ -140,7 +215,9 @@ impl Cas {
         let root = root.into();
         let chunks = root.join("chunks");
         fs::create_dir_all(&chunks).map_err(io_err(&chunks))?;
-        fs::create_dir_all(root.join("tmp")).map_err(io_err(&root))?;
+        let tmp = root.join("tmp");
+        fs::create_dir_all(&tmp).map_err(io_err(&tmp))?;
+        sweep_staging(&tmp)?;
         let marker = root.join("FORMAT");
         match fs::read_to_string(&marker) {
             Ok(s) if s.trim() == FORMAT_ID => {}
@@ -167,60 +244,95 @@ impl Cas {
         self.chunk_path(h).exists()
     }
 
-    /// Store bytes durably: when this returns, the chunk and its directory
-    /// entry are on disk. Existing chunks are not rewritten. Use
-    /// [`Cas::put_unsynced`] with one [`Cas::sync`] for a batch.
+    /// Store bytes durably, on their own: when this returns, the chunk and its
+    /// directory entry are on disk. An intact chunk that already exists is
+    /// not written again; a corrupt one is replaced.
     pub fn put(&self, bytes: &[u8]) -> Result<ChunkHash> {
-        self.put_with(bytes, true)
-    }
-
-    /// Store bytes without waiting for the disk. The chunk is not durable
-    /// until [`Cas::sync`] returns; nothing may refer to it before then.
-    pub fn put_unsynced(&self, bytes: &[u8]) -> Result<ChunkHash> {
-        self.put_with(bytes, false)
-    }
-
-    fn put_with(&self, bytes: &[u8], durable: bool) -> Result<ChunkHash> {
         let h = ChunkHash::of(bytes);
-        let path = self.chunk_path(h);
-        if path.exists() {
-            // A chunk written without a barrier may still be in flight; a
-            // durable caller must not treat it as stored until the barrier.
-            if durable {
-                self.sync()?;
-            }
+        let dir = self.chunk_dir(h);
+        if self.verified(h)? {
+            // The name may have been renamed in by a batch whose directory
+            // entry is not durable yet; syncing the directory covers it.
+            sync_dir(&dir)?;
             return Ok(h);
         }
+        let path = self.chunk_path(h);
+        fs::create_dir_all(&dir).map_err(io_err(&dir))?;
         let compressed = zstd::bulk::compress(bytes, ZSTD_LEVEL).map_err(io_err(&path))?;
-        let dir = path.parent().unwrap_or(&self.root);
-        fs::create_dir_all(dir).map_err(io_err(dir))?;
-        // Unique per call: two writers of the same chunk (parallel snapshot
-        // workers, or a repeated put) must not share a staging file.
-        let seq = STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp =
-            self.root
-                .join("tmp")
-                .join(format!("{}.{}.{seq}", h.to_hex(), std::process::id()));
+        let tmp = self.staging_path(h);
         {
             let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
             f.write_all(&compressed).map_err(io_err(&tmp))?;
-            if durable {
-                f.sync_data().map_err(io_err(&tmp))?;
-            }
+            f.sync_data().map_err(io_err(&tmp))?;
         }
         fs::rename(&tmp, &path).map_err(io_err(&path))?;
-        if durable {
-            fs::File::open(dir)
-                .and_then(|d| d.sync_all())
-                .map_err(io_err(dir))?;
-        }
+        sync_dir(&dir)?;
         Ok(h)
+    }
+
+    /// Stage bytes for a batch. The chunk is written under a unique staging
+    /// name and is not visible at its chunk name until [`Cas::commit`]. An
+    /// intact chunk that already exists is not staged again.
+    pub fn stage(&self, bytes: &[u8], staged: &mut Staged) -> Result<ChunkHash> {
+        let h = ChunkHash::of(bytes);
+        if self.verified(h)? {
+            return Ok(h);
+        }
+        let path = self.chunk_path(h);
+        let dir = self.chunk_dir(h);
+        fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+        let compressed = zstd::bulk::compress(bytes, ZSTD_LEVEL).map_err(io_err(&path))?;
+        let tmp = self.staging_path(h);
+        // Registered before the write, so a failed write is removed with the batch.
+        staged.files.push((tmp.clone(), path));
+        let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
+        f.write_all(&compressed).map_err(io_err(&tmp))?;
+        Ok(h)
+    }
+
+    /// Make a batch durable and visible, in this order:
+    ///
+    /// 1. one barrier ([`Cas::sync`]), so every staged file's data is on disk;
+    /// 2. each staged file renamed to its chunk name;
+    /// 3. a second barrier, so those names are on disk.
+    ///
+    /// Only after this may a ledger event name the batch's chunks or manifest.
+    /// Both barriers run even for an empty batch: a chunk the batch found
+    /// already present may still be waiting for another batch's second barrier.
+    pub fn commit(&self, mut staged: Staged) -> Result<()> {
+        self.sync()?;
+        for (tmp, path) in staged.files.drain(..) {
+            fs::rename(&tmp, &path).map_err(io_err(&path))?;
+        }
+        self.sync()
+    }
+
+    /// Whether chunk `h` is present and intact. A chunk that is missing or
+    /// wrong is not an error: the caller writes it again.
+    fn verified(&self, h: ChunkHash) -> Result<bool> {
+        match self.get(h) {
+            Ok(_) => Ok(true),
+            Err(CasError::Missing(_) | CasError::Corrupt(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn chunk_dir(&self, h: ChunkHash) -> PathBuf {
+        let hex = h.to_hex();
+        self.root.join("chunks").join(&hex[..2]).join(&hex[2..4])
+    }
+
+    /// A staging name, unique per write, so no two writers share a file. The
+    /// process id lets [`sweep_staging`] tell a leftover from a live write.
+    fn staging_path(&self, h: ChunkHash) -> PathBuf {
+        let seq = STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.root
+            .join("tmp")
+            .join(format!("{}.{}.{seq}", h.to_hex(), std::process::id()))
     }
 
     /// Make every write so far durable: one barrier for the whole store
     /// filesystem (`syncfs`), covering data, renames and new directories.
-    /// Chunks and manifests written with the `_unsynced` methods are durable
-    /// once this returns.
     pub fn sync(&self) -> Result<()> {
         let dir = fs::File::open(&self.root).map_err(io_err(&self.root))?;
         rustix::fs::syncfs(&dir).map_err(|e| CasError::Io {
@@ -246,21 +358,12 @@ impl Cas {
 
     /// Chunk a stream and store every chunk durably. Returns the chunk list and total size.
     pub fn put_stream(&self, reader: impl Read) -> Result<(Vec<ChunkHash>, u64)> {
-        self.put_stream_with(reader, true)
-    }
-
-    /// As [`Cas::put_stream`], without waiting for the disk (see [`Cas::sync`]).
-    pub fn put_stream_unsynced(&self, reader: impl Read) -> Result<(Vec<ChunkHash>, u64)> {
-        self.put_stream_with(reader, false)
-    }
-
-    fn put_stream_with(&self, reader: impl Read, durable: bool) -> Result<(Vec<ChunkHash>, u64)> {
         let mut chunks = Vec::new();
         let mut size = 0u64;
         for chunk in fastcdc::v2020::StreamCDC::new(reader, MIN_CHUNK, AVG_CHUNK, MAX_CHUNK) {
             let chunk = chunk.map_err(|e| CasError::Chunking(e.to_string()))?;
             size += chunk.length as u64;
-            chunks.push(self.put_with(&chunk.data, durable)?);
+            chunks.push(self.put(&chunk.data)?);
         }
         Ok((chunks, size))
     }
@@ -270,9 +373,9 @@ impl Cas {
         self.put(&m.to_cbor()?)
     }
 
-    /// Store a manifest without waiting for the disk (see [`Cas::sync`]).
-    pub fn put_manifest_unsynced(&self, m: &Manifest) -> Result<ChunkHash> {
-        self.put_unsynced(&m.to_cbor()?)
+    /// Stage a manifest for a batch; returns its hash.
+    pub fn stage_manifest(&self, m: &Manifest, staged: &mut Staged) -> Result<ChunkHash> {
+        self.stage(&m.to_cbor()?, staged)
     }
 
     /// Load and validate a manifest.

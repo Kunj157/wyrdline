@@ -308,12 +308,127 @@ fn special_files_are_skipped() {
     assert_eq!(m.entries.len(), 0);
 }
 
-/// Durability cannot be observed in a unit test (a crash is not simulated).
-/// What can be checked: a batch written without a barrier, then one `sync`,
-/// reads back and verifies, and the unsynced path yields the same hashes as
-/// the durable one.
+/// The state a crash can leave, built by hand: a chunk at its final name
+/// with the wrong bytes (zero length here), no ledger reference to it. The
+/// final name must never be trusted as stored: a write of the same content
+/// rewrites it, and the chunk then reads back intact.
+fn plant_at_chunk_name(cas: &Cas, h: ChunkHash, bytes: &[u8]) {
+    let hex = h.to_hex();
+    let path = cas
+        .root()
+        .join("chunks")
+        .join(&hex[..2])
+        .join(&hex[2..4])
+        .join(&hex);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
 #[test]
-fn an_unsynced_batch_reads_back_after_sync_and_matches_the_durable_path() {
+fn a_zero_length_chunk_at_its_name_is_rewritten_by_the_next_checkpoint_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cas = Cas::open(tmp.path().join("cas")).unwrap();
+    // Under the chunk size, so the whole file is one chunk named blake3(content).
+    let content = b"the file the next checkpoint writes\n".repeat(20);
+    let h = ChunkHash::of(&content);
+    plant_at_chunk_name(&cas, h, b"");
+    assert!(
+        cas.get(h).is_err(),
+        "the planted name is not a stored chunk"
+    );
+    let mut staged = Staged::default();
+    assert_eq!(cas.stage(&content, &mut staged).unwrap(), h);
+    assert_eq!(
+        staged.len(),
+        1,
+        "a wrong chunk is staged again, not trusted"
+    );
+    cas.commit(staged).unwrap();
+    assert_eq!(cas.get(h).unwrap(), content);
+}
+
+#[test]
+fn a_wrong_content_chunk_at_its_name_is_rewritten_by_the_next_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cas = Cas::open(tmp.path().join("cas")).unwrap();
+    let content = vec![42u8; 3000];
+    let h = ChunkHash::of(&content);
+    // Valid zstd of the wrong bytes: the name is right, the content is not.
+    plant_at_chunk_name(&cas, h, &zstd::bulk::compress(&[1u8; 3000], 3).unwrap());
+    assert!(matches!(cas.get(h), Err(CasError::Corrupt(_))));
+    let mut staged = Staged::default();
+    cas.stage(&content, &mut staged).unwrap();
+    cas.commit(staged).unwrap();
+    assert_eq!(cas.get(h).unwrap(), content);
+}
+
+#[test]
+fn an_intact_chunk_already_present_is_not_staged_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cas = Cas::open(tmp.path().join("cas")).unwrap();
+    let content = vec![5u8; 4000];
+    cas.put(&content).unwrap();
+    let mut staged = Staged::default();
+    cas.stage(&content, &mut staged).unwrap();
+    assert!(staged.is_empty());
+}
+
+#[test]
+fn staged_chunks_are_invisible_until_commit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cas = Cas::open(tmp.path().join("cas")).unwrap();
+    let content = vec![3u8; 5000];
+    let h = ChunkHash::of(&content);
+    let mut staged = Staged::default();
+    cas.stage(&content, &mut staged).unwrap();
+    assert!(!cas.contains(h), "a staged chunk has no name yet");
+    assert!(matches!(cas.get(h), Err(CasError::Missing(_))));
+    drop(staged);
+    assert!(!cas.contains(h), "a dropped batch leaves no chunk behind");
+    let mut staged = Staged::default();
+    cas.stage(&content, &mut staged).unwrap();
+    cas.commit(staged).unwrap();
+    assert_eq!(cas.get(h).unwrap(), content);
+}
+
+#[test]
+fn leftover_staging_files_from_a_dead_process_are_swept_and_never_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("cas");
+    let content = vec![8u8; 2000];
+    let h = ChunkHash::of(&content);
+    // A process that has exited: its pid is no longer alive.
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    {
+        let cas = Cas::open(&root).unwrap();
+        let _ = cas;
+    }
+    let leftover = root.join("tmp").join(format!("{}.{dead}.0", h.to_hex()));
+    fs::write(&leftover, zstd::bulk::compress(&content, 3).unwrap()).unwrap();
+    // The reopen sweeps it; a live process's file (this one) is kept.
+    let own = root
+        .join("tmp")
+        .join(format!("{}.{}.99", h.to_hex(), std::process::id()));
+    fs::write(&own, b"in progress").unwrap();
+    let cas = Cas::open(&root).unwrap();
+    assert!(
+        !leftover.exists(),
+        "a dead process's staging file is removed"
+    );
+    assert!(own.exists(), "a live write is left alone");
+    // Nothing reads a staging file: the chunk is still absent.
+    assert!(matches!(cas.get(h), Err(CasError::Missing(_))));
+    // Writing the same content again stages under a fresh name and works.
+    let mut staged = Staged::default();
+    cas.stage(&content, &mut staged).unwrap();
+    cas.commit(staged).unwrap();
+    assert_eq!(cas.get(h).unwrap(), content);
+}
+
+#[test]
+fn an_unsynced_batch_reads_back_after_commit_and_matches_the_durable_path() {
     let tmp = tempfile::tempdir().unwrap();
     let durable = Cas::open(tmp.path().join("durable")).unwrap();
     let batch = Cas::open(tmp.path().join("batch")).unwrap();
@@ -326,11 +441,12 @@ fn an_unsynced_batch_reads_back_after_sync_and_matches_the_durable_path() {
         fs::write(ws.join(format!("f{i:02}")), body).unwrap();
     }
     let (m_durable, _) = durable.snapshot(&ws, None).unwrap();
-    let (m_batch, stats) = batch.snapshot_unsynced(&ws, None).unwrap();
+    let mut staged = Staged::default();
+    let (m_batch, stats) = batch.snapshot_staged(&ws, None, &mut staged).unwrap();
     assert_eq!(m_durable, m_batch, "the same tree gives the same manifest");
     assert_eq!(stats.files_read, 40);
-    let mh = batch.put_manifest_unsynced(&m_batch).unwrap();
-    batch.sync().unwrap();
+    let mh = batch.stage_manifest(&m_batch, &mut staged).unwrap();
+    batch.commit(staged).unwrap();
     let back = batch.get_manifest(mh).unwrap();
     assert_eq!(back, m_batch);
     for e in &back.entries {
@@ -338,10 +454,4 @@ fn an_unsynced_batch_reads_back_after_sync_and_matches_the_durable_path() {
             batch.get(*c).expect("every chunk reads back and verifies");
         }
     }
-    // A chunk that was written unsynced and is deduplicated by a durable put
-    // is still covered by the barrier that put performs.
-    let body = vec![9u8; 5000];
-    let h = batch.put_unsynced(&body).unwrap();
-    assert_eq!(batch.put(&body).unwrap(), h);
-    assert_eq!(batch.get(h).unwrap(), body);
 }
