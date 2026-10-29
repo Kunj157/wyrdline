@@ -60,10 +60,10 @@ deny-rust:
 deny-web:
 	$(PNPM) audit --prod --audit-level high
 
-test-perf: ## Throughput and overhead measurements (release build, needs sudo; cleaned afterwards)
-	$(CARGO) nextest run --workspace --release --locked --features wyrd-sensord/privileged-tests \
-		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1
-	$(CARGO) clean --release
+test-perf: ## Throughput, overhead and latency measurements (release build, needs sudo; cleaned afterwards)
+	s=0; $(CARGO) nextest run --workspace --release --locked --features wyrd-sensord/privileged-tests \
+		--run-ignored only -E 'test(/throughput|overhead|latency/)' --no-capture --test-threads 1 --no-fail-fast || s=$$?; \
+		$(CARGO) clean --release; exit $$s
 
 e2e-build:
 	$(CARGO) build --locked -p wyrdd --bin wyrdd --example e2e_fixture

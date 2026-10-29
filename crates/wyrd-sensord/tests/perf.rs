@@ -186,6 +186,33 @@ fn throughput_50k_events_per_second_without_loss() {
     assert!(rate >= 50_000.0, "{rate:.0} events/s");
 }
 
+/// Event loss at the plan's rate: the generator opens files at a fixed
+/// 50 k/s (busy-wait pacing, so the schedule does not drift with a slow
+/// open) and every one must arrive.
+#[test]
+#[ignore = "release measurement; make test-perf"]
+fn throughput_paced_50k_events_per_second_without_loss() {
+    const RATE: f64 = 50_000.0;
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let d = daemon(tmp.path());
+    let n: u64 = 200_000;
+    let script = format!(
+        "cd {}; exec python3 -c 'import os,time\nt0=time.perf_counter()\nfor i in range({n}):\n while time.perf_counter() < t0 + i / {RATE}: pass\n os.close(os.open(\"f%d\" % (i % 64), os.O_WRONLY | os.O_CREAT, 0o644))'",
+        ws.display()
+    );
+    let (elapsed, seen) = captured_run(tmp.path(), "paced", &script, &d.socket, &ws);
+    let rate = seen.writes as f64 / elapsed.as_secs_f64();
+    eprintln!(
+        "sensor paced throughput: {} events in {elapsed:.2?} = {rate:.0} events/s (target {RATE:.0}), drops {}",
+        seen.writes, seen.drops
+    );
+    assert_eq!(seen.drops, 0, "no event may be lost at 50 k/s");
+    assert_eq!(seen.writes, n, "every open is accounted for");
+    assert!(rate >= 0.9 * RATE, "generator ran at {rate:.0} events/s");
+}
+
 fn median(mut v: Vec<Duration>) -> Duration {
     v.sort();
     v[v.len() / 2]
@@ -330,8 +357,11 @@ fn overhead_of_capture_on_victim_shop_tests() {
     let o = measure_overhead(
         rounds,
         |_, _| {
+            // The demo suite fails one test on purpose (demo/victim-shop
+            // README), so exit status 1 (test failures) is accepted; a
+            // missing node (127) still fails the measurement.
             format!(
-                "cd {}; exec node --experimental-strip-types --test src/*.test.ts",
+                "cd {}; node --experimental-strip-types --test src/*.test.ts > /dev/null 2>&1; [ $? -le 1 ]",
                 shop.display()
             )
         },
