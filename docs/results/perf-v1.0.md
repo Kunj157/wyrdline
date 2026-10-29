@@ -65,6 +65,13 @@ Context, not a target:
   are not directly comparable. The target is not met; the ordering is not
   weakened to meet it. The next step is to measure the barriers under load
   on an idle box. See #239.
+- **Checkpoint on the GitHub-hosted runner** (the release pipeline's strict
+  perf job, same test, 20 rounds): p95 **633.6 ms** before #245 (run
+  40878809197) and **263.5 ms** after it (run 40886048327; samples 202 to
+  277 ms). The 150 ms target is missed there too. Releases therefore gate
+  on a regression bound of 450 ms, which the pre-#245 runner figure fails;
+  the nightly sets `WYRD_PERF_STRICT=1` and still enforces 150 ms, so it
+  stays red until #239 is fixed.
 - **The `pnpm test` overhead is measured on a 120 ms workload.** The harness
   runs `node --test` directly (not `pnpm test`, so pnpm startup is not
   counted), and the demo suite fails one test on purpose, so the wrapper
