@@ -222,6 +222,28 @@ fn no_content_leaves_out_cas() {
 }
 
 #[test]
+fn annotations_file_goes_into_standard_bundles_only() {
+    let e = env();
+    let doc = b"annotation document bytes".to_vec();
+    let file = e.tmp.path().join("notes.automerge");
+    std::fs::write(&file, &doc).unwrap();
+    let file = file.display().to_string();
+    let standard = entries(&export(
+        &e,
+        "std.wyrd",
+        &["--redact", "standard", "--annotations", file.as_str()],
+    ));
+    let got = standard.iter().find(|(p, _)| p == "annotations.automerge");
+    assert_eq!(got.map(|(_, b)| b), Some(&doc));
+    let strict = entries(&export(
+        &e,
+        "strict.wyrd",
+        &["--annotations", file.as_str()],
+    ));
+    assert!(!strict.iter().any(|(p, _)| p == "annotations.automerge"));
+}
+
+#[test]
 fn unknown_session_exits_2_and_writes_nothing() {
     let e = env();
     let path = out_path(&e, "none.wyrd");

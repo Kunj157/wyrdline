@@ -5,8 +5,8 @@ use std::io::Write as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use crate::protocol::{ProtocolError, read_line};
 use crate::{Ingest, Request, Response, Sink};
@@ -72,6 +72,49 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
+/// Connections being served right now, in this process.
+static ACTIVE: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+/// Counts one connection from accept until its answer is written (or the
+/// connection is refused), so [`drain`] can wait for it.
+struct Active;
+
+impl Active {
+    fn enter() -> Self {
+        *ACTIVE.0.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        Active
+    }
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        let mut n = ACTIVE.0.lock().unwrap_or_else(PoisonError::into_inner);
+        *n -= 1;
+        ACTIVE.1.notify_all();
+    }
+}
+
+/// Wait, up to `deadline`, until no connection is being served. Call it
+/// after the socket file is removed and before the process exits, so an
+/// answer that is already being written reaches its client. Returns whether
+/// the server went quiet in time.
+pub fn drain(deadline: Duration) -> bool {
+    let end = Instant::now() + deadline;
+    let mut n = ACTIVE.0.lock().unwrap_or_else(PoisonError::into_inner);
+    while *n > 0 {
+        let now = Instant::now();
+        if now >= end {
+            return false;
+        }
+        n = ACTIVE
+            .1
+            .wait_timeout(n, end - now)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
+    }
+    true
+}
+
 /// Accept connections until the listener fails. Each connection is served
 /// on its own thread.
 pub fn serve<S: Sink + 'static>(listener: &UnixListener, ingest: &Arc<Ingest<S>>) {
@@ -109,6 +152,7 @@ fn respond(mut stream: &UnixStream, resp: &Response) {
 
 /// Serve one connection: check the peer, read the request, answer.
 pub fn serve_one<S: Sink>(stream: &UnixStream, ingest: &Ingest<S>) {
+    let _active = Active::enter();
     // Defence in depth on top of the 0600 socket mode: only our own user.
     let me = rustix::process::getuid();
     match rustix::net::sockopt::socket_peercred(stream) {
