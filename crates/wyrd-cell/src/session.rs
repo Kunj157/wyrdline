@@ -605,6 +605,7 @@ impl Session {
         }
         let id = self.rec.next_checkpoint_id();
         let duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+        wyrd_cas::note_step(wyrd_cas::Step::LedgerAppend);
         let seq = self.append(vec![EventBody::CheckpointCreated(CheckpointCreated {
             checkpoint_id: id.clone(),
             branch_id: branch.clone(),
