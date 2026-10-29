@@ -132,6 +132,8 @@ pub enum Step {
     SyncFile(PathBuf),
     /// A file was renamed `(from, to)`.
     Rename(PathBuf, PathBuf),
+    /// A ledger event was appended (noted by the caller, see [`note_step`]).
+    LedgerAppend,
 }
 
 /// The steps of the recording in progress, from any thread, or `None`.
