@@ -11,8 +11,9 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+futures-util.workspace = true
 base64 = "0.22.1"
-axum = { workspace = true, features = ["form", "matched-path", "ws"] }
+axum = { workspace = true, features = ["form", "matched-path", "multipart", "ws"] }
 hex.workspace = true
 ring = "0.17.14"
 serde.workspace = true
@@ -27,11 +28,16 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
 ureq.workspace = true
+wyrd-bundle = { path = "../wyrd-bundle" }
+wyrd-schema = { path = "../wyrd-schema" }
 wyrd-sync = { path = "../wyrd-sync" }
 
 [dev-dependencies]
 automerge.workspace = true
-futures-util.workspace = true
+ed25519-dalek.workspace = true
+ruzstd.workspace = true
+tar.workspace = true
+wyrd-divergence = { path = "../wyrd-divergence" }
 http-body-util.workspace = true
 tempfile.workspace = true
 testcontainers = "0.28.0"

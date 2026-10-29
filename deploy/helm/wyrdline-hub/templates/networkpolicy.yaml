@@ -1,0 +1,45 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "wyrdline-hub.fullname" . }}
+  labels:
+    {{- include "wyrdline-hub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "wyrdline-hub.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.ingressFromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: http
+          protocol: TCP
+  egress:
+    # DNS, always.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with .Values.networkPolicy.egressPorts }}
+    - {{- with $.Values.networkPolicy.egressTo }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+{{- end }}

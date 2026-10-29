@@ -80,6 +80,7 @@ wyrd ask <session>                                   # answer what the policy as
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
+wyrd push session.wyrd --hub https://hub.example --org acme  # share it on a team Hub (token in WYRD_HUB_TOKEN)
 ```
 
 Capture costs under 2 % on a `cargo build` ([measurements](docs/results/perf-sensor.md)).
@@ -143,7 +144,8 @@ reports exactly what is available and what degrades without it.
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
   [the eBPF sensor](docs/architecture/sensor.md), [the correlator](docs/architecture/correlator.md),
-  [the daemon and its API](docs/architecture/daemon.md), [the Hub](docs/architecture/hub.md)
+  [the daemon and its API](docs/architecture/daemon.md), [the Hub](docs/architecture/hub.md),
+  [collaborative annotations](docs/architecture/annotations.md)
 - [Ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md),
   [bundle format](docs/bundle-format.md)
 - [Writing a policy](docs/policies/README.md)

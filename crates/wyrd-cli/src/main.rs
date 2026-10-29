@@ -71,6 +71,8 @@ enum Command {
     Close(cmd::session::SessionArg),
     /// Export a session as a signed, redacted `.wyrd` bundle.
     Export(cmd::bundle::ExportArgs),
+    /// Upload a bundle to a Wyrdline Hub (token in `$WYRD_HUB_TOKEN`).
+    Push(cmd::push::PushArgs),
     /// Verify a `.wyrd` bundle and add it as a read-only session.
     Import(cmd::bundle::ImportArgs),
     /// Open Studio in a browser (served by the running daemon).
@@ -137,6 +139,7 @@ fn main() -> ExitCode {
         Command::Stop(a) => cmd::session::stop(&a),
         Command::Close(a) => cmd::session::close(&a),
         Command::Export(a) => cmd::bundle::export(&a),
+        Command::Push(a) => cmd::push::push(&a),
         Command::Import(a) => cmd::bundle::import(&a),
         Command::Hook(a) => cmd::hook::run(&a),
         Command::McpProxy(a) => cmd::mcp_proxy::run(&a),

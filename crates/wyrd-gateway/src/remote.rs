@@ -233,8 +233,8 @@ pub fn run_remote<R: Reporter, T: Transport>(
             if version.is_none() {
                 version = negotiated_version(&m);
             }
-            gateway.from_server(&m);
-            write_line(&out, &m)?;
+            let relay = gateway.from_server(&m);
+            write_line(&out, &relay)?;
         }
     }
     if let Some(s) = session {

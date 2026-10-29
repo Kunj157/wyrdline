@@ -13,8 +13,8 @@ Semgrep rules, the dependency review and the `wyrd-sensord` capability audit.
 
 | ID | Component | Severity | Depends on | Status |
 |---|---|---|---|---|
-| F-1 | `wyrd-sensord` keeps CAP_SYS_ADMIN, CAP_DAC_READ_SEARCH, CAP_SYS_RESOURCE after attach | medium | dev | issue [#226](https://github.com/Kunj157/wyrdline/issues/226) |
-| F-2 | `wyrd-sensord` runs as root; no seccomp filter; comment and `ProtectHome` disagree | medium | dev | issue [#227](https://github.com/Kunj157/wyrdline/issues/227) |
+| F-1 | `wyrd-sensord` kept every capability in its bounding set after attach | medium | dev | fixed by [#234](https://github.com/Kunj157/wyrdline/pull/234) (issue [#226](https://github.com/Kunj157/wyrdline/issues/226)) |
+| F-2 | `wyrd-sensord` runs as root; no seccomp filter; comment and `ProtectHome` disagree | medium | dev | fixed by [#234](https://github.com/Kunj157/wyrdline/pull/234) (issue [#227](https://github.com/Kunj157/wyrdline/issues/227)); running as root kept, see the audit |
 | F-3 | `wyrdd` accepts a checkpoint, branch or target starting with `-`, passed as argv to the `wyrd` child | low | dev | fixed in this PR (`check_target` rejects a leading `-`, unit test) |
 | F-4 | MCP rug-pull pins live in memory only; a restart re-pins | medium | dev (adapter) | issue [#222](https://github.com/Kunj157/wyrdline/issues/222) |
 | F-5 | Agent-controlled text (rewind reason, tool summaries) is returned to the agent as history | medium | #209, #218 | issue [#223](https://github.com/Kunj157/wyrdline/issues/223) |
@@ -23,7 +23,7 @@ Semgrep rules, the dependency review and the `wyrd-sensord` capability audit.
 | F-8 | Action installs an unsigned release under `verify-signature: auto` | medium | dev | issue [#224](https://github.com/Kunj157/wyrdline/issues/224) |
 | F-9 | Action installs the sensor with `sudo -n` on the runner | low | dev | accepted (see below) |
 | F-10 | Owner-wide CI trust rules let any repository of an owner upload | medium | #216 | issue [#225](https://github.com/Kunj157/wyrdline/issues/225) |
-| F-11 | `aya::Pod` impls in `wyrd-common` lack compile-time padding checks | low | dev | issue [#228](https://github.com/Kunj157/wyrdline/issues/228) |
+| F-11 | `aya::Pod` impls in `wyrd-common` lack compile-time padding checks | low | dev | fixed by [#234](https://github.com/Kunj157/wyrdline/pull/234) (issue [#228](https://github.com/Kunj157/wyrdline/issues/228)) |
 | F-12 | `cargo-deny` advisories: four zstd RUSTSEC entries | high (red CI) | dev | fixed by #215, not this PR |
 
 Checked and found sound (no finding): bundle reader rejects traversal,
@@ -185,48 +185,66 @@ still reported with file and line.
 
 ## `wyrd-sensord` capability audit
 
-Source: `deploy/systemd/wyrd-sensord.service` on dev and
-`crates/wyrd-sensord/src/main.rs`.
+Source: `deploy/systemd/wyrd-sensord.service` and `crates/wyrd-sensord/src/main.rs`
+as of #234 (fixes F-1, F-2 and F-11).
 
-Who holds the capabilities. The unit has no `User=`, so the daemon runs as root.
-`CapabilityBoundingSet=` is the ceiling:
+Scope of the evidence: the capability sets were measured on Linux 6.17 only
+(the ws11 host). The kernel matrix (5.15 to 6.12) and the runner kernels run
+the sensor in-process as root, not under this unit and without the drop, so
+they do not check these sets.
 
-| Capability | Why it is granted (documented, or inferred where marked) | Where it is used | Dropped? |
+Who holds the capabilities. The unit has no `User=`, so the daemon runs as
+root. `CapabilityBoundingSet=` is the load-time ceiling. The daemon keeps only
+the runtime set after its programs are attached and its socket is bound
+(`keep_runtime_caps`, before any other thread starts, since capabilities are per
+thread).
+
+| Capability | Load time (bounding set) | Runtime (after the drop) | Measured reason |
 |---|---|---|---|
-| `CAP_BPF` | load BPF programs and maps | loader (`crates/wyrd-sensor/src/loader.rs`) | no (F-1) |
-| `CAP_PERFMON` | attach tracepoint and perf-based BPF programs | loader; the loader doc says "needs CAP_BPF + CAP_PERFMON (or root)" | no (F-1) |
-| `CAP_SYS_RESOURCE` | inferred: raise the locked-memory limit for BPF maps and the ring buffer on kernels that count them against `RLIMIT_MEMLOCK`. Not stated in the unit | loader | no (F-1) |
-| `CAP_DAC_READ_SEARCH` | the unit says it is needed for reading tracefs and cgroupfs. Inferred: those entries belong to other users | tracefs and cgroupfs reads | no (F-1) |
-| `CAP_SYS_ADMIN` | not explained in the unit or the code. Likely a fallback for kernels without the narrower caps; whether it is needed on the supported kernel matrix is not verified | the unit only | no (F-1) |
+| `CAP_BPF` | granted | **kept** | The `bpf()` calls that run later: register and unregister cgroups, egress rules, attach enforcement, counters. The privileged tests pass with this set alone. |
+| `CAP_PERFMON` | granted | dropped | Loading the tracepoint programs fails without it (`setpriv` with BPF and NET_ADMIN but no PERFMON: the load stops at the first tracepoint program, `task_newtask`, with a verifier `Operation not permitted`). Not needed after attach: the BPF-only privileged run passes. |
+| `CAP_NET_ADMIN` | granted | dropped | Loading the cgroup connect programs fails without it (verifier `Operation not permitted`). Not needed to attach them per session: the BPF-only egress tests pass. The old unit lacked this capability, so egress enforcement was unavailable under systemd (fixed in #234). |
+| `CAP_SYS_ADMIN` | not granted | none | Not needed on 6.17: the load succeeds without it. |
+| `CAP_SYS_RESOURCE` | not granted | none | Not needed on 5.15 and newer: aya raises `RLIMIT_MEMLOCK` only before 5.11 (checked in the aya source). |
+| `CAP_DAC_READ_SEARCH` | not granted | none | Not needed to load on 6.17. The 5.15 to 6.12 kernels were not measured under the unit. |
 
-The unit says only that the set is "what loading tracepoint programs and reading
-tracefs/cgroupfs needs"; the loader says "needs CAP_BPF + CAP_PERFMON (or root)".
-The other reasons are inferred. None has been checked capability by capability
-on the kernel matrix; that check is part of F-1.
+Things the daemon does after the drop that need no capability: read events from
+the ring buffer, check peers with `SO_PEERCRED`, `stat` and open cgroup
+directories under `/sys/fs/cgroup` (world-traversable), and read `/proc` of
+session processes.
 
-How they are held and limited today:
+Why it still runs as root. A dedicated user would need the same three
+capabilities as ambient capabilities and the BPF load to work under it; that
+was not verified before 1.0, and `kernel.unprivileged_bpf_disabled = 2` on the
+ws11 host means BPF is root-only for unprivileged users. The daemon stays root
+with `CAP_BPF` only after start-up. A dedicated user is a follow-up, not part of
+1.0.
 
-- `AmbientCapabilities=` is empty, `NoNewPrivileges=yes`.
-- The daemon never calls `capset`, `prctl(PR_CAPBSET_DROP)` or `setuid`; grep
-  of `crates/wyrd-sensord` and `crates/wyrd-sensor` finds none. Once started it
-  keeps every capability in its bounding set for its whole life (F-1).
-- Network: `RestrictAddressFamilies=AF_UNIX`, `IPAddressDeny=any`,
-  `PrivateNetwork=yes`. The daemon serves only a unix socket
-  (`/run/wyrdline/sensord.sock`).
-- Filesystem: `ProtectSystem=strict`, `PrivateTmp=yes`, `ProtectKernelModules=yes`,
-  `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`,
-  `SystemCallArchitectures=native`. `ProtectHome=read-only` keeps home
-  directories readable, although the unit comment says there is no access (F-2).
-- Not set: `User=`, `SystemCallFilter=`, `ProtectControlGroups` (set to `no`,
-  needed for cgroup reads), a socket permission model beyond the directory mode
-  (F-2).
-- PR #217 (`bugfix/sensord-drop-count`) changes drop counting in the socket
-  writer. It does not change privileges.
+Hardening in the unit (#234): `SystemCallFilter` is the system-service set
+minus `@privileged @resources @debug`, with `bpf`, `perf_event_open`, `capget`
+and `capset` added back and `SystemCallErrorNumber=EPERM`. `ProtectHome=yes`
+(was `read-only`), `ProtectKernelTunables`, `ProtectKernelLogs`, `ProtectClock`,
+`ProtectHostname`, `RestrictNamespaces`, `RestrictRealtime`,
+`RestrictSUIDSGID`, `RemoveIPC`, `UMask=0077`, plus the earlier
+`NoNewPrivileges`, `AmbientCapabilities=` (empty), `RestrictAddressFamilies=AF_UNIX`,
+`IPAddressDeny=any`, `PrivateNetwork=yes`, `ProtectSystem=strict`, `PrivateTmp`,
+`MemoryDenyWriteExecute`, `LockPersonality`, `SystemCallArchitectures=native`.
+`ProtectControlGroups` and `ProtectProc` stay off, for reasons written in the
+unit. `systemd-analyze security --offline=yes` scores the unit 1.8 OK.
 
-Conclusion: the sensor's privilege is bounded by systemd, not by the daemon.
-A bug in the daemon's socket or decoder code runs with root and the full
-bounding set. F-1 and F-2 are the fixes; the attack surface is the local
-unix socket, which is same-user per `SO_PEERCRED` (scope B2).
+Verification of the unit: `systemd-analyze verify` (only the missing installed
+binary is reported); a transient `systemd-run` with the unit's properties on
+6.17 loads, drops to BPF and exits cleanly. Under the unit, the runtime paths run
+through the seccomp filter and `ProtectHome` only in the action's end-to-end job
+on the runner, which installs the unit and asserts kernel effects.
+
+PR #217 (`bugfix/sensord-drop-count`) changes drop counting in the socket
+writer. It does not change privileges.
+
+Conclusion: after #234 the daemon's privilege after start-up is `CAP_BPF`
+alone, plus a syscall filter. A bug in the socket or decoder code runs as root
+with `CAP_BPF`. The attack surface is the local unix socket, which is same-user
+per `SO_PEERCRED` (scope B2).
 
 ## MCP, Hub and action: findings by PR
 
@@ -279,8 +297,8 @@ unix socket, which is same-user per `SO_PEERCRED` (scope B2).
 ## Limits of this review
 
 - Read from branch heads at review time; PRs still open can change.
-- No live kernel run: the capability table is from the unit and comments, not
-  from a capability-by-capability test on the kernel matrix.
+- The capability sets are measured on kernel 6.17 only. The kernel matrix does
+  not run the unit or the drop, so 5.15 to 6.12 are not checked for these sets.
 - Semgrep checks call sites and allow attributes on the listed paths. Unwraps
   elsewhere are covered by the clippy deny, not by Semgrep.
 - geiger does not run on `wyrdd` (tool error, see above).
