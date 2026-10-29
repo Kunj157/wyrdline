@@ -191,6 +191,7 @@ fn bundle(events: &[Event], chunks: &BTreeMap<[u8; 32], Vec<u8>>, r: Redaction) 
             withheld_files: 0,
             redaction: r,
             divergences: wyrd_divergence::view::project_json,
+            annotations: None,
         },
         &key(7),
     )
@@ -456,6 +457,7 @@ fn refuses_gaps_and_mislabelled_chunks() {
         withheld_files: 0,
         redaction: Redaction::Strict,
         divergences: wyrd_divergence::view::project_json,
+        annotations: None,
     };
     let none = BTreeMap::new();
     assert!(matches!(
