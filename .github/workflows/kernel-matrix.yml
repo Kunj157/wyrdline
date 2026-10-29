@@ -129,5 +129,7 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
       - name: Measure
         env:
-          WYRD_PERF_STRICT: "1"
+          # The nightly enforces every v1.0 target. Called from release.yml, the
+          # checkpoint test only reports its p95 (see #239).
+          WYRD_PERF_STRICT: ${{ github.event_name == 'schedule' && '1' || '0' }}
         run: make test-perf
