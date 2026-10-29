@@ -113,6 +113,85 @@ pub(crate) fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CasError + '
     }
 }
 
+/// One durable step of a write, in the order it was taken.
+#[cfg(feature = "store")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// A directory was created (its parent is synced right after).
+    Mkdir(PathBuf),
+    /// A directory's entries were synced.
+    SyncDir(PathBuf),
+    /// A file's data was synced.
+    SyncFile(PathBuf),
+    /// A file was renamed `(from, to)`.
+    Rename(PathBuf, PathBuf),
+}
+
+#[cfg(feature = "store")]
+thread_local! {
+    static STEPS: std::cell::RefCell<Option<Vec<Step>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "store")]
+fn step(s: Step) {
+    STEPS.with(|r| {
+        if let Some(v) = r.borrow_mut().as_mut() {
+            v.push(s);
+        }
+    });
+}
+
+/// Run `f` on this thread and return its result with the durable steps it
+/// took, in order. For tests that pin the order of writes; the recording is
+/// off unless this is called.
+#[doc(hidden)]
+#[cfg(feature = "store")]
+pub fn record_steps<R>(f: impl FnOnce() -> R) -> (R, Vec<Step>) {
+    STEPS.with(|r| *r.borrow_mut() = Some(Vec::new()));
+    let out = f();
+    let steps = STEPS.with(|r| r.borrow_mut().take().unwrap_or_default());
+    (out, steps)
+}
+
+/// Sync a directory's entries.
+#[cfg(feature = "store")]
+fn sync_dir(dir: &Path) -> Result<()> {
+    step(Step::SyncDir(dir.to_path_buf()));
+    fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(io_err(dir))
+}
+
+/// Create `dir` and any missing parents. A new directory is an entry in its
+/// parent, so the parent is synced straight after the directory is made,
+/// before anything is written under it. A directory another process created
+/// first is synced the same way, because that process may not have synced it.
+#[cfg(feature = "store")]
+fn create_dirs_durable(dir: &Path) -> Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = dir.parent() {
+        create_dirs_durable(parent)?;
+    }
+    match fs::create_dir(dir) {
+        Ok(()) => {
+            step(Step::Mkdir(dir.to_path_buf()));
+            if let Some(parent) = dir.parent() {
+                sync_dir(parent)?;
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if let Some(parent) = dir.parent() {
+                sync_dir(parent)?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(io_err(dir)(e)),
+    }
+}
+
 /// Result of [`Cas::gc`].
 #[cfg(feature = "store")]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -135,8 +214,8 @@ impl Cas {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         let chunks = root.join("chunks");
-        fs::create_dir_all(&chunks).map_err(io_err(&chunks))?;
-        fs::create_dir_all(root.join("tmp")).map_err(io_err(&root))?;
+        create_dirs_durable(&chunks)?;
+        create_dirs_durable(&root.join("tmp"))?;
         let marker = root.join("FORMAT");
         match fs::read_to_string(&marker) {
             Ok(s) if s.trim() == FORMAT_ID => {}
@@ -172,7 +251,7 @@ impl Cas {
         }
         let compressed = zstd::bulk::compress(bytes, ZSTD_LEVEL).map_err(io_err(&path))?;
         let dir = path.parent().unwrap_or(&self.root);
-        fs::create_dir_all(dir).map_err(io_err(dir))?;
+        create_dirs_durable(dir)?;
         let tmp = self
             .root
             .join("tmp")
@@ -180,9 +259,13 @@ impl Cas {
         {
             let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
             f.write_all(&compressed).map_err(io_err(&tmp))?;
+            step(Step::SyncFile(tmp.clone()));
             f.sync_data().map_err(io_err(&tmp))?;
         }
+        step(Step::Rename(tmp.clone(), path.clone()));
         fs::rename(&tmp, &path).map_err(io_err(&path))?;
+        // The chunk's name is an entry in its directory: sync that after the rename.
+        sync_dir(dir)?;
         Ok(h)
     }
 

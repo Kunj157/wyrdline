@@ -8,7 +8,7 @@ Used for Cell checkpoints and, later, bundle content.
 <root>/
 ├── FORMAT                 # "wyrdline.cas.v1"
 ├── chunks/ab/cd/<hex>     # zstd(level 3) of the chunk bytes; <hex> = BLAKE3 of the *uncompressed* bytes
-└── tmp/                   # staging for atomic writes (write → fsync → rename)
+└── tmp/                   # staging for atomic writes (write → sync → rename → sync the directory)
 ```
 
 Every read decompresses and re-hashes the chunk; a mismatch is reported as
@@ -64,3 +64,26 @@ materialising), symlinks have targets, only files have chunks.
 
 Mark from root manifest hashes, sweep every unreferenced chunk. `dry_run`
 reports without deleting.
+
+## Durability of single writes
+
+`put` writes one chunk, and `put_stream`, `put_manifest`, `snapshot` and
+bundle import all write through it. Each new chunk does these steps, in
+order:
+
+1. Create any missing fan-out directories (`chunks/ab`, `chunks/ab/cd`). After
+   each new directory is made, its parent is synced, before anything is
+   written under it. A directory that another process made first is synced
+   the same way, because that process may not have synced it.
+2. Write the compressed chunk to `tmp/` and sync its data.
+3. Rename it to its chunk name.
+4. Sync the chunk's directory, so the new name is on disk.
+
+Opening a store syncs the parent of each directory it creates
+(`chunks/` and `tmp/`) in the same way.
+
+The tests in `crates/wyrd-cas/tests/durable_order.rs` record these steps and
+check the order: every created directory is synced in its parent before a
+file is renamed into it, and every rename is followed by a sync of its
+directory. A power cut is not simulated; the order is checked, not the disk.
+
