@@ -29,7 +29,7 @@ numbers and the design history are in [perf-sensor.md](perf-sensor.md) and
 |---|---|---|
 | Event loss at 50 k events/s | 200 000 opens paced at 50 k/s: **49 863 events/s** (run 2), 200 000 received, **0 dropped** (run 1: 49 862/s, 0 dropped) | **met** |
 | Event throughput ceiling (no pacing) | 200 000 opens: 216 439 events/s (run 2), 223 310 events/s (run 1), 0 dropped | context |
-| Checkpoint p95, 200 files, 50 MB delta | **p95 7.22 s**, median 5.52 s, 20 rounds (min 5.00 s, max 7.51 s) | **missed** (target ≤ 150 ms), see follow-up |
+| Checkpoint p95, 200 files, 50 MB delta | **p95 158.7 ms** over 3 runs × 20 rounds (per run: 174.7, 127.8, 158.7 ms); median 139.9 ms, min 99.0 ms, max 214.2 ms. Before the change (#244, same harness): p95 7.22 s, median 5.52 s | **missed by 9 ms** (target ≤ 150 ms). See the note below |
 | Rewind p95, 1 GB workspace | **p95 1.16 s**, median 0.93 s, 10 rounds (min 0.91 s, max 1.16 s) | **met** (target ≤ 2 s) |
 | Denied-connect latency, p99 | **2.3–2.6 µs** (p99 per round, 3 rounds × 20 000 connects, both runs) | **met**. See the note below on what this compares to |
 | Allowed-connect latency added, p99 | **+0.2 µs** (run 2), **+1.4 µs** (run 1) over a captured, not-enforced baseline (p99 ≈ 22–23 µs) | **met** (≤ 50 µs) |
@@ -53,10 +53,18 @@ Context, not a target:
 
 ## Missed targets and follow-ups
 
-- **Checkpoint p95 is 7.22 s against a 150 ms target.** A 50 MB delta of 200
-  files takes about 5.5 s at the median, so this is about 40× over target.
-  The cost has not been profiled yet. Even the fastest sample (5.0 s) misses
-  the target. Follow-up: #239.
+- **Checkpoint: 5.5 s to 159 ms at p95, target not met.** The cost was one
+  fsync per changed chunk (758 per checkpoint, about 6 ms each, 97 % of the
+  time). Changed chunks are now staged, then made durable and visible in
+  two `syncfs` barriers around their renames, and only then is the ledger
+  event written. Chunks are written by up to eight workers. This is the
+  crash-consistency order in `docs/cas-format.md`. The second barrier and
+  the check on existing names are the cost that moved p95 from 124 ms (the
+  earlier version, which had a single barrier and no check) to 159 ms. The load average was about 4
+  during these runs and about 2 during the earlier ones, so the medians
+  are not directly comparable. The target is not met; the ordering is not
+  weakened to meet it. The next step is to measure the barriers under load
+  on an idle box. See #239.
 - **The `pnpm test` overhead is measured on a 120 ms workload.** The harness
   runs `node --test` directly (not `pnpm test`, so pnpm startup is not
   counted), and the demo suite fails one test on purpose, so the wrapper
