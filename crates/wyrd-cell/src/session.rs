@@ -119,6 +119,15 @@ impl FileAt {
     }
 }
 
+/// The network effects a rewind could not undo (see [`Session::rewind_effects`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewindEffects {
+    /// The checkpoint the rewind went back to.
+    pub checkpoint_id: String,
+    /// The `effect.net.*` events, in ledger order.
+    pub effects: Vec<Event>,
+}
+
 /// An open session.
 #[derive(Debug)]
 pub struct Session {
@@ -714,6 +723,12 @@ impl Session {
         if self.stop()? {
             self.set_status(SessionState::Rewinding, Some("stopped the agent to rewind"))?;
         }
+        // Only a rewind lists effects (`checkpoint.forked` has no such field).
+        let irreversible_seqs = if fork_name.is_none() {
+            self.irreversible_for(&cp)?
+        } else {
+            Vec::new()
+        };
         let id = self.rec.next_branch_id();
         let name = fork_name.map_or_else(|| id.clone(), str::to_string);
         if self.rec.branch(&name).is_some() {
@@ -748,11 +763,90 @@ impl Session {
             None => EventBody::CheckpointRewound(CheckpointRewound {
                 checkpoint_id: cp.id,
                 branch_id: id,
-                irreversible_seqs: Vec::new(),
+                irreversible_seqs,
             }),
         }])?;
         self.set_status(SessionState::Paused, Some("rewound"))?;
         Ok(branch)
+    }
+
+    /// Seqs of the network effects on the branch being left that a rewind to
+    /// `cp` cannot undo: `effect.net.*` events after `cp`, on the current
+    /// branch and its ancestry back to `cp`'s branch.
+    ///
+    /// Events carry no branch tag, so each branch's span is read from the
+    /// ledger: it starts at the `checkpoint.rewound` or `checkpoint.forked`
+    /// that created the branch (the first branch starts at seq 0), and it
+    /// ends at the checkpoint the branch was forked from. Effects that were
+    /// on an abandoned branch are not listed again: the rewind that abandoned
+    /// them already listed them.
+    fn irreversible_for(&self, cp: &CheckpointRecord) -> Result<Vec<u64>> {
+        let events = self.events()?;
+        let mut entered: BTreeMap<&str, u64> = BTreeMap::new();
+        for e in &events {
+            if let EventBody::CheckpointRewound(CheckpointRewound { branch_id, .. })
+            | EventBody::CheckpointForked(CheckpointForked { branch_id, .. }) = &e.body
+            {
+                entered.entry(branch_id.as_str()).or_insert(e.seq);
+            }
+        }
+        let mut seqs = Vec::new();
+        let mut hi = u64::MAX;
+        let mut branch = self.rec.current_branch.clone();
+        loop {
+            let lo = entered
+                .get(branch.as_str())
+                .copied()
+                .unwrap_or(0)
+                .max(cp.seq);
+            seqs.extend(
+                events
+                    .iter()
+                    .filter(|e| e.seq > lo && e.seq <= hi && e.kind().starts_with("effect.net."))
+                    .map(|e| e.seq),
+            );
+            if branch == cp.branch {
+                break;
+            }
+            let Some(fork) = self
+                .rec
+                .branch(&branch)
+                .and_then(|b| b.forked_from.as_deref())
+                .and_then(|c| self.rec.checkpoint(c))
+            else {
+                break;
+            };
+            if fork.seq <= cp.seq {
+                break;
+            }
+            hi = fork.seq;
+            branch.clone_from(&fork.branch);
+        }
+        // The walk visits the current branch first, so ledger order needs a sort.
+        seqs.sort_unstable();
+        Ok(seqs)
+    }
+
+    /// The network effects a rewind recorded as irreversible: the
+    /// `checkpoint.rewound` that created `branch_id`, with its listed events
+    /// resolved from the ledger. `None` when no rewind made the branch.
+    pub fn rewind_effects(&self, branch_id: &str) -> Result<Option<RewindEffects>> {
+        let events = self.events()?;
+        let Some(rewound) = events.iter().find_map(|e| match &e.body {
+            EventBody::CheckpointRewound(r) if r.branch_id == branch_id => Some(r),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        let effects = events
+            .iter()
+            .filter(|e| rewound.irreversible_seqs.contains(&e.seq))
+            .cloned()
+            .collect();
+        Ok(Some(RewindEffects {
+            checkpoint_id: rewound.checkpoint_id.clone(),
+            effects,
+        }))
     }
 
     /// The manifest a branch's tree must match: its latest checkpoint, or the

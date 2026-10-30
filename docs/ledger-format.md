@@ -82,7 +82,7 @@ CHANGE`. Unknown fields are rejected on decode.
 | | `effect.net.connect` | family, address, port, the most recent DNS name that resolved to the address in this session, verdict (`attempt` / `allowed` / `denied`) |
 | | `effect.net.dns_query` | the name |
 | state | `state.checkpoint.created` | checkpoint id, branch, parent, the tool call it follows, the CAS manifest hash (`b3:…`), files changed, bytes added, duration |
-| | `state.checkpoint.rewound`, `state.checkpoint.forked`, `state.checkpoint.applied` | the branch operations |
+| | `state.checkpoint.rewound`, `state.checkpoint.forked`, `state.checkpoint.applied` | the branch operations; a rewound event also lists `irreversible_seqs`, the seqs of the `effect.net.*` events after the checkpoint on the branch being left (denied attempts included; empty when there are none, and always empty for a fork) |
 | guard | `guard.decision` | stage (`hook` / `gateway` / `kernel` / `effect`), decision (`allow` / `deny` / `ask`), policy id and version, reason, the call or the effect `seq` it is about |
 | verdict | `verdict.claim.extracted` | claim id, turn, type, subject, the verbatim quote, extractor (`rule` / `llm`) |
 | | `verdict.divergence.raised` | divergence id, rule (`D001`–`D010`), severity, the claim, the evidence `seq`s, confidence in basis points, summary |
