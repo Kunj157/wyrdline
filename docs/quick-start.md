@@ -145,6 +145,12 @@ wyrd apply <session> head           # write it; refuses (exit 4) if you changed 
 Old branches are never modified; `apply` is the only command that
 touches the real working tree.
 
+A rewind cannot take back network requests the agent made after the
+checkpoint. When there are any, `wyrd rewind` prints a warning on stderr
+with one line per request (its seq, address, port and verdict), and the
+`state.checkpoint.rewound` event lists the same seqs in
+`irreversible_seqs`. Nothing is printed when the list is empty.
+
 An agent connected through `wyrd mcp` can ask for a rewind but cannot do
 one itself. The request is recorded in the ledger and waits for you:
 

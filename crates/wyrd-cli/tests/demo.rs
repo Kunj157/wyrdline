@@ -44,7 +44,55 @@ fn fakeagent_bin() -> PathBuf {
     Path::new(env!("CARGO_BIN_EXE_wyrd")).with_file_name("wyrd-fakeagent")
 }
 
+/// Issue #260, plan §23.5: rewinding to the pre-injection checkpoint warns
+/// about the denied connect, and the checkpoint.rewound event lists it.
+fn rewind_warns_about_the_denied_connect(e: &Env, sid: &str, events: &[B]) {
+    let c1_seq = events
+        .iter()
+        .enumerate()
+        .find_map(|(i, b)| match b {
+            B::CheckpointCreated(c) if c.checkpoint_id == "c1" => Some(i as u64 + 1),
+            _ => None,
+        })
+        .expect("checkpoint c1");
+    let (connect_seq, port) = events
+        .iter()
+        .enumerate()
+        .find_map(|(i, b)| match b {
+            B::NetConnect(c) if c.addr == "203.0.113.50" => Some((i as u64 + 1, c.port)),
+            _ => None,
+        })
+        .expect("the connect to the diagnostics endpoint");
+    assert!(connect_seq > c1_seq, "the connect is after c1");
+    let out = wyrd(e, &["rewind", sid, "c1"]);
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("wyrd: warning: 1 effect after c1 cannot be undone:"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "  seq {connect_seq}  net.connect 203.0.113.50:{port} (denied)"
+        )),
+        "{stderr}"
+    );
+    let rewound = ledger_events(e, sid)
+        .into_iter()
+        .find_map(|b| match b {
+            B::CheckpointRewound(r) if r.checkpoint_id == "c1" => Some(r),
+            _ => None,
+        })
+        .expect("checkpoint.rewound for c1");
+    assert!(
+        rewound.irreversible_seqs.contains(&connect_seq),
+        "{:?}",
+        rewound.irreversible_seqs
+    );
+}
+
 #[test]
+#[allow(clippy::too_many_lines)] // one scenario, read top to bottom
 fn privileged_demo_injection_raises_exactly_the_four_divergences() {
     let e = env();
     fs::remove_file(e.ws.join("a.txt")).unwrap();
@@ -215,4 +263,7 @@ fn privileged_demo_injection_raises_exactly_the_four_divergences() {
         !raw.windows(key.len()).any(|w| w == key.as_bytes()),
         "the key leaked"
     );
+
+    // Issue #260, plan §23.5.
+    rewind_warns_about_the_denied_connect(&e, &sid, &events);
 }
