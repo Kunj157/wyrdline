@@ -186,3 +186,29 @@ fn a_fork_records_no_list() {
     let f = s.rewind(&c1.id, Some("experiment")).unwrap();
     assert!(s.rewind_effects(&f.id).unwrap().is_none());
 }
+
+#[test]
+fn a_fork_returns_the_effects_after_its_checkpoint() {
+    let e = env();
+    let mut s = create(&e);
+    let c1 = s.checkpoint(None).unwrap();
+    let denied = record(&s, connect("203.0.113.50", NetVerdict::Denied));
+    let allowed = record(&s, connect("198.51.100.7", NetVerdict::Allowed));
+    let (f, seqs) = s.fork(&c1.id, "experiment").unwrap();
+    assert_eq!(f.forked_from.as_deref(), Some(c1.id.as_str()));
+    assert_eq!(seqs, [denied, allowed]);
+    let effects = s.effects_by_seq(&c1.id, &seqs).unwrap();
+    assert_eq!(effects.checkpoint_id, c1.id);
+    let got: Vec<u64> = effects.effects.iter().map(|e| e.seq).collect();
+    assert_eq!(got, seqs);
+}
+
+#[test]
+fn a_fork_returns_nothing_without_network_effects_after_its_checkpoint() {
+    let e = env();
+    let mut s = create(&e);
+    record(&s, connect("203.0.113.50", NetVerdict::Denied));
+    let c1 = s.checkpoint(None).unwrap();
+    let (_, seqs) = s.fork(&c1.id, "experiment").unwrap();
+    assert_eq!(seqs, [] as [u64; 0]);
+}
