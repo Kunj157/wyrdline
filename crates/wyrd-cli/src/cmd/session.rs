@@ -533,6 +533,23 @@ fn warn_irreversible(session: &Session, branch_id: &str) {
     }
 }
 
+fn warn_forked(session: &Session, checkpoint_id: &str, seqs: &[u64]) {
+    if seqs.is_empty() {
+        return;
+    }
+    match session.effects_by_seq(checkpoint_id, seqs) {
+        Ok(forked) => {
+            let _ = print_irreversible(&forked);
+        }
+        Err(e) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "wyrd: warning: could not list irreversible effects: {e}"
+            );
+        }
+    }
+}
+
 fn print_irreversible(rewound: &wyrd_cell::session::RewindEffects) -> std::io::Result<()> {
     let n = rewound.effects.len();
     let noun = if n == 1 { "effect" } else { "effects" };
@@ -571,14 +588,23 @@ fn rewind_or_fork(
     relaunch: bool,
 ) -> anyhow::Result<u8> {
     let mut s = Session::open(&data(), session)?;
-    let b = s.rewind(target, name)?;
+    let (b, forked_effects) = match name {
+        Some(name) => {
+            let (b, seqs) = s.fork(target, name)?;
+            (b, Some(seqs))
+        }
+        None => (s.rewind(target, None)?, None),
+    };
     writeln!(
         out(),
         "wyrd: now on branch {} (from {})",
         b.name,
         b.forked_from.as_deref().unwrap_or("-")
     )?;
-    warn_irreversible(&s, &b.id);
+    match forked_effects {
+        Some(seqs) => warn_forked(&s, b.forked_from.as_deref().unwrap_or("-"), &seqs),
+        None => warn_irreversible(&s, &b.id),
+    }
     if relaunch {
         run_session(&mut s, None, None)
     } else {

@@ -27,10 +27,12 @@ By decision (plan scope, not for lack of time):
   machine has happened. Wyrdline denies forbidden connections before
   they happen (cgroup BPF, Landlock ports) and flags allowed ones; it
   cannot reverse them. The same holds for anything the agent did
-  outside the overlay through an allowed channel. A rewind does not
-  undo them either: `wyrd rewind` warns about each network effect after
-  the checkpoint, denied attempts included, and the
-  `state.checkpoint.rewound` event lists them in `irreversible_seqs`
+  outside the overlay through an allowed channel. A rewind or fork does
+  not undo them either: `wyrd rewind` and `wyrd fork` warn about each
+  network effect after the checkpoint, denied attempts included. The
+  `state.checkpoint.rewound` event lists them in `irreversible_seqs`; a
+  fork's event does not, and a fork from Studio or the daemon API does
+  not warn
   ([quick start](quick-start.md#4-rewind-fork-apply-20-s)).
 - **No node-wide or cluster capture.** No Kubernetes operator, no
   DaemonSet mode: Wyrdline records sessions it starts with `wyrd run`

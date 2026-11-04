@@ -149,7 +149,9 @@ A rewind cannot take back network requests the agent made after the
 checkpoint. When there are any, `wyrd rewind` prints a warning on stderr
 with one line per request (its seq, address, port and verdict), and the
 `state.checkpoint.rewound` event lists the same seqs in
-`irreversible_seqs`. Nothing is printed when the list is empty.
+`irreversible_seqs`. `wyrd fork` prints the same warning, but
+`state.checkpoint.forked` has no such list. Nothing is printed when the
+list is empty.
 
 An agent connected through `wyrd mcp` can ask for a rewind but cannot do
 one itself. The request is recorded in the ledger and waits for you:
