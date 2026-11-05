@@ -379,6 +379,7 @@ tryc('v4-port-443', socket.AF_INET, ('127.0.0.1', 443))
 
 #[test]
 fn privileged_egress_is_enforced_in_the_kernel_and_reported() {
+    use wyrd_schema::NetVerdict::{Allowed, Denied};
     let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir(&ws).unwrap();
@@ -427,7 +428,6 @@ fn privileged_egress_is_enforced_in_the_kernel_and_reported() {
             _ => None,
         })
         .collect();
-    use wyrd_schema::NetVerdict::{Allowed, Denied};
     assert_eq!(
         verdicts,
         [
@@ -595,7 +595,7 @@ fn privileged_runtime_capabilities_are_bpf_only() {
     // Read after the daemon is listening, so the drop has run.
     let pid = daemon_pid(&d.socket);
     let threads = thread_caps(pid);
-    assert!(!threads.is_empty());
+    assert_ne!(threads.len(), 0, "no threads read for pid {pid}");
     for (tid, eff, prm, inh) in &threads {
         assert_eq!(*eff, RUNTIME, "thread {tid}: effective set after attach");
         assert_eq!(*prm, RUNTIME, "thread {tid}: permitted set after attach");
