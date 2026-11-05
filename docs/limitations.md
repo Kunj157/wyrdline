@@ -31,8 +31,10 @@ By decision (plan scope, not for lack of time):
   not undo them either: `wyrd rewind` and `wyrd fork` warn about each
   network effect after the checkpoint, denied attempts included. The
   `state.checkpoint.rewound` event lists them in `irreversible_seqs`; a
-  fork's event does not, and a fork from Studio or the daemon API does
-  not warn
+  fork's event does not. Studio's rewind and fork dialogs list the
+  effects before you confirm, but they list every effect after the
+  checkpoint, on every branch, so the list can be longer than the CLI's.
+  The daemon API's rewind and fork responses do not include the list
   ([quick start](quick-start.md#4-rewind-fork-apply-20-s)).
 - **No node-wide or cluster capture.** No Kubernetes operator, no
   DaemonSet mode: Wyrdline records sessions it starts with `wyrd run`

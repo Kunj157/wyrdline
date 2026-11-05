@@ -240,6 +240,81 @@ fn apply_writes_changes_and_detects_conflicts() {
     );
 }
 
+/// Issue #265: what `apply` wrote is not a user change.
+#[test]
+fn a_repeated_apply_finds_no_conflicts() {
+    let e = env();
+    let mut s = create(&e);
+    let up = upper(&s);
+    fs::write(up.join("keep.txt"), "agent version\n").unwrap();
+    whiteout(&up.join("victim.txt"));
+    fs::create_dir(up.join("docs")).unwrap();
+    fs::write(up.join("docs/new.md"), "# new\n").unwrap();
+    std::os::unix::fs::symlink("keep.txt", up.join("link")).unwrap();
+    s.checkpoint(None).unwrap();
+    assert!(s.apply("head", false, false).unwrap().applied);
+
+    let dry = s.apply("head", true, false).unwrap();
+    assert_eq!(dry.conflicts, Vec::<String>::new());
+    let again = s.apply("head", false, false).unwrap();
+    assert!(again.applied, "no --force needed");
+    assert_eq!(
+        fs::read_to_string(e.ws.join("keep.txt")).unwrap(),
+        "agent version\n"
+    );
+}
+
+/// Issue #265: a real edit after an apply is still a conflict, contents or
+/// permissions.
+#[test]
+fn a_user_change_after_an_apply_is_still_a_conflict() {
+    let e = env();
+    let mut s = create(&e);
+    let up = upper(&s);
+    fs::write(up.join("keep.txt"), "agent version\n").unwrap();
+    fs::write(up.join("added.txt"), "added\n").unwrap();
+    s.checkpoint(None).unwrap();
+    assert!(s.apply("head", false, false).unwrap().applied);
+
+    fs::write(e.ws.join("keep.txt"), "user edit\n").unwrap();
+    let mode = fs::metadata(e.ws.join("added.txt"))
+        .unwrap()
+        .permissions()
+        .mode();
+    fs::set_permissions(
+        e.ws.join("added.txt"),
+        fs::Permissions::from_mode(mode ^ 0o100),
+    )
+    .unwrap();
+    let dry = s.apply("head", true, false).unwrap();
+    assert_eq!(dry.conflicts, vec!["added.txt", "keep.txt"]);
+    match s.apply("head", false, false) {
+        Err(CellError::Conflicts(c)) => assert_eq!(c, vec!["added.txt", "keep.txt"]),
+        other => panic!("expected conflicts, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_to_string(e.ws.join("keep.txt")).unwrap(),
+        "user edit\n"
+    );
+}
+
+/// A file the user made identical to the agent's version is not in the way.
+#[test]
+fn a_user_file_equal_to_the_target_is_no_conflict() {
+    let e = env();
+    let mut s = create(&e);
+    fs::write(upper(&s).join("keep.txt"), "same\n").unwrap();
+    s.checkpoint(None).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(e.ws.join("keep.txt"), "same\n").unwrap();
+    let mode = fs::metadata(upper(&s).join("keep.txt"))
+        .unwrap()
+        .permissions();
+    fs::set_permissions(e.ws.join("keep.txt"), mode).unwrap();
+    let dry = s.apply("head", true, false).unwrap();
+    assert_eq!(dry.conflicts, Vec::<String>::new());
+}
+
 #[test]
 fn ledger_records_every_change_and_seals() {
     let e = env();
