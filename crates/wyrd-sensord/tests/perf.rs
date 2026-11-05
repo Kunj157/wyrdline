@@ -490,6 +490,10 @@ fn connect_latency(
     (it.next().unwrap(), it.next().unwrap())
 }
 
+/// One round of [`latency_of_connect_enforcement`]: (p50, p99) in µs for
+/// captured-not-enforced, enforced-allowed and enforced-denied connects.
+type ConnectRound = ((f64, f64), (f64, f64), (f64, f64));
+
 #[test]
 #[ignore = "release measurement; make test-perf"]
 fn latency_of_connect_enforcement() {
@@ -547,7 +551,7 @@ fn latency_of_connect_enforcement() {
         );
         rounds.push((base, allowed, denied));
     }
-    let med = |f: &dyn Fn(&((f64, f64), (f64, f64), (f64, f64))) -> f64| {
+    let med = |f: &dyn Fn(&ConnectRound) -> f64| {
         let mut v: Vec<f64> = rounds.iter().map(f).collect();
         v.sort_by(f64::total_cmp);
         v[1]

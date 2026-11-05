@@ -30,8 +30,11 @@ fmt-check-web:
 	$(PNPM) format:check
 
 lint: lint-rust lint-web ## Clippy and ESLint with warnings as errors
+PRIVILEGED_FEATURES = wyrd-cli/privileged-tests,wyrd-fakeagent/privileged-tests,wyrd-sensord/privileged-tests,wyrdd/privileged-tests
+
 lint-rust:
 	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --locked --features $(PRIVILEGED_FEATURES) -- -D warnings
 	$(CARGO) clippy --workspace --locked --manifest-path policies/Cargo.toml --target wasm32-wasip2 -- -D warnings
 lint-web:
 	$(PNPM) lint
