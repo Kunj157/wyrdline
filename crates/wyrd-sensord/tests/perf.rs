@@ -349,11 +349,16 @@ fn overhead_of_capture_on_cargo_build() {
 /// demo repository, `pnpm test` in `demo/victim-shop` (a `node --test` run
 /// over `src/*.test.ts`). The command is the script body, run directly so
 /// the measurement does not include pnpm's own startup.
+///
+/// One suite run takes about 120 ms, too short to measure on a shared box, so
+/// each measured run repeats it [`SHOP_SUITE_RUNS`] times (#240). Runs are
+/// timed as interleaved medians, not with hyperfine: baseline, loaded and
+/// captured alternate in every round, so drift on the box hits all three.
 #[test]
 #[ignore = "release measurement; make test-perf"]
 fn overhead_of_capture_on_victim_shop_tests() {
     let shop = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demo/victim-shop");
-    let rounds = 5;
+    let rounds = 7;
     let o = measure_overhead(
         rounds,
         |_, _| {
@@ -361,19 +366,20 @@ fn overhead_of_capture_on_victim_shop_tests() {
             // README), so exit status 1 (test failures) is accepted; a
             // missing node (127) still fails the measurement.
             format!(
-                "cd {}; node --experimental-strip-types --test src/*.test.ts > /dev/null 2>&1; [ $? -le 1 ]",
+                "cd {}; for i in $(seq {SHOP_SUITE_RUNS}); do \
+                 node --experimental-strip-types --test src/*.test.ts > /dev/null 2>&1; \
+                 [ $? -le 1 ] || exit 1; done",
                 shop.display()
             )
         },
         |_, _| {},
     );
-    o.report("victim-shop tests", rounds);
-    // The workload runs for about 90-150 ms, so a few milliseconds of runner
-    // noise is several percent: three release rehearsals in a row measured
-    // attached-but-filtered at 5.1, 5.5 and 10.7 %, once above the captured
-    // figure, which does strictly more work. Releases report it; the nightly
-    // (WYRD_PERF_STRICT=1) enforces it until the measurement is fixed (#240).
-    // The cargo-build and syscall-dense tests keep gating overhead.
+    o.report(&format!("victim-shop tests x{SHOP_SUITE_RUNS}"), rounds);
+    // A single suite run (90-150 ms) measured attached-but-filtered at 5.1,
+    // 5.5 and 10.7 % in three release rehearsals: noise, not cost. With 20
+    // runs per measurement (about 2.4 s) ws11 reads +0.2 to +0.5 % (#240).
+    // Releases still only report it, and the nightly (WYRD_PERF_STRICT=1)
+    // enforces it. The cargo-build and syscall-dense tests gate overhead.
     if std::env::var("WYRD_PERF_STRICT").as_deref() == Ok("1") {
         assert!(
             o.pct(o.captured) <= 5.0,
@@ -387,6 +393,9 @@ fn overhead_of_capture_on_victim_shop_tests() {
         );
     }
 }
+
+/// How many times one measured victim-shop run repeats the test suite.
+const SHOP_SUITE_RUNS: u32 = 20;
 
 /// Worst case, not the plan's target workload: a syscall-dense script
 /// (~20 k effects/s, several times a real build). The cost every
