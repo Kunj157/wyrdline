@@ -84,10 +84,15 @@ test("rewind lists what cannot be undone, then creates a branch", async ({
   void consoleErrors;
 });
 
-test("fork validates the branch name", async ({ page, consoleErrors }) => {
+test("fork lists what cannot be undone and validates the branch name", async ({
+  page,
+  consoleErrors,
+}) => {
   await openSession(page);
   await page.getByRole("button", { name: "Fork from c2" }).click();
   const dialog = page.getByRole("dialog", { name: "Fork from c2" });
+  await expect(dialog).toContainText("cannot be undone");
+  await expect(dialog).toContainText("/home/user/.bashrc");
   const name = dialog.getByLabel("Branch name");
   await name.fill("bad name!");
   await expect(dialog.getByRole("button", { name: "Fork", exact: true })).toBeDisabled();
