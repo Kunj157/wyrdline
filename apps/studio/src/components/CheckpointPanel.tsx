@@ -105,7 +105,9 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
       {action?.kind === "rewind" && (
         <RewindDialog sid={sid} cp={action.cp} events={events} onClose={close} />
       )}
-      {action?.kind === "fork" && <ForkDialog sid={sid} cp={action.cp} onClose={close} />}
+      {action?.kind === "fork" && (
+        <ForkDialog sid={sid} cp={action.cp} events={events} onClose={close} />
+      )}
       {action?.kind === "apply" && <ApplyDialog sid={sid} cp={action.cp} onClose={close} />}
       {action?.kind === "diff" && (
         <DiffDialog
@@ -196,10 +198,12 @@ function RewindDialog({
 function ForkDialog({
   sid,
   cp,
+  events,
   onClose,
 }: {
   sid: string;
   cp: api.CheckpointRecord;
+  events: Event[];
   onClose: () => void;
 }) {
   const { fork } = useSessionActions(sid);
@@ -210,7 +214,7 @@ function ForkDialog({
       open
       onClose={onClose}
       title={`Fork from ${cp.id}`}
-      description="Start a named branch from this checkpoint."
+      description="Start a named branch from this checkpoint. The current branch is kept."
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -224,6 +228,7 @@ function ForkDialog({
         </>
       }
     >
+      <Irreversible events={events} seq={cp.seq} />
       <label className="flex flex-col gap-1 text-sm">
         Branch name
         <input
