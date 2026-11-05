@@ -13,16 +13,25 @@ function requestRewind(checkpoint: string, reason: string): Promise<Record<strin
     const child = spawn(process.env.WYRD_E2E_WYRD ?? "", ["mcp", "--session", sid()], {
       env: { ...process.env, WYRD_DATA_DIR: process.env.WYRD_E2E_DATA ?? "" },
     });
-    let out = "";
+    // A chunk can end in the middle of a line: parse complete lines only.
+    let pending = "";
     child.stdout.on("data", (d: Buffer) => {
-      out += d.toString();
-      const lines = out.split("\n").filter(Boolean);
-      const answer = lines
-        .map((l) => JSON.parse(l) as { id?: number; result?: Record<string, unknown> })
-        .find((m) => m.id === 2);
-      if (answer?.result) {
-        child.kill();
-        resolve(answer.result);
+      const lines = (pending + d.toString()).split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines.filter(Boolean)) {
+        let message: { id?: number; result?: Record<string, unknown> };
+        try {
+          message = JSON.parse(line) as typeof message;
+        } catch (e) {
+          child.kill();
+          reject(new Error(`wyrd mcp wrote a line that is not JSON: ${line}`, { cause: e }));
+          return;
+        }
+        if (message.id === 2 && message.result) {
+          child.kill();
+          resolve(message.result);
+          return;
+        }
       }
     });
     child.on("error", reject);
