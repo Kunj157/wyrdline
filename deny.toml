@@ -4,6 +4,13 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Each entry needs a reason and is removed when its cause goes away.
+ignore = [
+  # Unmaintained, not a vulnerability. Reached only through testcontainers
+  # 0.28.0, a dev-dependency of wyrd-hub for its container tests; no shipped
+  # binary contains it. No release of testcontainers drops it yet.
+  { id = "RUSTSEC-2026-0440", reason = "unmaintained; dev-only via testcontainers (wyrd-hub tests)" },
+]
 
 [licenses]
 version = 2
