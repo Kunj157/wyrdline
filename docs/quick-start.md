@@ -142,6 +142,9 @@ wyrd apply <session> head --dry-run # what would change in the real workspace
 wyrd apply <session> head           # write it; refuses (exit 4) if you changed those files meanwhile, --force overrides
 ```
 
+A file that already holds what `apply` would write, such as after an
+earlier `apply`, is not a conflict.
+
 Old branches are never modified; `apply` is the only command that
 touches the real working tree.
 
