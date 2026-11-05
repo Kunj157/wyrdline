@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use serde::Serialize;
-use wyrd_cas::{Cas, EntryKind, Manifest};
+use wyrd_cas::{Cas, Entry, EntryKind, Manifest};
 
 use crate::baseline::{Baseline, Stat};
 use crate::{CellError, Result, io_err};
@@ -31,18 +31,66 @@ pub struct ApplyReport {
 
 /// Paths the user changed in the real workspace since the baseline,
 /// restricted to paths the checkpoint touches (and their contents for
-/// deletions and opaque directories).
-pub fn conflicts(workspace: &Path, baseline: &Baseline, m: &Manifest) -> Vec<String> {
+/// deletions and opaque directories). A path that already is what the
+/// checkpoint would write, such as after an earlier `apply`, is not in the
+/// way and is not listed.
+pub fn conflicts(cas: &Cas, workspace: &Path, baseline: &Baseline, m: &Manifest) -> Vec<String> {
     let mut out = Vec::new();
     for e in &m.entries {
         let real = workspace.join(std::ffi::OsStr::from_bytes(&e.path));
         let now = Stat::of(&real);
         let then = baseline.get(&e.path).copied();
-        if now != then && !(e.kind == EntryKind::Dir && dir_equivalent(now, then)) {
+        if now != then
+            && !(e.kind == EntryKind::Dir && dir_equivalent(now, then))
+            && !matches_entry(cas, &real, e)
+        {
             out.push(e.path_str());
         }
     }
     out
+}
+
+/// Whether `real` already is what applying `e` would leave there. Any read
+/// error counts as "no", so the path stays a conflict.
+fn matches_entry(cas: &Cas, real: &Path, e: &Entry) -> bool {
+    let meta = fs::symlink_metadata(real);
+    match e.kind {
+        EntryKind::Whiteout => {
+            matches!(&meta, Err(err) if err.kind() == std::io::ErrorKind::NotFound)
+        }
+        // An opaque directory replaces contents this check does not compare.
+        EntryKind::Dir => {
+            !e.opaque && meta.is_ok_and(|m| m.is_dir() && m.permissions().mode() & 0o7777 == e.mode)
+        }
+        EntryKind::Symlink => {
+            meta.is_ok_and(|m| m.file_type().is_symlink())
+                && fs::read_link(real).is_ok_and(|t| {
+                    Some(t.as_os_str().as_bytes()) == e.target.as_ref().map(|t| t.as_slice())
+                })
+        }
+        EntryKind::File => {
+            meta.is_ok_and(|m| {
+                m.is_file() && m.len() == e.size && m.permissions().mode() & 0o7777 == e.mode
+            }) && same_contents(cas, real, e)
+        }
+    }
+}
+
+fn same_contents(cas: &Cas, real: &Path, e: &Entry) -> bool {
+    use std::io::Read as _;
+    let Ok(mut f) = fs::File::open(real) else {
+        return false;
+    };
+    for c in &e.chunks {
+        let Ok(want) = cas.get(*c) else {
+            return false;
+        };
+        let mut got = vec![0; want.len()];
+        if f.read_exact(&mut got).is_err() || got != want {
+            return false;
+        }
+    }
+    f.read(&mut [0; 1]).is_ok_and(|n| n == 0)
 }
 
 fn dir_equivalent(now: Option<Stat>, then: Option<Stat>) -> bool {
@@ -59,7 +107,7 @@ pub fn apply(
     force: bool,
 ) -> Result<ApplyReport> {
     let mut report = ApplyReport {
-        conflicts: conflicts(workspace, baseline, m),
+        conflicts: conflicts(cas, workspace, baseline, m),
         ..Default::default()
     };
     for e in &m.entries {
