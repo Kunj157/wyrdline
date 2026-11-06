@@ -103,10 +103,10 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
         ))}
       </ul>
       {action?.kind === "rewind" && (
-        <RewindDialog sid={sid} cp={action.cp} events={events} onClose={close} />
+        <RewindDialog sid={sid} cp={action.cp} events={events} tree={checkpoints} onClose={close} />
       )}
       {action?.kind === "fork" && (
-        <ForkDialog sid={sid} cp={action.cp} events={events} onClose={close} />
+        <ForkDialog sid={sid} cp={action.cp} events={events} tree={checkpoints} onClose={close} />
       )}
       {action?.kind === "apply" && <ApplyDialog sid={sid} cp={action.cp} onClose={close} />}
       {action?.kind === "diff" && (
@@ -121,8 +121,16 @@ export function CheckpointPanel({ sid, checkpoints, events }: CheckpointPanelPro
   );
 }
 
-function Irreversible({ events, seq }: { events: Event[]; seq: number }) {
-  const left = irreversibleAfter(events, seq);
+function Irreversible({
+  events,
+  cp,
+  tree,
+}: {
+  events: Event[];
+  cp: api.CheckpointRecord;
+  tree: api.Checkpoints | undefined;
+}) {
+  const left = irreversibleAfter(events, cp, tree);
   if (left.length === 0) {
     return <p className="text-sm">Every recorded effect after this checkpoint can be undone.</p>;
   }
@@ -147,11 +155,13 @@ function RewindDialog({
   sid,
   cp,
   events,
+  tree,
   onClose,
 }: {
   sid: string;
   cp: api.CheckpointRecord;
   events: Event[];
+  tree: api.Checkpoints;
   onClose: () => void;
 }) {
   const { rewind } = useSessionActions(sid);
@@ -175,7 +185,7 @@ function RewindDialog({
         </>
       }
     >
-      <Irreversible events={events} seq={cp.seq} />
+      <Irreversible events={events} cp={cp} tree={tree} />
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={relaunch} onChange={(e) => setRelaunch(e.target.checked)} />
         Start the agent again on the new branch
@@ -199,11 +209,13 @@ function ForkDialog({
   sid,
   cp,
   events,
+  tree,
   onClose,
 }: {
   sid: string;
   cp: api.CheckpointRecord;
   events: Event[];
+  tree: api.Checkpoints;
   onClose: () => void;
 }) {
   const { fork } = useSessionActions(sid);
@@ -228,7 +240,7 @@ function ForkDialog({
         </>
       }
     >
-      <Irreversible events={events} seq={cp.seq} />
+      <Irreversible events={events} cp={cp} tree={tree} />
       <label className="flex flex-col gap-1 text-sm">
         Branch name
         <input
