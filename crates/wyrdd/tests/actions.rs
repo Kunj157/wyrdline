@@ -328,3 +328,68 @@ async fn file_diffs_show_both_sides() {
         (StatusCode::BAD_REQUEST, Some("invalid"))
     );
 }
+
+/// Append a denied connect after c1, as the sensor would; returns its seq.
+fn record_connect(e: &Env) -> u64 {
+    let s = Session::open(&e.data, &e.id).unwrap();
+    let mut l = wyrd_ledger::Ledger::open(s.dir().ledger()).unwrap();
+    l.append(vec![wyrd_schema::Event {
+        seq: 0,
+        ts_mono_ns: 0,
+        ts_wall_ms: 0,
+        process: None,
+        drops_since_last: 0,
+        body: wyrd_schema::EventBody::NetConnect(wyrd_schema::NetConnect {
+            family: 4,
+            addr: "203.0.113.50".into(),
+            port: 80,
+            dns_name: None,
+            verdict: wyrd_schema::NetVerdict::Denied,
+        }),
+    }])
+    .unwrap()
+}
+
+/// Issue #275: the rewind and fork responses carry the seqs the CLI warns about.
+#[tokio::test]
+async fn rewind_and_fork_return_the_irreversible_effects() {
+    let e = env();
+    let connect = record_connect(&e);
+    let app = app(&e, Path::new("/nonexistent"));
+    let base = format!("/v1/sessions/{}", e.id);
+
+    let fork = format!("{base}/checkpoints/c1/fork");
+    let (st, _, v) = call(&app, "POST", &fork, Some(json!({ "name": "exp" })), None).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(v["irreversible_seqs"], json!([connect]), "{v}");
+
+    // From `exp` nothing happened after c1: the connect is on branch a.
+    let (st, _, v) = call(
+        &app,
+        "POST",
+        &format!("{base}/checkpoints/c1/rewind"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["irreversible_seqs"], json!([]), "{v}");
+}
+
+#[tokio::test]
+async fn a_rewind_from_the_branch_with_the_effect_lists_it() {
+    let e = env();
+    let connect = record_connect(&e);
+    let app = app(&e, Path::new("/nonexistent"));
+    let base = format!("/v1/sessions/{}", e.id);
+    let (st, _, v) = call(
+        &app,
+        "POST",
+        &format!("{base}/checkpoints/c1/rewind"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["irreversible_seqs"], json!([connect]), "{v}");
+}

@@ -34,7 +34,8 @@ By decision (plan scope, not for lack of time):
   fork's event does not. Studio's rewind and fork dialogs list the
   effects before you confirm, but they list every effect after the
   checkpoint, on every branch, so the list can be longer than the CLI's.
-  The daemon API's rewind and fork responses do not include the list
+  The daemon API's rewind and fork responses return the same list as the
+  CLI in `irreversible_seqs`, except a relaunch (202), which runs detached
   ([quick start](quick-start.md#4-rewind-fork-apply-20-s)).
 - **No node-wide or cluster capture.** No Kubernetes operator, no
   DaemonSet mode: Wyrdline records sessions it starts with `wyrd run`
