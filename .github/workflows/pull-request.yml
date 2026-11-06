@@ -260,7 +260,7 @@ jobs:
       - name: Packaging, reproducibility compare, version stamp
         run: bash tests/release/scripts.test.sh
       - name: shellcheck
-        run: shellcheck scripts/release/*.sh tests/release/*.sh
+        run: shellcheck scripts/release/*.sh tests/release/*.sh scripts/system-test.sh
 
   workflows:
     name: Workflows · actionlint
