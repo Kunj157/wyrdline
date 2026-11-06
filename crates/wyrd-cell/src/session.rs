@@ -714,6 +714,15 @@ impl Session {
             .map(|(branch, _)| branch)
     }
 
+    /// [`Session::rewind`] (auto-named branch) that also returns the seqs it
+    /// recorded in `checkpoint.rewound`'s `irreversible_seqs`.
+    pub fn rewind_listing(&mut self, target: &str) -> Result<(Branch, Vec<u64>)> {
+        self.writable()?;
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        self.rewind_locked(target, None)
+    }
+
     /// Fork a named branch from `target` and make it current. Also returns the
     /// seqs of the network effects after `target` on the branch being left,
     /// which [`Session::effects_by_seq`] resolves. `checkpoint.forked` has no
