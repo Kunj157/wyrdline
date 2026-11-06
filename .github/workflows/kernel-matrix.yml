@@ -65,18 +65,29 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Install QEMU and vmtest
         # Usually about 20 s. A stalled mirror once hung apt-get update until
-        # the job timed out, so each attempt is bounded and retried.
+        # the job timed out, and stayed stalled for 10 minutes on one runner,
+        # so each attempt is bounded and the retries use Ubuntu's main archive
+        # instead of the runner's mirror.
         timeout-minutes: 10
         env:
           VMTEST_VERSION: v0.18.0
         run: |
           apt="sudo timeout 180 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for attempt in 1 2 3; do
-            if $apt update -qq && $apt install -y -qq qemu-system-x86 qemu-guest-agent > /dev/null; then
-              break
+            rc=0
+            $apt update -qq || rc=$?
+            if [ "$rc" = 0 ]; then
+              $apt install -y -qq qemu-system-x86 qemu-guest-agent > /dev/null || rc=$?
+              [ "$rc" = 0 ] && break
+              what="apt-get install"
+            else
+              what="apt-get update"
             fi
-            if [ "$attempt" = 3 ]; then echo "::error::installing QEMU failed 3 times"; exit 1; fi
-            echo "::warning::installing QEMU failed (attempt $attempt), retrying"
+            if [ "$attempt" = 3 ]; then echo "::error::installing QEMU failed 3 times (last: $what, exit $rc)"; exit 1; fi
+            echo "::warning::$what failed with exit $rc (124: timed out), attempt $attempt; retrying from archive.ubuntu.com"
+            for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+              if [ -f "$f" ]; then sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"; fi
+            done
             sleep 15
           done
           curl -fsSL --retry 3 --retry-all-errors -o vmtest "https://github.com/danobi/vmtest/releases/download/${VMTEST_VERSION}/vmtest-x86_64"
