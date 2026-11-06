@@ -5,7 +5,7 @@ SHELL := /bin/bash
 CARGO ?= cargo
 PNPM ?= pnpm
 
-.PHONY: help demo test-evals install fmt fmt-check lint typecheck test build deny secrets check \
+.PHONY: help demo system-test test-evals install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
@@ -100,6 +100,10 @@ test-escape: ## The escape suite: an agent in a Cell tries to get around every e
 test-hub: ## Hub lint and tests with analytics (DuckDB), Postgres 17 and MinIO in containers (needs Docker)
 	$(CARGO) clippy --locked -p wyrd-hub --all-targets --features wyrd-hub/container-tests,wyrd-hub/analytics -- -D warnings
 	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests,wyrd-hub/analytics
+
+system-test: ## The local plan §23 steps with the scripted agent, each checked (sudo; a new log dir per run under target/system-test)
+	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord
+	scripts/system-test.sh "$${CARGO_TARGET_DIR:-target}/system-test/$$(date +%Y%m%d-%H%M%S)"
 
 demo: ## The plan §2 demo with the scripted agent: victim shop, Cell, sensor, default policy (sudo)
 	WYRD_PRIVILEGED_HELPER=sudo $(CARGO) nextest run --locked -p wyrd-cli --features wyrd-cli/privileged-tests --test demo --no-capture
