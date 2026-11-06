@@ -64,12 +64,22 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Install QEMU and vmtest
+        # Usually about 20 s. A stalled mirror once hung apt-get update until
+        # the job timed out, so each attempt is bounded and retried.
+        timeout-minutes: 10
         env:
           VMTEST_VERSION: v0.18.0
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-guest-agent > /dev/null
-          curl -sSL -o vmtest "https://github.com/danobi/vmtest/releases/download/${VMTEST_VERSION}/vmtest-x86_64"
+          apt="sudo timeout 180 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for attempt in 1 2 3; do
+            if $apt update -qq && $apt install -y -qq qemu-system-x86 qemu-guest-agent > /dev/null; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then echo "::error::installing QEMU failed 3 times"; exit 1; fi
+            echo "::warning::installing QEMU failed (attempt $attempt), retrying"
+            sleep 15
+          done
+          curl -fsSL --retry 3 --retry-all-errors -o vmtest "https://github.com/danobi/vmtest/releases/download/${VMTEST_VERSION}/vmtest-x86_64"
           chmod +x vmtest
       - name: Fetch kernel ${{ matrix.kernel }}
         run: |
