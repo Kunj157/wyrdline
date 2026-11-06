@@ -64,10 +64,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Install QEMU and vmtest
-        # Usually about 20 s. A stalled mirror once hung apt-get update until
-        # the job timed out, and stayed stalled for 10 minutes on one runner,
-        # so each attempt is bounded and the retries use Ubuntu's main archive
-        # instead of the runner's mirror.
+        # Usually about 20 s. On some runners the Azure mirror is slow enough
+        # (about 20 packages in 3 minutes) to time the job out. So: no
+        # recommended packages (a headless VM needs no GUI or audio
+        # libraries), bounded attempts that resume the download, and retries
+        # that drop the Azure mirror from the runner's mirror list.
         timeout-minutes: 10
         env:
           VMTEST_VERSION: v0.18.0
@@ -77,7 +78,7 @@ jobs:
             rc=0
             $apt update -qq || rc=$?
             if [ "$rc" = 0 ]; then
-              $apt install -y qemu-system-x86 qemu-guest-agent > apt-install.log 2>&1 || rc=$?
+              $apt install -y --no-install-recommends qemu-system-x86 qemu-guest-agent > apt-install.log 2>&1 || rc=$?
               [ "$rc" = 0 ] && break
               what="apt-get install"
               # Show where it stopped, and whether another apt or dpkg
@@ -90,8 +91,10 @@ jobs:
               what="apt-get update"
             fi
             if [ "$attempt" = 3 ]; then echo "::error::installing QEMU failed 3 times (last: $what, exit $rc)"; exit 1; fi
-            echo "::warning::$what failed with exit $rc (124: timed out), attempt $attempt; retrying from archive.ubuntu.com"
-            for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+            echo "::warning::$what failed with exit $rc (124: timed out), attempt $attempt; retrying without the Azure mirror"
+            # Hosted runners read mirrors from apt-mirrors.txt (mirror+file:),
+            # not from the URIs in the sources files.
+            for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
               if [ -f "$f" ]; then sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"; fi
             done
             sleep 15
