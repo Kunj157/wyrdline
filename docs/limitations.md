@@ -32,8 +32,10 @@ By decision (plan scope, not for lack of time):
   network effect after the checkpoint, denied attempts included. The
   `state.checkpoint.rewound` event lists them in `irreversible_seqs`; a
   fork's event does not. Studio's rewind and fork dialogs list the
-  effects before you confirm, but they list every effect after the
-  checkpoint, on every branch, so the list can be longer than the CLI's.
+  effects before you confirm, by the same branch rule as the CLI (in a
+  bundle or replay, which has no branch tree, every effect after the
+  checkpoint). They count allowed connections and writes outside the
+  Cell; the CLI also lists denied connection attempts.
   The daemon API's rewind and fork responses do not include the list
   ([quick start](quick-start.md#4-rewind-fork-apply-20-s)).
 - **No node-wide or cluster capture.** No Kubernetes operator, no
