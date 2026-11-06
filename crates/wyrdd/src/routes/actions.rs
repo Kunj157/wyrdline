@@ -148,8 +148,15 @@ pub async fn rewind(
                 .into_response());
         }
         let mut s = open(&st.data, &sid)?;
-        let b = s.rewind(&target, None)?;
-        Ok((StatusCode::OK, Json(BranchCreated { branch: b })).into_response())
+        let (branch, irreversible_seqs) = s.rewind_listing(&target)?;
+        Ok((
+            StatusCode::OK,
+            Json(BranchCreated {
+                branch,
+                irreversible_seqs,
+            }),
+        )
+            .into_response())
     })
     .await
 }
@@ -186,8 +193,15 @@ pub async fn fork(
             )
                 .into_response());
         }
-        let b = s.rewind(&target, Some(&body.name))?;
-        Ok((StatusCode::CREATED, Json(BranchCreated { branch: b })).into_response())
+        let (branch, irreversible_seqs) = s.fork(&target, &body.name)?;
+        Ok((
+            StatusCode::CREATED,
+            Json(BranchCreated {
+                branch,
+                irreversible_seqs,
+            }),
+        )
+            .into_response())
     })
     .await
 }

@@ -36,7 +36,8 @@ By decision (plan scope, not for lack of time):
   bundle or replay, which has no branch tree, every effect after the
   checkpoint). They count allowed connections and writes outside the
   Cell; the CLI also lists denied connection attempts.
-  The daemon API's rewind and fork responses do not include the list
+  The daemon API's rewind and fork responses return the same list as the
+  CLI in `irreversible_seqs`, except a relaunch (202), which runs detached
   ([quick start](quick-start.md#4-rewind-fork-apply-20-s)).
 - **No node-wide or cluster capture.** No Kubernetes operator, no
   DaemonSet mode: Wyrdline records sessions it starts with `wyrd run`
