@@ -3,8 +3,8 @@
 use std::io::Write as _;
 use std::time::Duration;
 
+use wyrd_cell::follow::Follow;
 use wyrd_cell::{DataDir, Session};
-use wyrd_schema::{Event, EventBody, SessionState};
 
 use super::session::print_event;
 use crate::exit;
@@ -117,51 +117,26 @@ pub fn tail(a: &TailArgs) -> anyhow::Result<u8> {
             .head()
             .0
     };
-    // The state the ledger has reached, from the last state change read.
-    // Unknown until a change is printed or looked up.
-    let mut latest: Option<SessionState> = None;
-    let mut latest_known = false;
+    let mut follow = Follow::new();
     loop {
         let s = Session::open(&data, &id)?;
-        let ended = matches!(
-            s.record().status,
-            SessionState::Closed | SessionState::Failed
-        );
         let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
         let batch = ledger.events_after(after, 1_000)?;
         for ev in &batch {
             print_event(&mut o, ev, a.json)?;
             after = ev.seq;
-            if let Some(to) = state_change_to(ev) {
-                latest = Some(to);
-                latest_known = true;
-            }
+            follow.observe(ev);
         }
         o.flush()?;
         if !batch.is_empty() {
             continue;
         }
-        if !ended {
+        if !follow.ended(&s, &ledger, after)? {
             std::thread::sleep(POLL);
             continue;
         }
-        if !latest_known {
-            latest = latest_state_up_to(&ledger, after)?;
-            latest_known = true;
-        }
-        // The record is saved before the change that announces the state is
-        // appended. Finish when the ledger has reached the record's state.
-        if latest == Some(s.record().status) {
-            return Ok(exit::OK);
-        }
-        // Otherwise a close may be in progress. It holds the session lock until
-        // it has appended its change, so wait while the lock is held. Once it is
-        // free, any close has finished (its change is committed) or crashed (no
-        // change will come): read what is left, and finish.
-        if wyrd_cell::state::is_locked(&s.dir().lock())? {
-            std::thread::sleep(POLL);
-            continue;
-        }
+        // Nothing is left to read, and the session has ended: read what remains,
+        // then finish.
         loop {
             let rest = ledger.events_after(after, 1_000)?;
             if rest.is_empty() {
@@ -170,41 +145,10 @@ pub fn tail(a: &TailArgs) -> anyhow::Result<u8> {
             for ev in &rest {
                 print_event(&mut o, ev, a.json)?;
                 after = ev.seq;
+                follow.observe(ev);
             }
         }
         o.flush()?;
         return Ok(exit::OK);
-    }
-}
-
-/// The state a state change reaches, if `ev` is one.
-fn state_change_to(ev: &Event) -> Option<SessionState> {
-    match &ev.body {
-        EventBody::SessionStateChanged(c) => Some(c.to),
-        _ => None,
-    }
-}
-
-/// The state of the last state change at or before `upto`.
-fn latest_state_up_to(
-    ledger: &wyrd_ledger::Ledger,
-    upto: u64,
-) -> anyhow::Result<Option<SessionState>> {
-    let mut latest = None;
-    let mut cursor = 0;
-    loop {
-        let batch = ledger.events_after(cursor, 1_000)?;
-        let Some(last) = batch.last() else {
-            return Ok(latest);
-        };
-        for ev in &batch {
-            if ev.seq > upto {
-                return Ok(latest);
-            }
-            if let Some(to) = state_change_to(ev) {
-                latest = Some(to);
-            }
-        }
-        cursor = last.seq;
     }
 }
