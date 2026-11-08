@@ -654,8 +654,16 @@ for host in ('203.0.113.9', '10.255.255.1', '127.0.0.1'):
     assert_eq!(
         connects,
         [
-            ("203.0.113.9".to_string(), wyrd_schema::NetVerdict::Denied, None),
-            ("10.255.255.1".to_string(), wyrd_schema::NetVerdict::Allowed, None),
+            (
+                "203.0.113.9".to_string(),
+                wyrd_schema::NetVerdict::Denied,
+                None
+            ),
+            (
+                "10.255.255.1".to_string(),
+                wyrd_schema::NetVerdict::Allowed,
+                None
+            ),
             (
                 "127.0.0.1".to_string(),
                 wyrd_schema::NetVerdict::Allowed,
