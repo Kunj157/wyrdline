@@ -289,6 +289,22 @@ impl Ledger {
         Ok(seq)
     }
 
+    /// [`append`](Self::append), with the commit synced to disk before this
+    /// returns: `synchronous=FULL` for the one transaction, which in WAL mode
+    /// syncs the log on commit. Ordinary appends use `NORMAL`, which does not;
+    /// a session's state may only name an event once it is durable, and the
+    /// last connection's close (which would checkpoint the log) is no barrier
+    /// while another process holds the ledger open. Unlike [`sync`](Self::sync)
+    /// this needs no checkpoint, so a busy reader cannot make it fail.
+    pub fn append_durable(&mut self, events: Vec<Event>) -> Result<u64> {
+        self.conn.pragma_update(None, "synchronous", "FULL")?;
+        let r = self.append(events);
+        let restored = self.conn.pragma_update(None, "synchronous", "NORMAL");
+        let seq = r?;
+        restored?;
+        Ok(seq)
+    }
+
     /// Seal the ledger: sign the head with the host key. No appends afterwards.
     pub fn seal(&mut self, key: &HostKey, sealed_at_ms: i64) -> Result<Seal> {
         if self.sealed {
