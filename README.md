@@ -85,7 +85,8 @@ wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enfor
 wyrd ask <session>                                   # answer what the policy asks
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
-wyrd gc --dry-run                                   # what collecting the content store would free (nothing is deleted)
+wyrd gc --dry-run                                   # report the chunks no checkpoint refers to; deletes nothing
+wyrd gc                                             # delete them (waits briefly for a checkpoint in progress)
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
 wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
 wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
