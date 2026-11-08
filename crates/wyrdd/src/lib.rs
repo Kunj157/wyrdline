@@ -10,6 +10,7 @@ pub mod listen;
 pub mod openapi;
 pub mod problem;
 mod routes;
+pub mod tally;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -104,6 +105,9 @@ pub struct Metrics {
     pub backtests: AtomicU64,
     /// Divergence triage updates written.
     pub triages: AtomicU64,
+    /// Ledger tallies by session id, kept between scrapes so each scrape
+    /// reads only the events appended since the last one.
+    pub tallies: std::sync::Mutex<std::collections::HashMap<String, tally::Tally>>,
 }
 
 /// Ingest kinds, indexes into [`Metrics::ingest`].
@@ -111,18 +115,51 @@ pub const INGEST_OTLP: usize = 0;
 pub const INGEST_HOOK: usize = 1;
 
 /// Point-in-time numbers read from the data directory for a scrape.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Snapshot {
     /// Sessions by status name.
     pub sessions: std::collections::BTreeMap<String, u64>,
     /// Bytes of all session ledgers (including write-ahead logs).
     pub ledger_bytes: u64,
+    /// Ledger numbers summed over all sessions.
+    pub tally: tally::Tally,
+    /// LLM claim extraction summed over all sessions.
+    pub judge: tally::Judge,
+    /// Ledgers that could not be read on this scrape.
+    pub unreadable: u64,
+}
+
+/// Events read from one ledger per call while catching up.
+const TALLY_BATCH: usize = 10_000;
+
+/// Bring `t` up to the ledger's head. Fails on an unreadable ledger.
+fn catch_up(ledger: &std::path::Path, t: &mut tally::Tally) -> wyrd_ledger::Result<()> {
+    let l = wyrd_ledger::Ledger::open_read_only(ledger)?;
+    if l.head().0 < t.head_seq {
+        // The ledger is not the one counted before (replaced): start over.
+        *t = tally::Tally::default();
+    }
+    while t.head_seq < l.head().0 {
+        let batch = l.events_after(t.head_seq, TALLY_BATCH)?;
+        if batch.is_empty() {
+            break;
+        }
+        for e in &batch {
+            t.add(e);
+        }
+    }
+    Ok(())
 }
 
 impl Snapshot {
-    /// Read the data directory (blocking).
-    pub fn read(data: &DataDir) -> Snapshot {
+    /// Read the data directory (blocking). `cache` holds each session's
+    /// tally from the previous scrape; sessions no longer listed leave it.
+    pub fn read(
+        data: &DataDir,
+        cache: &mut std::collections::HashMap<String, tally::Tally>,
+    ) -> Snapshot {
         let mut snap = Snapshot::default();
+        let mut seen = std::collections::HashSet::new();
         for r in wyrd_cell::Session::list(data).unwrap_or_default() {
             let status = serde_json::to_value(r.status)
                 .ok()
@@ -135,7 +172,24 @@ impl Snapshot {
                 p.push(suffix);
                 snap.ledger_bytes += std::fs::metadata(p).map_or(0, |m| m.len());
             }
+            let t = cache.entry(r.id.clone()).or_default();
+            match catch_up(&ledger, t) {
+                Ok(()) => snap.tally.merge(t),
+                Err(e) => {
+                    snap.unreadable += 1;
+                    tracing::warn!(session = %r.id, error = %e, "metrics: ledger not readable");
+                }
+            }
+            if let Ok(text) = std::fs::read_to_string(
+                data.session(&r.id)
+                    .root()
+                    .join(wyrd_divergence::llm::JUDGE_RUNS),
+            ) {
+                snap.judge.add_lines(&text);
+            }
+            seen.insert(r.id);
         }
+        cache.retain(|id, _| seen.contains(id));
         snap
     }
 }
@@ -245,8 +299,123 @@ impl Metrics {
             "Bytes of all session ledgers on disk.",
         );
         let _ = writeln!(out, "wyrdd_ledger_bytes {}", snap.ledger_bytes);
+        render_tally(&mut out, snap);
         out
     }
+}
+
+/// The ledger-derived families. Totals are over the sessions in the data
+/// directory, so deleting a session lowers them (read as a counter reset).
+fn render_tally(out: &mut String, snap: &Snapshot) {
+    let t = &snap.tally;
+    family(
+        out,
+        "wyrdd_ledger_events_total",
+        "counter",
+        "Events in all session ledgers by plane.",
+    );
+    for p in wyrd_schema::Plane::ALL {
+        let n = t.events.get(p.as_str()).copied().unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "wyrdd_ledger_events_total{{plane=\"{}\"}} {n}",
+            p.as_str()
+        );
+    }
+    family(
+        out,
+        "wyrdd_ledger_dropped_events_total",
+        "counter",
+        "Effects the sensor dropped (sum of drops_since_last).",
+    );
+    let _ = writeln!(out, "wyrdd_ledger_dropped_events_total {}", t.dropped);
+    family(
+        out,
+        "wyrdd_sensor_lost_total",
+        "counter",
+        "Times a session lost its sensor connection.",
+    );
+    let _ = writeln!(out, "wyrdd_sensor_lost_total {}", t.sensor_lost);
+    family(
+        out,
+        "wyrdd_denials_total",
+        "counter",
+        "Denied actions by event kind.",
+    );
+    for (kind, n) in &t.denied {
+        let _ = writeln!(out, "wyrdd_denials_total{{kind=\"{kind}\"}} {n}");
+    }
+    family(
+        out,
+        "wyrdd_divergences_total",
+        "counter",
+        "Divergences raised by rule.",
+    );
+    for (rule, n) in &t.divergences {
+        let _ = writeln!(out, "wyrdd_divergences_total{{rule=\"{rule}\"}} {n}");
+    }
+    family(
+        out,
+        "wyrdd_checkpoint_duration_ms",
+        "histogram",
+        "Checkpoint durations in ms as recorded in state.checkpoint.created (snapshot and CAS commit; excludes the ledger append and state save).",
+    );
+    let h = &t.checkpoints;
+    let mut cumulative = 0;
+    for (b, n) in tally::CHECKPOINT_BUCKETS_MS.iter().zip(h.buckets) {
+        cumulative += n;
+        let _ = writeln!(
+            out,
+            "wyrdd_checkpoint_duration_ms_bucket{{le=\"{b}\"}} {cumulative}"
+        );
+    }
+    let _ = writeln!(
+        out,
+        "wyrdd_checkpoint_duration_ms_bucket{{le=\"+Inf\"}} {}",
+        h.count
+    );
+    let _ = writeln!(out, "wyrdd_checkpoint_duration_ms_sum {}", h.sum_ms);
+    let _ = writeln!(out, "wyrdd_checkpoint_duration_ms_count {}", h.count);
+    render_judge(out, &snap.judge);
+    family(
+        out,
+        "wyrdd_metrics_unreadable_ledgers",
+        "gauge",
+        "Ledgers this scrape could not read.",
+    );
+    let _ = writeln!(out, "wyrdd_metrics_unreadable_ledgers {}", snap.unreadable);
+}
+
+/// LLM claim-extraction runs, tokens and cost.
+fn render_judge(out: &mut String, j: &tally::Judge) {
+    family(
+        out,
+        "wyrdd_judge_runs_total",
+        "counter",
+        "LLM claim-extraction runs.",
+    );
+    let _ = writeln!(out, "wyrdd_judge_runs_total {}", j.runs);
+    family(
+        out,
+        "wyrdd_judge_tokens_total",
+        "counter",
+        "LLM claim-extraction tokens by type.",
+    );
+    for (ty, n) in [
+        ("input", j.input_tokens),
+        ("output", j.output_tokens),
+        ("cache_creation_input", j.cache_creation_input_tokens),
+        ("cache_read_input", j.cache_read_input_tokens),
+    ] {
+        let _ = writeln!(out, "wyrdd_judge_tokens_total{{type=\"{ty}\"}} {n}");
+    }
+    family(
+        out,
+        "wyrdd_judge_cost_usd_total",
+        "counter",
+        "Estimated LLM claim-extraction cost in US dollars.",
+    );
+    let _ = writeln!(out, "wyrdd_judge_cost_usd_total {}", j.cost_usd);
 }
 
 /// A client-supplied request id is kept if it is short, visible ASCII.
