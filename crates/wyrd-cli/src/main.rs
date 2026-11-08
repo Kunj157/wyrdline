@@ -77,7 +77,7 @@ enum Command {
     Export(cmd::bundle::ExportArgs),
     /// Upload a bundle to a Wyrdline Hub (token in `$WYRD_HUB_TOKEN`).
     Push(cmd::push::PushArgs),
-    /// Report what collecting the content store would free (`--dry-run`).
+    /// Delete content store chunks that no checkpoint reaches (`--dry-run` only reports them).
     Gc(cmd::gc::Args),
     /// Verify a `.wyrd` bundle and add it as a read-only session.
     Import(cmd::bundle::ImportArgs),

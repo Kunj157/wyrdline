@@ -3,8 +3,8 @@
 use std::io::Write as _;
 use std::time::Duration;
 
+use wyrd_cell::follow::Follow;
 use wyrd_cell::{DataDir, Session};
-use wyrd_schema::SessionState;
 
 use super::session::print_event;
 use crate::exit;
@@ -117,24 +117,38 @@ pub fn tail(a: &TailArgs) -> anyhow::Result<u8> {
             .head()
             .0
     };
+    let mut follow = Follow::new();
     loop {
         let s = Session::open(&data, &id)?;
-        let ended = matches!(
-            s.record().status,
-            SessionState::Closed | SessionState::Failed
-        );
         let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
         let batch = ledger.events_after(after, 1_000)?;
         for ev in &batch {
             print_event(&mut o, ev, a.json)?;
             after = ev.seq;
+            follow.observe(ev);
         }
         o.flush()?;
-        if batch.is_empty() {
-            if ended {
-                return Ok(exit::OK);
-            }
-            std::thread::sleep(POLL);
+        if !batch.is_empty() {
+            continue;
         }
+        if !follow.ended(&s, &ledger, after)? {
+            std::thread::sleep(POLL);
+            continue;
+        }
+        // Nothing is left to read, and the session has ended: read what remains,
+        // then finish.
+        loop {
+            let rest = ledger.events_after(after, 1_000)?;
+            if rest.is_empty() {
+                break;
+            }
+            for ev in &rest {
+                print_event(&mut o, ev, a.json)?;
+                after = ev.seq;
+                follow.observe(ev);
+            }
+        }
+        o.flush()?;
+        return Ok(exit::OK);
     }
 }
