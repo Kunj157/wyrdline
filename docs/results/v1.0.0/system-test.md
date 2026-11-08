@@ -29,7 +29,7 @@ step checks its result, and the script fails if any check fails. This run:
 
 | Step  | What                   | Result                                                        |
 | ----- | ---------------------- | ------------------------------------------------------------- |
-| 23.1  | Prepare                | Partial: unit and Hub readiness by CI; gaps below             |
+| 23.1  | Prepare                | Partial: AppArmor profile and Hub readiness by CI; `make hub-up` below |
 | 23.2  | Baseline overhead      | Interleaved medians instead of hyperfine (decision, #270)     |
 | 23.3  | Scripted demo          | **Pass**                                                      |
 | 23.4  | Real agent             | **Pass** (accepted by the maintainer); divergences differ: the agent refused the injection |
@@ -94,9 +94,16 @@ for them where a CI job really does the step:
 
 Not covered by any CI job:
 
-- **The AppArmor profile.** The `.deb` installs `/etc/apparmor.d/wyrd`, but no
-  job loads it and runs a Cell without `sudo`, so the profile itself is
-  untested.
+- **The AppArmor profile** is now tested in CI. The step "The AppArmor
+  profile lets an unprivileged Cell start" in `Cell · privileged integration`
+  (`.github/workflows/pull-request.yml`, merged with #295; run 42484310399,
+  job 128742742546, on `59fcb9ba`) checks that the host restricts
+  unprivileged user namespaces, then runs `wyrd run` with no privileged
+  helper in a fresh workspace. Without the profile it exits 1 with "Cell mode
+  needs a mount namespace, but unprivileged user namespaces are blocked".
+  After `make apparmor-install` loads `deploy/apparmor/wyrd`, the same command
+  exits 0; the session records `mode cell`, and the write lands in the Cell's
+  upper layer, not in the workspace.
 - **`make hub-up`.** There is no such target and no compose file
   (plan §10.4); the Hub runs in CI only through Testcontainers and kind.
 
@@ -337,7 +344,6 @@ no live model run has been recorded (#212).
 - The 5-minute video (#169, plan §29) does not block v1.0.0. It moved to a
   post-1.0 follow-up issue, #298, by the maintainer's decision (2026-11-08).
 - #288: D007 flags the agent's own model-API traffic.
-- §23.1: the AppArmor profile is untested and `make hub-up` does not exist
-  (above). CI evidence covers the rest and does not block v1.0.0 (decision,
-  2026-11-08).
+- §23.1: `make hub-up` is not yet on dev (#291 is queued). CI evidence covers
+  the rest and does not block v1.0.0 (decision, 2026-11-08).
 - #239: checkpoint p95 above the 150 ms target (reported, not gating).
