@@ -18,6 +18,10 @@ pub mod exit {
     pub const VERIFICATION_FAILED: u8 = 3;
     pub const CONFLICT: u8 = 4;
     pub const DAEMON_UNAVAILABLE: u8 = 5;
+    /// Standard output was closed by its reader (`wyrd events … | head`).
+    /// 128 + SIGPIPE, the status a shell reports for a filter stopped by a
+    /// closed pipe. Nothing is printed for it.
+    pub const BROKEN_PIPE: u8 = 141;
 }
 
 /// Causal flight recorder and rewind engine for AI coding agents.
@@ -73,6 +77,8 @@ enum Command {
     Export(cmd::bundle::ExportArgs),
     /// Upload a bundle to a Wyrdline Hub (token in `$WYRD_HUB_TOKEN`).
     Push(cmd::push::PushArgs),
+    /// Report what collecting the content store would free (`--dry-run`).
+    Gc(cmd::gc::Args),
     /// Verify a `.wyrd` bundle and add it as a read-only session.
     Import(cmd::bundle::ImportArgs),
     /// Open Studio in a browser (served by the running daemon).
@@ -116,6 +122,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Doctor(args) => cmd::doctor::run(&args),
         Command::Verify(args) => cmd::verify::run(&args),
+        Command::Gc(a) => cmd::gc::run(&a),
         Command::ProbeLandlock => cmd::doctor::probe_landlock(),
         Command::Run(a) => cmd::session::run(&a),
         Command::Sessions(a) => cmd::session::list(&a),
@@ -157,9 +164,51 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(code) => ExitCode::from(code),
+        Err(err) if stdout_reader_gone(&err) => ExitCode::from(exit::BROKEN_PIPE),
         Err(err) => {
             eprintln!("wyrd: {err:#}");
             ExitCode::from(exit::USAGE)
         }
+    }
+}
+
+/// Whether `err` is a broken pipe and standard output has no reader left. A
+/// broken pipe on another channel (a daemon socket, say) is still an error,
+/// because stdout is then still open.
+fn stdout_reader_gone(err: &anyhow::Error) -> bool {
+    let broken_pipe = err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+    });
+    broken_pipe && stdout_has_no_reader()
+}
+
+fn stdout_has_no_reader() -> bool {
+    fd_has_no_reader(&std::io::stdout())
+}
+
+/// On Linux, polling a pipe whose read end is closed reports `POLLERR`.
+fn fd_has_no_reader(fd: &impl std::os::fd::AsFd) -> bool {
+    use rustix::event::{PollFd, PollFlags, poll};
+    let mut fds = [PollFd::new(fd, PollFlags::OUT)];
+    let now = rustix::event::Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    poll(&mut fds, Some(&now)).is_ok() && fds[0].revents().contains(PollFlags::ERR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fd_has_no_reader;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_pipe_is_reported_once_its_reader_is_gone() {
+        let (reader, writer) = std::io::pipe().unwrap();
+        assert!(!fd_has_no_reader(&writer), "a reader is still open");
+        drop(reader);
+        assert!(fd_has_no_reader(&writer), "no reader is left");
     }
 }

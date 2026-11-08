@@ -4,12 +4,14 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 CARGO ?= cargo
 PNPM ?= pnpm
+# Where cargo puts its output: CARGO_TARGET_DIR when set, else target/.
+TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 
 .PHONY: help demo system-test test-evals install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
-	test-e2e test-e2e-webgpu test-e2e-hub e2e-build site test-site test-hub fuzz fuzz-seeds
+	test-e2e test-e2e-webgpu test-e2e-hub e2e-build site test-site test-hub hub-up hub-down fuzz fuzz-seeds
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -101,6 +103,12 @@ test-hub: ## Hub lint and tests with analytics (DuckDB), Postgres 17 and MinIO i
 	$(CARGO) clippy --locked -p wyrd-hub --all-targets --features wyrd-hub/container-tests,wyrd-hub/analytics -- -D warnings
 	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests,wyrd-hub/analytics
 
+hub-up: ## A local Hub with PostgreSQL 17 and MinIO in Docker (deploy/docker/compose.yaml), on 127.0.0.1:7730
+	scripts/hub-up.sh up
+
+hub-down: ## Stop the local Hub and remove its volumes
+	scripts/hub-up.sh down
+
 system-test: ## The local plan §23 steps with the scripted agent, each checked (sudo; a new log dir per run under target/system-test)
 	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord
 	scripts/system-test.sh "$${CARGO_TARGET_DIR:-target}/system-test/$$(date +%Y%m%d-%H%M%S)"
@@ -122,20 +130,20 @@ apparmor-install: ## Install the AppArmor profile that allows user namespaces fo
 
 sensord-install: ## Build and install wyrd-sensord as a systemd service (needs sudo; system change)
 	$(CARGO) build --release --locked -p wyrd-sensord
-	sudo install -m 0755 target/release/wyrd-sensord /usr/local/bin/wyrd-sensord
+	sudo install -m 0755 $(TARGET_DIR)/release/wyrd-sensord /usr/local/bin/wyrd-sensord
 	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
 
 policies: ## Build the shipped policies (policies/default.wasm, policies/strict.wasm)
 	$(CARGO) build --quiet --locked -p wyrd-cli
-	target/debug/wyrd policy build policies/default
-	target/debug/wyrd policy build policies/strict
+	$(TARGET_DIR)/debug/wyrd policy build policies/default
+	$(TARGET_DIR)/debug/wyrd policy build policies/strict
 
 test-policies: policies ## Policy unit tests (native) and conformance cases against the built components
 	$(CARGO) test --quiet --locked --manifest-path policies/Cargo.toml -p policy-common
-	target/debug/wyrd policy test policies/default.wasm policies/default/cases.toml
-	target/debug/wyrd policy test policies/strict.wasm policies/strict/cases.toml
+	$(TARGET_DIR)/debug/wyrd policy test policies/default.wasm policies/default/cases.toml
+	$(TARGET_DIR)/debug/wyrd policy test policies/strict.wasm policies/strict/cases.toml
 
 policy-fixtures: ## Rebuild the committed test policy components in policies/fixtures/
 	scripts/build-policy-fixtures.sh
@@ -146,7 +154,7 @@ studio-wasm: ## Build the WebAssembly correlator into the Studio (offline mode)
 wasm-parity: ## Native vs WebAssembly correlator output must be identical
 	$(CARGO) run --quiet --locked -p wyrd-correlator --features synth --example parity_fixtures -- target/wasm-parity
 	$(CARGO) build --quiet --locked --release -p wyrd-wasm --target wasm32-unknown-unknown
-	wasm-bindgen --target nodejs --out-dir target/wasm-parity/pkg target/wasm32-unknown-unknown/release/wyrd_wasm.wasm
+	wasm-bindgen --target nodejs --out-dir target/wasm-parity/pkg $(TARGET_DIR)/wasm32-unknown-unknown/release/wyrd_wasm.wasm
 	node scripts/wasm-parity.mjs target/wasm-parity target/wasm-parity/pkg
 
 FUZZ_TARGETS := bundle_reader event_cbor manifest
