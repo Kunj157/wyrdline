@@ -221,3 +221,186 @@ async fn unknown_sessions_and_bad_resume_points_are_rejected() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+/// Hold the session lock as `Session::close` does, after saving the record as
+/// closed: the record reads closed, and the closing change is still to come.
+fn closing_window(e: &Env, s: &Session) -> std::fs::File {
+    let state = s.dir().state();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+    record["status"] = "closed".into();
+    std::fs::write(&state, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    let _ = e;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(s.dir().lock())
+        .unwrap();
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive).unwrap();
+    lock
+}
+
+fn state_change(to: wyrd_schema::SessionState) -> wyrd_schema::Event {
+    use wyrd_schema::{Event, EventBody, SessionState, SessionStateChanged};
+    let from = if to == SessionState::Closed {
+        SessionState::Closing
+    } else {
+        SessionState::Recording
+    };
+    Event {
+        seq: 0,
+        ts_mono_ns: 0,
+        ts_wall_ms: 0,
+        process: None,
+        drops_since_last: 0,
+        body: EventBody::SessionStateChanged(SessionStateChanged {
+            from,
+            to,
+            reason: None,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn the_stream_delivers_the_closing_change_after_the_record_reads_closed() {
+    // `close` saves the record as Closed before it appends the change that
+    // announces it. A stream that ends on the record alone sends `end` before
+    // that change exists, so the final event is dropped. The window is built
+    // here: the closing change is appended three seconds after the record reads
+    // closed, while the session lock is held as `close` holds it.
+    use wyrd_schema::SessionState;
+    let e = env();
+    let s = create(&e);
+    let id = s.record().id.clone();
+    let lock = closing_window(&e, &s);
+    let app = app(&e);
+    let path = format!("/v1/sessions/{id}/stream");
+
+    let writer = {
+        let data = e.data.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            let s = Session::open(&data, &id).unwrap();
+            let head = wyrd_ledger::Ledger::open(s.dir().ledger())
+                .unwrap()
+                .append(vec![state_change(SessionState::Closed)])
+                .unwrap();
+            drop(lock);
+            head
+        })
+    };
+    let msgs = read(&app, &path, None, |m| m.iter().any(|x| x.0 == "end")).await;
+    let head = writer.await.unwrap();
+    assert_eq!(
+        ids(&msgs).last(),
+        Some(&head),
+        "the closing change is streamed before end"
+    );
+    assert_eq!(msgs.last().unwrap().0, "end");
+}
+
+#[tokio::test]
+async fn a_close_after_an_earlier_failure_streams_its_closing_change() {
+    // The session failed earlier, so its ledger already has a change to Failed.
+    // Closing it later must still stream the change to Closed, not stop at the
+    // old one.
+    use wyrd_schema::SessionState;
+    let e = env();
+    let s = create(&e);
+    let id = s.record().id.clone();
+    wyrd_ledger::Ledger::open(s.dir().ledger())
+        .unwrap()
+        .append(vec![state_change(SessionState::Failed)])
+        .unwrap();
+    let lock = closing_window(&e, &s);
+    let app = app(&e);
+    let path = format!("/v1/sessions/{id}/stream");
+    let writer = {
+        let data = e.data.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            let s = Session::open(&data, &id).unwrap();
+            let head = wyrd_ledger::Ledger::open(s.dir().ledger())
+                .unwrap()
+                .append(vec![state_change(SessionState::Closed)])
+                .unwrap();
+            drop(lock);
+            head
+        })
+    };
+    let msgs = read(&app, &path, None, |m| m.iter().any(|x| x.0 == "end")).await;
+    let head = writer.await.unwrap();
+    assert_eq!(ids(&msgs).last(), Some(&head));
+}
+
+#[tokio::test]
+async fn a_closed_session_whose_closing_change_never_came_still_ends() {
+    // A crash between saving the record as closed and appending the change
+    // leaves no change and no lock. The stream must end, not hang.
+    let e = env();
+    let s = create(&e);
+    let id = s.record().id.clone();
+    let state = s.dir().state();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+    record["status"] = "closed".into();
+    std::fs::write(&state, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    let app = app(&e);
+    let msgs = read(&app, &format!("/v1/sessions/{id}/stream"), None, |m| {
+        m.iter().any(|x| x.0 == "end")
+    })
+    .await;
+    assert_eq!(msgs.last().unwrap().0, "end");
+}
+
+/// Stress for the closing race on the stream: many sessions, each closed while
+/// an SSE reader is attached, with the close varied against the poll. Counts
+/// streams whose final event was not sent. Ignored: run with `--run-ignored all`;
+/// `STREAM_STRESS_ROUNDS` sets the round count.
+///
+/// This does not reproduce the race on origin/dev: 0 of 1000 rounds missed the
+/// final event, before and after the fix. The window between saving the record
+/// and appending the closing change is too short for an in-process reader to
+/// hit. The reproduction is the window tests above, which hold the session lock
+/// while the record reads closed. Keep this as a check that the stream still
+/// ends cleanly under churn, not as evidence of the fix.
+#[tokio::test]
+#[ignore = "stress: run with --run-ignored all"]
+async fn stream_stress_closing_race() {
+    let rounds: u64 = std::env::var("STREAM_STRESS_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120);
+    let mut missed = 0;
+    for i in 0..rounds {
+        let e = env();
+        let s = create(&e);
+        let id = s.record().id.clone();
+        let app = app(&e);
+        let path = format!("/v1/sessions/{id}/stream");
+        let closer = {
+            let data = e.data.clone();
+            let id = id.clone();
+            tokio::task::spawn_blocking(move || {
+                std::thread::sleep(Duration::from_millis((i * 7919) % 250));
+                let mut s = Session::open(&data, &id).unwrap();
+                s.close("stress").unwrap();
+            })
+        };
+        let msgs = read(&app, &path, None, |m| m.iter().any(|x| x.0 == "end")).await;
+        closer.await.unwrap();
+        let h = head(&Session::open(&e.data, &id).unwrap());
+        if ids(&msgs).last() != Some(&h) {
+            missed += 1;
+            eprintln!(
+                "round {i}: stream ended at {:?}, head {h}",
+                ids(&msgs).last()
+            );
+        }
+    }
+    eprintln!("stream stress: {missed} of {rounds} rounds missed the final event");
+    assert_eq!(missed, 0);
+}
