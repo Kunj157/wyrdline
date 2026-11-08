@@ -269,3 +269,132 @@ async fn metrics_reflect_sessions_ledgers_and_open_streams() {
     drop(stream);
     assert!(metrics(app).await.contains("wyrdd_sse_streams 0"));
 }
+
+/// One metric line's value (`name{labels} value`).
+fn metric(text: &str, series: &str) -> f64 {
+    text.lines()
+        .find_map(|l| l.strip_prefix(series)?.strip_prefix(' '))
+        .unwrap_or_else(|| panic!("{series} missing in\n{text}"))
+        .parse()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn metrics_count_ledger_numbers_and_follow_new_events() {
+    let e = env();
+    let id = recorded(&e);
+    let app = app(&e);
+    let scrape = |app: axum::Router| async move {
+        let res = app
+            .oneshot(Request::get("/v1/metrics").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(body.to_vec()).unwrap()
+    };
+    let dir = e.data.session(&id);
+    let head = || {
+        let seq = wyrd_ledger::Ledger::open_read_only(dir.ledger())
+            .unwrap()
+            .head()
+            .0;
+        f64::from(u32::try_from(seq).unwrap())
+    };
+
+    let text = scrape(app.clone()).await;
+    let events: f64 = wyrd_schema::Plane::ALL
+        .iter()
+        .map(|p| {
+            metric(
+                &text,
+                &format!("wyrdd_ledger_events_total{{plane=\"{}\"}}", p.as_str()),
+            )
+        })
+        .sum();
+    assert_eq!(events, head(), "{text}");
+    assert_eq!(metric(&text, "wyrdd_checkpoint_duration_ms_count"), 1.0);
+    assert_eq!(
+        metric(&text, "wyrdd_checkpoint_duration_ms_bucket{le=\"+Inf\"}"),
+        1.0
+    );
+    assert_eq!(metric(&text, "wyrdd_metrics_unreadable_ledgers"), 0.0);
+    assert_eq!(metric(&text, "wyrdd_judge_runs_total"), 0.0);
+    assert!(!text.contains("wyrdd_denials_total{"), "{text}");
+
+    // A denied connect and a judge run after the first scrape show up in
+    // the next one.
+    let mut ledger = wyrd_ledger::Ledger::open(dir.ledger()).unwrap();
+    ledger
+        .append(vec![wyrd_schema::Event {
+            seq: 0,
+            ts_mono_ns: 1,
+            ts_wall_ms: 0,
+            process: None,
+            drops_since_last: 2,
+            body: wyrd_schema::EventBody::NetConnect(wyrd_schema::NetConnect {
+                family: 4,
+                addr: "203.0.113.50".into(),
+                port: 80,
+                dns_name: None,
+                verdict: wyrd_schema::NetVerdict::Denied,
+            }),
+        }])
+        .unwrap();
+    drop(ledger);
+    std::fs::write(
+        dir.root().join(wyrd_divergence::llm::JUDGE_RUNS),
+        r#"{"model":"m","prompt_version":"v1","usage":{"input_tokens":100,"output_tokens":20},"est_cost_usd":0.25,"latency_ms":50,"attempts":1,"dropped":0,"error":null}"#,
+    )
+    .unwrap();
+    let before = metric(&text, "wyrdd_ledger_dropped_events_total");
+    let text = scrape(app.clone()).await;
+    assert_eq!(
+        metric(&text, "wyrdd_denials_total{kind=\"effect.net.connect\"}"),
+        1.0,
+        "{text}"
+    );
+    assert_eq!(
+        metric(&text, "wyrdd_ledger_dropped_events_total"),
+        before + 2.0
+    );
+    assert_eq!(
+        metric(&text, "wyrdd_judge_tokens_total{type=\"input\"}"),
+        100.0
+    );
+    assert_eq!(metric(&text, "wyrdd_judge_cost_usd_total"), 0.25);
+
+    // A third scrape with nothing new reports the same totals.
+    let events = |t: &str| {
+        t.lines()
+            .filter(|l| l.starts_with("wyrdd_ledger_events_total{"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(events(&scrape(app).await), events(&text));
+}
+
+#[tokio::test]
+async fn metrics_skip_an_unreadable_ledger_and_say_so() {
+    let e = env();
+    let id = recorded(&e);
+    let ledger = e.data.session(&id).ledger();
+    for suffix in ["-wal", "-shm"] {
+        let mut p = ledger.clone().into_os_string();
+        p.push(suffix);
+        let _ = std::fs::remove_file(p);
+    }
+    std::fs::write(&ledger, b"not a database").unwrap();
+    let res = app(&e)
+        .oneshot(Request::get("/v1/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert_eq!(
+        metric(&text, "wyrdd_metrics_unreadable_ledgers"),
+        1.0,
+        "{text}"
+    );
+    assert_eq!(metric(&text, "wyrdd_checkpoint_duration_ms_count"), 0.0);
+}

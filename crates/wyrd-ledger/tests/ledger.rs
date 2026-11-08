@@ -90,6 +90,42 @@ fn append_assigns_dense_sequence_and_verifies() {
     assert_eq!(reopened.session_id(), "sess-1");
 }
 
+fn synchronous(l: &Ledger) -> i64 {
+    l.conn()
+        .query_row("PRAGMA synchronous", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn a_durable_append_syncs_its_commit_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("durable.wyrdledger");
+    let mut l = Ledger::create(&path, "durable").unwrap();
+    // Another handle stays open, as the intent ingest's does during a run:
+    // closing `l` then does not checkpoint the log, so only the durable
+    // append's own commit can make its event durable.
+    let other = Ledger::open(&path).unwrap();
+    l.append(sample(2)).unwrap();
+    assert_eq!(synchronous(&l), 1, "ordinary appends stay NORMAL");
+    assert_eq!(l.append_durable(sample(1)).unwrap(), 3);
+    assert_eq!(
+        synchronous(&l),
+        1,
+        "back to NORMAL after the durable commit"
+    );
+    assert_eq!(other.events_after(0, 10).unwrap().len(), 3);
+    l.seal(&key(), 1).unwrap();
+    // A failed durable append restores NORMAL too.
+    assert!(matches!(
+        l.append_durable(sample(1)),
+        Err(LedgerError::Sealed)
+    ));
+    assert_eq!(synchronous(&l), 1);
+    let v = verify(&path).unwrap();
+    assert!(v.ok(), "{v:?}");
+    assert_eq!(v.events, 3);
+}
+
 #[test]
 fn two_handles_appending_keep_one_chain() {
     let dir = tempfile::tempdir().unwrap();

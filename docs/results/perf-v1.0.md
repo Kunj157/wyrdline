@@ -67,8 +67,12 @@ Context, not a target:
   not committed; details in #239) puts about half of the median in the two
   barriers, mostly the data writeback, and about a quarter in the ledger
   append and session state save. Merging the barriers would not avoid the
-  writeback; the remaining options change when the ledger reaches disk and
-  wait for a decision in #239.
+  writeback. Part of that ledger time is the close of the append's
+  connection checkpointing the log, which the benchmark pays because it is
+  the only connection; during `wyrd run` the intent ingest holds another
+  one, so real sessions skip it (and pay the periodic automatic checkpoint
+  instead). Since #285 the checkpoint event is committed with a log sync,
+  which real sessions did not have before.
 - **Checkpoint on the GitHub-hosted runner** (the release pipeline's strict
   perf job, same test, 20 rounds): p95 **633.6 ms** before #245 (run
   40878809197); after it, **263.5 ms** (run 40886048327, samples 202 to
