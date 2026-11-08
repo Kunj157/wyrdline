@@ -32,7 +32,7 @@ step checks its result, and the script fails if any check fails. This run:
 | 23.1  | Prepare                | Partial: unit and Hub readiness by CI; gaps below             |
 | 23.2  | Baseline overhead      | Interleaved medians instead of hyperfine (decision, #270)     |
 | 23.3  | Scripted demo          | **Pass**                                                      |
-| 23.4  | Real agent             | **Pass** with notes: the agent refused the injection          |
+| 23.4  | Real agent             | Run; divergences differ: the agent refused the injection      |
 | 23.5  | Rewind, fork, apply    | **Pass** with the fakeagent; limits below                     |
 | 23.6  | Tamper                 | **Pass** locally; Hub half covered by CI only                 |
 | 23.7  | Offline, collaboration | **Pass** for export and scan; browser half covered by CI only |
@@ -320,6 +320,9 @@ no live model run has been recorded (#212).
 ## Still open for v1.0.0
 
 - The 5-minute video (#169, plan §29): by the maintainer.
+- §23.4: whether a real run in which the agent refuses the injection meets
+  the step, which asks for the same classes of divergences as the scripted
+  demo. That is the maintainer's call.
 - #288: D007 flags the agent's own model-API traffic.
 - §23.1: the AppArmor profile is untested and `make hub-up` does not exist
   (above). CI evidence covers the rest and does not block v1.0.0 (decision,
