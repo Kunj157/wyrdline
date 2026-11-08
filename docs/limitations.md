@@ -76,7 +76,9 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
   resolved by `wyrd run` (again every 60 s) into addresses for the
   cgroup `connect4`/`connect6` programs. A CDN or shared address that
   an allowed name resolves to is allowed for every other name on it.
-  DNS itself is not intercepted.
+  DNS itself is not intercepted: a connect is recorded with a host name
+  (`dns_name`) only when its address is one an allowed name resolved to in
+  that session, and with the address alone otherwise.
 - **UDP.** The connect programs decide `connect()`; TCP and connected
   UDP are covered, unconnected UDP (`sendto` without `connect`) is not.
 - **Exec denial is detect-and-stop.** `exec-deny` and `on-effect` run

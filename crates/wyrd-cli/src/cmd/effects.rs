@@ -2,6 +2,7 @@
 //! `wyrd-sensord` before the agent is released from the start gate, then
 //! appends the streamed effects to the session ledger.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -37,9 +38,25 @@ impl EgressPlan {
         &self,
         resolve: &dyn Fn(&str) -> Vec<std::net::IpAddr>,
     ) -> wyrd_sensor::EgressRules {
+        self.rules_from(&self.resolved(resolve))
+    }
+
+    /// Each allowed host name with the addresses it resolves to now.
+    pub fn resolved(
+        &self,
+        resolve: &dyn Fn(&str) -> Vec<std::net::IpAddr>,
+    ) -> Vec<(String, Vec<std::net::IpAddr>)> {
+        self.hosts.iter().map(|h| (h.clone(), resolve(h))).collect()
+    }
+
+    /// The rules for host names already resolved.
+    pub fn rules_from(
+        &self,
+        resolved: &[(String, Vec<std::net::IpAddr>)],
+    ) -> wyrd_sensor::EgressRules {
         let mut cidrs = self.cidrs.clone();
-        for h in &self.hosts {
-            for ip in resolve(h) {
+        for (_, ips) in resolved {
+            for &ip in ips {
                 cidrs.push(match ip {
                     std::net::IpAddr::V4(a) => format!("{a}/32"),
                     std::net::IpAddr::V6(a) => format!("{a}/128"),
@@ -53,6 +70,33 @@ impl EgressPlan {
             restrict_hosts: self.restrict_hosts,
             ports: self.ports.clone(),
         }
+    }
+}
+
+/// The allowed host name of each resolved address, for naming connects:
+/// the kernel reports addresses only, and DNS is not captured. The first
+/// name in the policy's order wins when names share an address (a CDN).
+pub fn host_names(
+    resolved: &[(String, Vec<std::net::IpAddr>)],
+) -> BTreeMap<std::net::IpAddr, String> {
+    let mut out = BTreeMap::new();
+    for (name, ips) in resolved {
+        for &ip in ips {
+            out.entry(ip).or_insert_with(|| name.clone());
+        }
+    }
+    out
+}
+
+/// Give a connect without a name the allowed host name its address
+/// resolved from in this session, if any.
+fn name_connect(body: &mut EventBody, names: &BTreeMap<std::net::IpAddr, String>) {
+    if let EventBody::NetConnect(c) = body
+        && c.dns_name.is_none()
+        && let Ok(ip) = c.addr.parse::<std::net::IpAddr>()
+        && let Some(name) = names.get(&ip)
+    {
+        c.dns_name = Some(name.clone());
     }
 }
 
@@ -401,6 +445,7 @@ impl Ctx {
         client: Option<&SensorClient>,
         refreshed: &mut Instant,
         current: &mut Option<wyrd_sensor::EgressRules>,
+        names: &mut BTreeMap<std::net::IpAddr, String>,
     ) {
         let (Some(plan), Some(c)) = (&self.egress, client) else {
             return;
@@ -409,7 +454,11 @@ impl Ctx {
             return;
         }
         *refreshed = Instant::now();
-        let next = plan.rules(&resolve);
+        let resolved = plan.resolved(&resolve);
+        // The most recent name per address; addresses a name no longer
+        // resolves to keep their old name, as a connect made earlier was.
+        names.extend(host_names(&resolved));
+        let next = plan.rules_from(&resolved);
         if current.as_ref() != Some(&next) {
             if let Err(e) = c.send_egress(&next) {
                 tracing::warn!(error = %e, "could not update the egress rules");
@@ -494,9 +543,15 @@ impl Ctx {
         let mut last_attempt = Instant::now();
         let mut drain: Option<Drain> = None;
         let mut refreshed = Instant::now();
-        let mut current = self.egress.as_ref().map(|e| e.rules(&resolve));
+        let resolved = self
+            .egress
+            .as_ref()
+            .map(|e| e.resolved(&resolve))
+            .unwrap_or_default();
+        let mut names = host_names(&resolved);
+        let mut current = self.egress.as_ref().map(|e| e.rules_from(&resolved));
         loop {
-            self.refresh_egress(client.as_ref(), &mut refreshed, &mut current);
+            self.refresh_egress(client.as_ref(), &mut refreshed, &mut current, &mut names);
             if drain.is_none() && self.stop.load(Ordering::SeqCst) {
                 drain = Some(self.start_drain(&mut client, &mut batch));
             }
@@ -521,8 +576,9 @@ impl Ctx {
                 Ok(Some(ServerMsg::Event {
                     ts_mono_ns,
                     process,
-                    body,
+                    mut body,
                 })) => {
+                    name_connect(&mut body, &names);
                     drain = drain.map(|d| Drain {
                         received: d.received + 1,
                         ..d
@@ -661,5 +717,56 @@ mod tests {
         // A changed resolution changes the rules (and so triggers an update).
         let moved = |_: &str| vec!["198.51.100.1".parse().unwrap()];
         assert_ne!(plan.rules(&moved), r);
+    }
+
+    #[test]
+    fn connects_to_resolved_allowed_hosts_get_their_name() {
+        let resolved = vec![
+            (
+                "api.example".to_string(),
+                vec![
+                    "203.0.113.7".parse().unwrap(),
+                    "2001:db8::7".parse().unwrap(),
+                ],
+            ),
+            // Shares an address with the first: the policy's first name wins.
+            (
+                "cdn.example".to_string(),
+                vec!["203.0.113.7".parse().unwrap()],
+            ),
+        ];
+        let names = host_names(&resolved);
+        assert_eq!(names.len(), 2);
+        let connect = |addr: &str, dns_name: Option<&str>| {
+            EventBody::NetConnect(wyrd_schema::NetConnect {
+                family: if addr.contains(':') { 6 } else { 4 },
+                addr: addr.into(),
+                port: 443,
+                dns_name: dns_name.map(str::to_string),
+                verdict: wyrd_schema::NetVerdict::Allowed,
+            })
+        };
+        let name_of = |mut b: EventBody| {
+            name_connect(&mut b, &names);
+            match b {
+                EventBody::NetConnect(c) => c.dns_name,
+                _ => unreachable!(),
+            }
+        };
+        assert_eq!(
+            name_of(connect("203.0.113.7", None)).as_deref(),
+            Some("api.example")
+        );
+        assert_eq!(
+            name_of(connect("2001:db8::7", None)).as_deref(),
+            Some("api.example")
+        );
+        // An address no allowed name resolved to stays unnamed.
+        assert_eq!(name_of(connect("198.51.100.9", None)), None);
+        // A name already present is kept.
+        assert_eq!(
+            name_of(connect("203.0.113.7", Some("other.example"))).as_deref(),
+            Some("other.example")
+        );
     }
 }
