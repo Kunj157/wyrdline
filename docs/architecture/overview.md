@@ -25,10 +25,11 @@ flowchart LR
     TOOLS -.syscalls.-> KERN
     AGENT -.syscalls.-> KERN
 
-    ADAPT --> D[wyrdd · per user]
-    GW --> D
-    OTLP --> D
-    SENSOR -- unix socket --> D
+    OTLP --> D[wyrdd · per user]
+    SENSOR -- unix socket --> RUN[wyrd run · per session]
+    ADAPT --> RUN
+    GW --> RUN
+    RUN -- ledger events --> D
 
     D --> LEDGER[(Ledger · SQLite hash chain)]
     D --> CAS[(CAS · BLAKE3 chunks)]
@@ -66,7 +67,7 @@ is a projection of it.
 | Component | Privilege | Responsibility |
 |---|---|---|
 | `wyrd-sensord` | `CAP_BPF` kept after start-up (`CAP_PERFMON` and `CAP_NET_ADMIN` only while loading the programs) | load eBPF, stream events of registered cgroups, attach network enforcement; the rest is dropped before the first client connects (see the unit file) |
-| `wyrdd` | user | sessions, Cells, ledger, CAS, correlation, policies, divergence, API, Studio |
+| `wyrdd` | user | API and Studio over the sessions: correlation, backtests, divergence, OTLP ingest; rewind, fork and apply write the same ledger events as the CLI. `wyrd run` owns each live session: its Cell, its single ledger writer and its intent socket ([daemon](daemon.md)) |
 | `wyrd` | user | CLI client; `doctor`, `verify`, `open` work standalone |
 | `wyrd-gateway` | user, inside the session | MCP proxy with policy checks |
 | Studio | browser | live mode against `wyrdd`; bundle mode fully offline |
@@ -77,7 +78,7 @@ is a projection of it.
 | # | Boundary | Rule |
 |---|---|---|
 | B1 | Agent ↔ Wyrdline | The agent, its inputs (repo files, web pages, MCP results), and its outputs are untrusted. |
-| B2 | `wyrdd` ↔ `wyrd-sensord` | The sensor streams events only for cgroups owned by the peer UID (`SO_PEERCRED`). |
+| B2 | `wyrd run` ↔ `wyrd-sensord` | The sensor streams events only for cgroups owned by the peer UID (`SO_PEERCRED`). |
 | B3 | Cell ↔ host | Landlock and cgroup BPF confine the agent; the daemon socket is outside its reach. |
 | B4 | Local ↔ Hub | Bundles are redacted and signed before leaving the machine and verified on ingest. |
 | B5 | Wyrdline ↔ LLM provider | Only redacted transcript excerpts are sent; never secrets or file contents. |
