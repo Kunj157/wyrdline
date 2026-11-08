@@ -130,7 +130,9 @@ agent's own resume flags in the relaunched command
 `0` ok · `1` usage or an error · `2` capability missing or session not
 found · `3` verification failed (`wyrd verify`, `wyrd policy test`) ·
 `4` conflict (`wyrd apply` over files you changed) · `5` daemon
-unavailable (`wyrd daemon status`, `wyrd studio`).
+unavailable (`wyrd daemon status`, `wyrd studio`) · `141` the reader of
+standard output closed early (`wyrd events … | head -n1`); nothing is
+printed, the same status a shell reports for a filter stopped by a pipe.
 
 ### How do I know a session or bundle was not tampered with?
 

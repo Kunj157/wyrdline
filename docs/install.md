@@ -224,6 +224,10 @@ grants `userns` to the `wyrd` binary and nothing else:
 sudo make apparmor-install WYRD_BIN=$(command -v wyrd)   # from a checkout; installs deploy/apparmor/wyrd
 ```
 
+CI checks this on a hosted runner: the pull-request workflow's Cell job
+confirms that a Cell fails without the profile and starts with it, and that
+its writes stay in the Cell's upper layer.
+
 or let `wyrd run` go through `sudo` for the two internal commands that
 set up the mount namespace, dropping back to your user before the agent
 starts: `export WYRD_PRIVILEGED_HELPER=sudo` (passwordless sudo for
