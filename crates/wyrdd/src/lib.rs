@@ -10,6 +10,7 @@ pub mod listen;
 pub mod openapi;
 pub mod problem;
 mod routes;
+pub mod tally;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
