@@ -143,6 +143,9 @@ pub enum Step {
     Lock { exclusive: bool },
     /// The store lock was released.
     Unlock,
+    /// The ledger commit just appended was synced to disk (noted by the
+    /// caller after a durable append).
+    LedgerSync,
 }
 
 /// The steps of the recording in progress, from any thread, or `None`.

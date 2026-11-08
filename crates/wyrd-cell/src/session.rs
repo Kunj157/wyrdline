@@ -322,6 +322,12 @@ impl Session {
         Ok(l.append(bodies.into_iter().map(event).collect())?)
     }
 
+    /// [`append`](Self::append), synced to disk before it returns.
+    fn append_durable(&self, bodies: Vec<EventBody>) -> Result<u64> {
+        let mut l = Ledger::open(self.dir.ledger())?;
+        Ok(l.append_durable(bodies.into_iter().map(event).collect())?)
+    }
+
     fn reload(&mut self) -> Result<()> {
         self.rec = state::load(&self.dir)?;
         Ok(())
@@ -640,7 +646,8 @@ impl Session {
         let id = self.rec.next_checkpoint_id();
         let duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         wyrd_cas::note_step(wyrd_cas::Step::LedgerAppend);
-        let seq = self.append(vec![EventBody::CheckpointCreated(CheckpointCreated {
+        // Durable before `session.json` names the checkpoint (#285).
+        let seq = self.append_durable(vec![EventBody::CheckpointCreated(CheckpointCreated {
             checkpoint_id: id.clone(),
             branch_id: branch.clone(),
             parent_id: parent.as_ref().map(|p| p.id.clone()),
@@ -650,6 +657,7 @@ impl Session {
             bytes_added: stats.bytes_read,
             duration_ms,
         })])?;
+        wyrd_cas::note_step(wyrd_cas::Step::LedgerSync);
         let rec = CheckpointRecord {
             id,
             branch,
