@@ -499,3 +499,39 @@ fn an_unverifiable_bundle_is_not_backtested() {
     assert!(stderr.contains("does not verify"), "{stderr}");
     assert!(stderr.contains("event modified at seq"), "{stderr}");
 }
+
+/// `wyrd gc --dry-run` in a data directory that holds only a session
+/// imported without content (its manifests were never stored) and a
+/// leftover import staging directory (#296).
+#[test]
+fn gc_dry_run_skips_content_less_imports_and_import_staging() {
+    let e = env();
+    let path = export(&e, "meta.wyrd", &["--no-content"]);
+    let other = e.tmp.path().join("other-data");
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_wyrd"))
+            .args(args)
+            .env("WYRD_DATA_DIR", &other)
+            .env("XDG_STATE_HOME", e.tmp.path().join("state"))
+            .env("WYRD_DAEMON_SOCKET", e.tmp.path().join("no-daemon.sock"))
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (code, stdout, stderr) = run(&["import", &path.display().to_string()]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    std::fs::create_dir_all(other.join("sessions/.import-leftover")).unwrap();
+    std::fs::write(
+        other.join("sessions/.import-leftover/session.json"),
+        b"{partial",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = run(&["gc", "--dry-run", "--json"]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["collectable"], 0, "{v}");
+}
