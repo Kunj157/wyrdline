@@ -41,6 +41,8 @@ Gates that run on every pull request, from `pull-request.yml`:
 - **Escape suite**: the `privileged_escape_*` tests in `tests/security/escape`
   run in the Cell job through `make test-integration`, and locally through
   `make test-escape`.
+- **AppArmor profile**: the Cell job loads `deploy/apparmor/wyrd` and starts an
+  unprivileged Cell with it, after showing that it fails without it.
 - **Redaction corpus**: `crates/wyrd-bundle/tests/redaction.rs` and the
   export tests in `crates/wyrd-bundle/tests/` run in `make test-rust`.
 
@@ -81,8 +83,11 @@ How to verify these is in [../../release.md](../../release.md).
   ([#298](https://github.com/Kunj157/wyrdline/issues/298)).
 - **Checkpoint latency target.** Missed by 9 ms on the development machine
   and above 150 ms on the hosted runner ([#239](https://github.com/Kunj157/wyrdline/issues/239)).
-- **AppArmor profile.** No job loads `deploy/apparmor/wyrd` and starts a Cell
-  without `sudo` (see [system-test.md](system-test.md), §23.1).
+- **AppArmor profile on a hosted runner.** The Cell job checks it
+  (`pull-request.yml`, "The AppArmor profile lets an unprivileged Cell start"):
+  a Cell fails without `deploy/apparmor/wyrd` and starts with it. The check
+  does not cover other kernels or an installed `.deb` (see
+  [system-test.md](system-test.md), §23.1).
 
 ## Reproduce
 
