@@ -12,8 +12,8 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use futures_util::Stream;
 use futures_util::stream;
 use serde::Deserialize;
+use wyrd_cell::follow::Follow;
 use wyrd_cell::{DataDir, Session};
-use wyrd_schema::SessionState;
 
 use super::sessions::{blocking, open};
 use crate::AppState;
@@ -50,20 +50,33 @@ pub fn resume_point(headers: &HeaderMap, query: Option<u64>) -> Result<u64, Prob
     }
 }
 
-/// One poll: events after `after` (at most [`BATCH`]) and whether the
-/// session has ended.
-fn poll(data: &DataDir, sid: &str, after: u64) -> Result<(Vec<SseEvent>, u64, bool), Problem> {
+/// One poll: events after `after` (at most [`BATCH`]), the seq reached, and
+/// whether the session has ended and nothing is left to send.
+fn poll(
+    data: &DataDir,
+    sid: &str,
+    after: u64,
+    follow: &mut Follow,
+) -> Result<(Vec<SseEvent>, u64, bool), Problem> {
     let s = Session::open(data, sid)?;
-    let ended = matches!(
-        s.record().status,
-        SessionState::Closed | SessionState::Failed
-    );
     let ledger = wyrd_ledger::Ledger::open_read_only(s.dir().ledger())?;
-    let batch = ledger.events_after(after, BATCH)?;
     let mut last = after;
-    let mut out = Vec::with_capacity(batch.len());
+    let mut out = Vec::new();
+    let mut batch = ledger.events_after(after, BATCH)?;
+    if batch.is_empty() {
+        // Nothing new, so the session may have ended. Once it has, read what
+        // remains before the stream ends, so the final change is sent.
+        if !follow.ended(&s, &ledger, after)? {
+            return Ok((out, last, false));
+        }
+        batch = ledger.events_after(after, BATCH)?;
+        if batch.is_empty() {
+            return Ok((out, last, true));
+        }
+    }
     for ev in &batch {
         last = ev.seq;
+        follow.observe(ev);
         out.push(
             SseEvent::default()
                 .id(ev.seq.to_string())
@@ -72,8 +85,7 @@ fn poll(data: &DataDir, sid: &str, after: u64) -> Result<(Vec<SseEvent>, u64, bo
                 .map_err(|e| Problem::internal(e.to_string()))?,
         );
     }
-    // Ended only once nothing is left to send.
-    Ok((out, last, ended && batch.is_empty()))
+    Ok((out, last, false))
 }
 
 /// Counts the stream as open until the response is dropped.
@@ -97,6 +109,7 @@ struct Cursor {
     data: DataDir,
     sid: String,
     after: u64,
+    follow: Follow,
     pending: std::vec::IntoIter<SseEvent>,
     first: bool,
     done: bool,
@@ -116,8 +129,15 @@ fn events(c: Cursor) -> impl Stream<Item = Result<SseEvent, Infallible>> {
             }
             c.first = false;
             let (data, sid, after) = (c.data.clone(), c.sid.clone(), c.after);
-            match blocking(move || poll(&data, &sid, after)).await {
-                Ok((batch, last, ended)) => {
+            let mut follow = std::mem::take(&mut c.follow);
+            let polled = blocking(move || {
+                let r = poll(&data, &sid, after, &mut follow);
+                r.map(|r| (r, follow))
+            })
+            .await;
+            match polled {
+                Ok(((batch, last, ended), follow)) => {
+                    c.follow = follow;
                     c.after = last;
                     if ended {
                         c.done = true;
@@ -156,6 +176,7 @@ pub async fn stream(
         data: st.data.clone(),
         sid,
         after,
+        follow: Follow::new(),
         pending: Vec::new().into_iter(),
         first: true,
         done: false,
