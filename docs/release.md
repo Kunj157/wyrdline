@@ -16,6 +16,7 @@ in one reviewable place. cargo-dist is therefore not used for release builds.
 | `wyrdline-x86_64-unknown-linux-gnu.tar.gz`, `wyrdline-aarch64-unknown-linux-gnu.tar.gz` | `wyrdline/bin/{wyrd,wyrdd,wyrd-sensord,wyrd-hub}`, the Studio under `wyrdline/share/wyrdline/studio`, the systemd unit and AppArmor profile under `wyrdline/deploy/` |
 | `wyrdline_<version>_amd64.deb`, `wyrdline_<version>_arm64.deb` | `/usr/bin/{wyrd,wyrdd,wyrd-sensord}`, `/usr/lib/systemd/system/wyrd-sensord.service`, `/etc/apparmor.d/wyrd`, the Studio in `/usr/share/wyrdline/studio` |
 | `wyrdline-<binary>-<target>.cdx.json` | CycloneDX 1.5 SBOM per shipped binary and target (`cargo-cyclonedx`, from `Cargo.lock`) |
+| `wyrdline-hub-<version>.tgz` | the Hub Helm chart, stamped with the version; its default image is `ghcr.io/kunj157/wyrdline-hub:<version>` ([the Hub](hub.md)) |
 | `SHA256SUMS` | SHA-256 of every asset above |
 | `SHA256SUMS.sigstore.json` | cosign keyless signature bundle over `SHA256SUMS` |
 
