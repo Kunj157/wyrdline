@@ -11,7 +11,7 @@ TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
 	fmt-check-web lint-web typecheck-web test-web build-web deny-web \
 	schemas schemas-check test-perf test-integration test-scenarios apparmor-install policy-fixtures policies test-policies test-escape \
-	test-e2e test-e2e-webgpu test-e2e-hub e2e-build site test-site test-hub fuzz fuzz-seeds
+	test-e2e test-e2e-webgpu test-e2e-hub e2e-build site test-site test-hub hub-up hub-down fuzz fuzz-seeds
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -102,6 +102,12 @@ test-escape: ## The escape suite: an agent in a Cell tries to get around every e
 test-hub: ## Hub lint and tests with analytics (DuckDB), Postgres 17 and MinIO in containers (needs Docker)
 	$(CARGO) clippy --locked -p wyrd-hub --all-targets --features wyrd-hub/container-tests,wyrd-hub/analytics -- -D warnings
 	$(CARGO) nextest run --locked -p wyrd-hub --features wyrd-hub/container-tests,wyrd-hub/analytics
+
+hub-up: ## A local Hub with PostgreSQL 17 and MinIO in Docker (deploy/docker/compose.yaml), on 127.0.0.1:7730
+	scripts/hub-up.sh up
+
+hub-down: ## Stop the local Hub and remove its volumes
+	scripts/hub-up.sh down
 
 system-test: ## The local plan §23 steps with the scripted agent, each checked (sudo; a new log dir per run under target/system-test)
 	$(CARGO) build --locked -p wyrd-cli -p wyrd-fakeagent -p wyrd-sensord

@@ -104,7 +104,7 @@ Yes: `wyrd run -- <agent>` records, checkpoints, and lets you rewind,
 with the agent's own permission prompts untouched. `--deny-tool` adds a
 static deny list without writing a policy. `--policy` adds decisions
 per tool call, `ask` prompts, kernel file and egress rules, and
-effect-time stops. The shipped `policies/default.wasm` is the sensible
+effect-time stops. `policies/default.wasm`, built from a checkout with `make policies` (the release archives do not include policies), is the sensible
 start: writes only inside the workspace, asks before reading secrets or
 fetching unknown hosts, denies force-pushes and `rm -rf`-shaped
 commands, egress only to package registries, GitHub, and the model API
@@ -130,7 +130,9 @@ agent's own resume flags in the relaunched command
 `0` ok · `1` usage or an error · `2` capability missing or session not
 found · `3` verification failed (`wyrd verify`, `wyrd policy test`) ·
 `4` conflict (`wyrd apply` over files you changed) · `5` daemon
-unavailable (`wyrd daemon status`, `wyrd studio`).
+unavailable (`wyrd daemon status`, `wyrd studio`) · `141` the reader of
+standard output closed early (`wyrd events … | head -n1`); nothing is
+printed, the same status a shell reports for a filter stopped by a pipe.
 
 ### How do I know a session or bundle was not tampered with?
 

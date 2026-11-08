@@ -1,0 +1,18 @@
+# Trivy ignores for the Hub image (deploy/docker/hub.Dockerfile). Time-boxed:
+# each entry expires, so the gate fails again on 2026-12-08 unless the
+# base image is updated or the entry is renewed on purpose.
+#
+# Both findings are in zlib1g of the distroless cc-debian13:nonroot base. The
+# pinned digest (3ee00291...) and the newest one (08476c24..., checked
+# 2026-11-08) both ship 1:1.3.dfsg+really1.3.1-1+b1; Debian's fix
+# (+deb13u1) is not in any distroless digest yet. The Hub binary does not use
+# it: Cargo.lock has no libz-sys, and flate2 uses the pure-Rust zlib-rs
+# backend, so wyrd-hub does not link the system libz. Remove these entries as
+# soon as a distroless digest ships zlib >= +deb13u1.
+#
+# CVE-2026-85091: heap overflow in zlib gz_vacate(). Reachable only through
+# the system libz, which the Hub does not load (see above).
+CVE-2026-85091 exp:2026-12-08
+# CVE-2026-76844: the scanner's title names webpack-dev-middleware, which
+# does not match zlib; the entry is kept because the package is zlib1g.
+CVE-2026-76844 exp:2026-12-08

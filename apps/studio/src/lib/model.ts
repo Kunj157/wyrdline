@@ -120,7 +120,6 @@ export function isIrreversible(e: Event): boolean {
   }
 }
 
-/** Irreversible effects recorded after `seq` (what a rewind to it leaves behind). */
 /**
  * The irreversible effects a rewind or fork to checkpoint `cp` leaves
  * behind, by the rule `wyrd rewind` and `wyrd fork` use: effects after `cp`
