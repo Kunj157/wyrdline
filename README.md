@@ -85,6 +85,7 @@ wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enfor
 wyrd ask <session>                                   # answer what the policy asks
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
+wyrd gc --dry-run                                   # what collecting the content store would free (nothing is deleted)
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
 wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
 wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
@@ -183,7 +184,7 @@ reports exactly what is available and what degrades without it.
 
 - **Using Wyrdline:** [install](docs/install.md), [quick start](docs/quick-start.md)
   (install to a recorded, inspected, exported session), [adapter coverage](docs/adapter-coverage.md)
-  (what each agent reports), [the Hub](docs/hub.md) (team uploads, search, and
+  (what each agent reports), [the Hub](docs/hub.md) (`make hub-up` runs a local one; team uploads, search, and
   analytics), [limitations](docs/limitations.md), [FAQ](docs/faq.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
