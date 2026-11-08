@@ -292,6 +292,15 @@ The Hub upload was not run: the test repository has no Hub. Hub ingest is
 covered by `Hub · Postgres and MinIO integration` and the Action's
 `hub-upload.test.sh`.
 
+The Hub image's Trivy gate (`Hub image · build, Trivy scan, SBOM`, and the
+same gate before publish on a `v*` tag) carries two time-boxed ignores in
+`.trivyignore`, added with #291: CVE-2026-85091 and CVE-2026-76844, both
+HIGH, both in `zlib1g` of the distroless `cc-debian13:nonroot` base. Debian
+has the fix, but neither the pinned digest nor the newest one (checked
+2026-11-08) ships it. The Hub does not load the system libz: `Cargo.lock`
+has no `libz-sys`, and `flate2` uses the pure-Rust zlib-rs backend. Both
+ignores expire on 2026-12-08 and must be removed when the base is updated.
+
 ## 23.10 Observability
 
 By decision (2026-11-08) CI evidence counts here.
