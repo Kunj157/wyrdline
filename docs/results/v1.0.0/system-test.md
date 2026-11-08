@@ -29,7 +29,7 @@ step checks its result, and the script fails if any check fails. This run:
 
 | Step  | What                   | Result                                                        |
 | ----- | ---------------------- | ------------------------------------------------------------- |
-| 23.1  | Prepare                | Partial: AppArmor profile and Hub readiness by CI; `make hub-up` below |
+| 23.1  | Prepare                | **Pass** by CI: AppArmor profile, `make hub-up` and Hub readiness (sensor unit and kind chart in CI) |
 | 23.2  | Baseline overhead      | Interleaved medians instead of hyperfine (decision, #270)     |
 | 23.3  | Scripted demo          | **Pass**                                                      |
 | 23.4  | Real agent             | **Pass** (accepted by the maintainer); divergences differ: the agent refused the injection |
@@ -104,8 +104,14 @@ Not covered by any CI job:
   After `make apparmor-install` loads `deploy/apparmor/wyrd`, the same command
   exits 0; the session records `mode cell`, and the write lands in the Cell's
   upper layer, not in the workspace.
-- **`make hub-up`.** There is no such target and no compose file
-  (plan §10.4); the Hub runs in CI only through Testcontainers and kind.
+- **`make hub-up`** now exists and is tested in CI (#291). The job
+  `Hub image · make hub-up (compose, /readyz)` in `hub-image.yml` runs it on
+  the merged head `b12097f8` (run 42488683655, job 128756057681): it builds
+  the Hub image from the checkout, starts PostgreSQL 17, MinIO and the Hub
+  from `deploy/docker/compose.yaml`, waits for `/readyz` (`scripts/hub-up.sh`
+  polls it), checks that the credentials file is mode 0600 and ignored by git,
+  and runs `make hub-down`. It binds 127.0.0.1 only. It was not run on ws11,
+  which is shared; CI is the evidence.
 
 ## 23.2 Baseline overhead
 
@@ -335,8 +341,8 @@ By decision (2026-11-08) CI evidence counts here.
   end`) shows sessions, divergence rates, denials and loss, but against a
   stand-in Hub API, not a running Hub.
 
-Not covered: no test opens the dashboard against a running Hub; `make hub-up`
-(#291) makes that possible. The judge numbers are zero in every run so far:
+Not covered: no test opens the dashboard against a running Hub. `make hub-up`
+(#291) makes that possible, but no CI job opens the dashboard on it. The judge numbers are zero in every run so far:
 no live model run has been recorded (#212).
 
 ## Still open for v1.0.0
@@ -344,6 +350,4 @@ no live model run has been recorded (#212).
 - The 5-minute video (#169, plan §29) does not block v1.0.0. It moved to a
   post-1.0 follow-up issue, #298, by the maintainer's decision (2026-11-08).
 - #288: D007 flags the agent's own model-API traffic.
-- §23.1: `make hub-up` is not yet on dev (#291 is queued). CI evidence covers
-  the rest and does not block v1.0.0 (decision, 2026-11-08).
 - #239: checkpoint p95 above the 150 ms target (reported, not gating).
