@@ -193,11 +193,11 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
   session directory.
 - Applying a subset of paths (`wyrd apply --paths`) is not implemented;
   `apply` writes a whole checkpoint or branch.
-- The content store is never collected. `wyrd gc --dry-run` reports how many
-  chunks no session's checkpoint refers to and how many bytes collecting them
-  would free (no chunks are deleted); deleting them is not implemented yet, because it needs a
-  store-wide lock against a checkpoint writing at the same time
-  ([#296](https://github.com/Kunj157/wyrdline/issues/296)).
+- `wyrd gc` deletes the content store's chunks that no session's checkpoint
+  refers to, or with `--dry-run` only reports them. It waits at most ten
+  seconds for a checkpoint or import in progress, then fails without
+  deleting. It does not delete a checkpoint or any session: history is kept
+  as long as its session exists ([#296](https://github.com/Kunj157/wyrdline/issues/296)).
 - The sensor sees exactly the syscalls its programs trace
   ([sensor](architecture/sensor.md)); file operations issued through
   other interfaces (for example `io_uring`) are not among them. Reads
