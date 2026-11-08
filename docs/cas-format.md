@@ -125,9 +125,20 @@ one, and a missing name is only ever referenced by nothing.
       is on disk;
    2. each staged file is renamed to its chunk name;
    3. `syncfs` again (barrier 2): those names are on disk.
-5. Only then is the `CheckpointCreated` event appended to the ledger.
+5. Only then is the `CheckpointCreated` event appended to the ledger, in a
+   commit synced to disk (`Ledger::append_durable`, `synchronous=FULL` for
+   that transaction, which in WAL mode syncs the log on commit).
+6. Then `session.json`, which names the checkpoint and the event's `seq`, is
+   saved (written, synced, renamed, directory synced).
 
-A crash at any point leaves at most unreferenced chunks and staging files.
+A crash at any point leaves at most unreferenced chunks and staging files, or
+a synced checkpoint event that the session record does not name yet. Step 5
+used to rely on the ledger connection's close: the last connection to close
+checkpoints the log into the database with fsyncs. During `wyrd run` the
+intent ingest keeps a connection open, so that close was no barrier, and a
+power cut could leave `session.json` naming an event the ledger had lost
+(#285). `crates/wyrd-cell/tests/checkpoint_sync_guard.rs` checks the order of
+the event, its sync and the record.
 Barrier 2 is kept even though a journal commit would usually make the renames
 durable: that depends on the filesystem, so the ordering does not rely on it.
 

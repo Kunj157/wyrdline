@@ -128,6 +128,10 @@ impl Usage {
     }
 }
 
+/// File in a session directory holding one JSON [`JudgeRun`] per line,
+/// appended by `wyrd verdict` and read by `wyrd push` and `wyrdd`.
+pub const JUDGE_RUNS: &str = "judge-runs.jsonl";
+
 /// One judge run (plan §12.1 `judge_runs`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JudgeRun {
