@@ -79,9 +79,13 @@ impl<'a> Session<'a> {
             if root.is_empty() {
                 return (!p.starts_with('/')).then(|| p.to_string());
             }
-            p.strip_prefix(&root)
-                .and_then(|r| r.strip_prefix('/'))
-                .map(str::to_string)
+            // The root itself is inside, as `""` (a tool opening the
+            // workspace directory, such as `git -C <root> ls-files`, #287).
+            let r = p.strip_prefix(&root)?;
+            if r.is_empty() {
+                return Some(String::new());
+            }
+            r.strip_prefix('/').map(str::to_string)
         };
         let effect = |seq: u64| graph.effect(seq);
         let mut writes = Vec::new();
