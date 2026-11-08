@@ -85,16 +85,17 @@ fn parse(session: &str, manifest: &str) -> Result<ChunkHash> {
 
 /// Collect the content store: delete every chunk that no session's checkpoint
 /// reaches, and the staging files of dead processes. With `dry_run`, delete
-/// nothing and only report what would be freed. Fails, deleting nothing, if
-/// the store is still busy after [`WAIT`] or a session cannot be read.
-pub fn collect(data: &DataDir, dry_run: bool) -> Result<GcReport> {
+/// nothing and only report what would be freed. Waits at most `wait` for a
+/// checkpoint or import to finish; fails, deleting nothing, if the store is
+/// still busy then, or if a session cannot be read.
+pub fn collect(data: &DataDir, dry_run: bool, wait: Duration) -> Result<GcReport> {
     let cas = Cas::open(data.cas())?;
-    let lock = cas.lock_exclusive(WAIT)?;
+    let lock = cas.lock_exclusive(wait)?;
     let roots: Vec<ChunkHash> = roots(data)?.into_iter().collect();
     Ok(cas.gc(&lock, &roots, dry_run)?)
 }
 
 /// What collecting the store now would keep and free. Nothing is deleted.
 pub fn dry_run(data: &DataDir) -> Result<GcReport> {
-    collect(data, true)
+    collect(data, true, WAIT)
 }
