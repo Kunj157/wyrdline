@@ -519,28 +519,24 @@ pub fn checkpoints(a: &ListCheckpointsArgs) -> anyhow::Result<u8> {
 /// undo: one line per effect. Prints nothing when there are none. The rewind
 /// is already committed, so a failure to list them is reported, not fatal.
 fn warn_irreversible(session: &Session, branch_id: &str) {
-    match session.rewind_effects(branch_id) {
-        Ok(Some(rewound)) if !rewound.effects.is_empty() => {
-            let _ = print_irreversible(&rewound);
-        }
-        Ok(_) => {}
-        Err(e) => {
-            let _ = writeln!(
-                std::io::stderr(),
-                "wyrd: warning: could not list irreversible effects: {e}"
-            );
-        }
-    }
+    report_irreversible(session.rewind_effects(branch_id));
 }
 
+/// A fork's list comes from the seqs `fork` returned; nothing to say when
+/// there were none.
 fn warn_forked(session: &Session, checkpoint_id: &str, seqs: &[u64]) {
     if seqs.is_empty() {
         return;
     }
-    match session.effects_by_seq(checkpoint_id, seqs) {
-        Ok(forked) => {
-            let _ = print_irreversible(&forked);
+    report_irreversible(session.effects_by_seq(checkpoint_id, seqs).map(Some));
+}
+
+fn report_irreversible(listed: wyrd_cell::Result<Option<wyrd_cell::session::RewindEffects>>) {
+    match listed {
+        Ok(Some(rewound)) if !rewound.effects.is_empty() => {
+            let _ = print_irreversible(&rewound);
         }
+        Ok(_) => {}
         Err(e) => {
             let _ = writeln!(
                 std::io::stderr(),
