@@ -135,7 +135,7 @@ export const features: Feature[] = [
     body: "A policy is a sandboxed WebAssembly component. It decides every tool call before it runs (allow, deny, or ask you), and its rules are enforced in the kernel: Landlock keeps the agent out of your keys and outside the workspace, cgroup BPF refuses connections to addresses that no allowed host resolved to, and a forbidden program, even renamed, is stopped once the kernel reports it. Replay any recorded session against a stricter policy to see what it would have stopped.",
     points: [
       "Prompt-injected curl to an unknown host: EPERM in the kernel, in the ledger",
-      "Ten escape attempts against the Cell, every one refused in the kernel",
+      "Twelve escape attempts against the Cell, every one refused in the kernel",
       "Allowed connects add 0.2 to 1.4 µs at p99, against a 50 µs target",
     ],
   },
