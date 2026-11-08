@@ -37,7 +37,7 @@ step checks its result, and the script fails if any check fails. This run:
 | 23.6  | Tamper                 | **Pass** locally; Hub half covered by CI only                 |
 | 23.7  | Offline, collaboration | **Pass** for export and scan; browser half covered by CI only |
 | 23.8  | Backtest               | **Pass**                                                      |
-| 23.9  | CI                     | Partial: gates green; Action in a test repo not run           |
+| 23.9  | CI                     | **Pass** in a test repo; Hub upload not run (no Hub)          |
 | 23.10 | Observability          | Not run: Hub dashboards need Docker                           |
 | 23.11 | Release evidence       | Partial: this file and `perf-v1.0.md` so far                  |
 
@@ -266,7 +266,25 @@ By decision (2026-11-08) there is no v0.13.1 patch release: the wasmtime fix
 ships in v1.0.0 and its release notes name it. The advisory ignore from #271
 stays until testcontainers drops the crate.
 
-The Action's PR comment and Hub upload in a real test repository were not run.
+**The Action in a test repository** (2026-11-08, by decision a private
+repository, `Kunj157/wyrdline-action-test`). Its workflow runs on every pull
+request, and its PR #1, run 42477656970, passed both jobs:
+
+- **Scripted agent, Wyrdline built from source** (480 s): `wyrd`,
+  `wyrd-sensord` and `wyrd-fakeagent` built from `8f6fe91`, and the action
+  from the same commit, run the injection scenario in a copy of the demo
+  shop. Outputs: agent exit 0, kernel capture running, 3 divergences, the
+  bundle uploaded as an artifact. The PR got one comment, "Wyrdline: 3
+  divergences", with the table of rules, severity and evidence and links to
+  the bundle and the run.
+- **Signed release installed by the action** (14 s): the action at the
+  v0.13.1 tag installs the v0.13.1 release with `verify-signature: required`
+  and wraps a plain command. The PR got a second comment of its own, "Wyrdline:
+  no divergences".
+
+The Hub upload was not run: the test repository has no Hub. Hub ingest is
+covered by `Hub · Postgres and MinIO integration` and the Action's
+`hub-upload.test.sh`.
 
 ## Still open for v1.0.0
 
@@ -275,5 +293,4 @@ The Action's PR comment and Hub upload in a real test repository were not run.
 - §23.1: the AppArmor profile is untested and `make hub-up` does not exist
   (above). CI evidence covers the rest and does not block v1.0.0 (decision,
   2026-11-08).
-- §23.9: the Action in a test repository.
 - #239: checkpoint p95 above the 150 ms target (reported, not gating).
