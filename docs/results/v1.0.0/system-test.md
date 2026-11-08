@@ -75,8 +75,9 @@ The plan names hyperfine. The overhead tests instead alternate baseline,
 loaded and captured runs within each round and take medians, which controls
 drift on a shared box better (decision recorded in `perf-v1.0.md`, #270). The
 victim-shop workload now repeats the test suite 20 times per measurement. On
-ws11: captured +0.3 % and +0.5 %. On the GitHub runner, in the 2026-11-06
-nightly: loaded +2.1 %, captured +2.0 % (target ≤ 5 %).
+ws11: captured +0.3 % and +0.5 %. On the GitHub runner, in the 2026-11-07
+nightly on `cc6c0cf`: loaded +1.0 %, captured +0.6 % (target ≤ 5 %; the
+2026-11-06 nightly measured +2.1 % and +2.0 %).
 
 ## 23.3 Scripted demo
 
@@ -161,14 +162,19 @@ the same findings:
 
 The PR gate (10 jobs, including `Cell · privileged integration`, `Hub ·
 Postgres and MinIO integration` and `Studio · end to end`) was green on every
-PR merged into `a0fa527`. No nightly has run on `a0fa527` yet.
+PR merged into `a0fa527`.
 
-The 2026-11-06 nightly ran on `daa8fe9`. In `Sensor throughput and overhead
-(strict)` the only failed test is the checkpoint target: p95 258 ms against
-150 ms, the known miss in #239. Release runs report it without gating (#252).
-Two kernel jobs (5.15 and 6.1) were cancelled because `apt-get` stalled while
-installing QEMU on the runner; the other kernels passed. That step is being
-hardened in #274.
+The 2026-11-07 nightly ran on `cc6c0cf`, which differs from `a0fa527` only in
+CI and documentation (#274, #279), so it counts for this run. All six VM
+kernels (5.15, 6.1, 6.6, 6.12, 7.0, 7.2) and both runner kernels (Ubuntu 24.04
+and 26.04) passed. That includes 5.15 and 6.1, whose QEMU install had stalled
+in the 2026-11-06 nightly before #274 bounded and retried it. In `Sensor
+throughput and overhead (strict)` 9 of 10 tests passed. The only failure is
+the checkpoint target: p95 483 ms against 150 ms, the known miss in #239.
+Release runs report it without gating (#252). The other figures from that
+run: paced 49 767 events/s with 0 drops, captured overhead +1.2 % on
+`cargo build` and +0.6 % on victim-shop, and +10.6 % on the syscall-dense
+stress workload (context only).
 
 `cargo-deny` went red twice on unchanged code when advisories were published:
 wasmtime (RUSTSEC-2026-0422, 0423, 0424, fixed by #266) and the unmaintained
