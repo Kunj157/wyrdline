@@ -604,13 +604,14 @@ fn privileged_policy_egress_is_denied_in_the_kernel_and_recorded() {
         .join("../../policies/fixtures/escape.wasm")
         .canonicalize()
         .unwrap();
-    // The escape fixture allows 10.0.0.0/8 and loopback, on port 443.
+    // The escape fixture allows 10.0.0.0/8 and loopback, on port 443, and
+    // names `localhost`.
     let agent = script(
         &e,
         "agent.sh",
         r#"python3 -c "
 import socket
-for host in ('203.0.113.9', '10.255.255.1'):
+for host in ('203.0.113.9', '10.255.255.1', '127.0.0.1'):
     s = socket.socket()
     s.settimeout(0.5)
     try:
@@ -620,7 +621,7 @@ for host in ('203.0.113.9', '10.255.255.1'):
         r = 'denied'
     except OSError:
         r = 'not denied'
-    print(host, r)
+    print(host, 'denied' if r == 'denied' else 'not denied')
 " > egress.txt"#,
     );
     let policy = policy.display().to_string();
@@ -634,20 +635,32 @@ for host in ('203.0.113.9', '10.255.255.1'):
             .join("branches/a/upper/egress.txt"),
     )
     .unwrap();
-    assert_eq!(got, "203.0.113.9 denied\n10.255.255.1 not denied\n");
+    assert_eq!(
+        got,
+        "203.0.113.9 denied\n10.255.255.1 not denied\n127.0.0.1 not denied\n"
+    );
     let events = ledger_events(&e, &sid);
-    let connects: Vec<(String, wyrd_schema::NetVerdict)> = events
+    let connects: Vec<(String, wyrd_schema::NetVerdict, Option<String>)> = events
         .iter()
         .filter_map(|b| match b {
-            B::NetConnect(c) if c.port == 443 => Some((c.addr.clone(), c.verdict)),
+            B::NetConnect(c) if c.port == 443 => {
+                Some((c.addr.clone(), c.verdict, c.dns_name.clone()))
+            }
             _ => None,
         })
         .collect();
+    // The kernel reports addresses; the one an allowed name resolved to is
+    // named (#288).
     assert_eq!(
         connects,
         [
-            ("203.0.113.9".to_string(), wyrd_schema::NetVerdict::Denied),
-            ("10.255.255.1".to_string(), wyrd_schema::NetVerdict::Allowed),
+            ("203.0.113.9".to_string(), wyrd_schema::NetVerdict::Denied, None),
+            ("10.255.255.1".to_string(), wyrd_schema::NetVerdict::Allowed, None),
+            (
+                "127.0.0.1".to_string(),
+                wyrd_schema::NetVerdict::Allowed,
+                Some("localhost".to_string())
+            ),
         ]
     );
     let denials: Vec<&str> = events
