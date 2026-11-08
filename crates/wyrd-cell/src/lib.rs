@@ -13,6 +13,7 @@ pub mod cgroup;
 pub mod confine;
 pub mod diff;
 pub mod exec;
+pub mod follow;
 pub mod gc;
 pub mod launch;
 pub mod paths;

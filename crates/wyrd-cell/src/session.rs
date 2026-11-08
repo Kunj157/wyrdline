@@ -599,6 +599,9 @@ impl Session {
                 "observe-mode sessions have no checkpoints".into(),
             ));
         }
+        // Held until the checkpoint's record is saved: from here, gc may not
+        // sweep the chunks this checkpoint writes before they are named (#296).
+        let _store = self.cas.lock_shared()?;
         // A branch that was never confirmed restored in this boot is restored
         // before it is snapshotted, so a checkpoint never records half a tree.
         self.ensure_restored()?;
@@ -1354,6 +1357,9 @@ impl Session {
     pub fn import(data: &DataDir, spec: &ImportSpec) -> Result<Session> {
         mkdirs(&data.sessions())?;
         let cas = Cas::open(data.cas())?;
+        // Held until the session is in place: its chunks are named only by
+        // the session that becomes visible at the rename below (#296).
+        let _store = cas.lock_shared()?;
         for chunk in &spec.chunks {
             cas.put(chunk)?;
         }
