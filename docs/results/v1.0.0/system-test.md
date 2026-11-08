@@ -24,7 +24,7 @@ step checks its result, and the script fails if any check fails. This run:
 
 | Step  | What                   | Result                                                        |
 | ----- | ---------------------- | ------------------------------------------------------------- |
-| 23.1  | Prepare                | Not green: see below; unit and `make hub-up` not run          |
+| 23.1  | Prepare                | Partial: unit and Hub readiness by CI; gaps below             |
 | 23.2  | Baseline overhead      | Interleaved medians instead of hyperfine (decision, #270)     |
 | 23.3  | Scripted demo          | **Pass**                                                      |
 | 23.4  | Real agent             | Not run: needs the maintainer                                 |
@@ -67,7 +67,33 @@ session records `mode cell`.
 
 `make sensord-install`, installing `deploy/apparmor/wyrd` and `make hub-up`
 change the system or need local containers. None of them is allowed on this
-shared box, so none ran.
+shared box, so none ran here. By decision (2026-11-08), CI evidence stands in
+for them where a CI job really does the step:
+
+- **Doctor on a CI runner** (`Cell · privileged integration`, run
+  42305266012 on `cc6c0cf`): kernel 7.0.0-1017-azure, BTF, ring buffer,
+  cgroup v2, delegated user cgroup, Landlock ABI v8, overlayfs in user
+  namespaces and the socket-address hooks pass; BPF LSM is off (optional);
+  AppArmor restricts user namespaces and no system sensor runs, so it also
+  reports `Cell mode: no`. The job runs the privileged suites through `sudo`,
+  as here. The step does not gate (`|| true`).
+- **The sensor unit** (`Smoke install`, release run 40975370164 for v0.13.1):
+  installs the `.deb`, passes `systemd-analyze verify` on the unit, starts
+  `wyrd-sensord`, checks that it is active and that
+  `/run/wyrdline/sensord.sock` exists, then stops it and removes the package.
+  `deploy/`, the installer and `wyrd-doctor` have not changed since v0.13.1.
+- **A Hub that is ready** (`Chart · kind smoke`, run 40931523952 on
+  `a4cccb3`; the Hub and its chart have not changed since): the Hub image
+  with PostgreSQL 17 and MinIO in kind, installed by the Helm chart, answers
+  `/readyz`.
+
+Not covered by any CI job:
+
+- **The AppArmor profile.** The `.deb` installs `/etc/apparmor.d/wyrd`, but no
+  job loads it and runs a Cell without `sudo`, so the profile itself is
+  untested.
+- **`make hub-up`.** There is no such target and no compose file
+  (plan §10.4); the Hub runs in CI only through Testcontainers and kind.
 
 ## 23.2 Baseline overhead
 
@@ -183,13 +209,17 @@ reason in `deny.toml` by #271, test-only dependency). Released v0.13.1 still has
 wasmtime 49.0.4. From reading `wyrd-policy`, which was not tested: 0422 and
 0423 need host APIs it does not use, and 0424 applies in principle (a
 malicious policy component could consume host memory, a denial of service).
+By decision (2026-11-08) there is no v0.13.1 patch release: the wasmtime fix
+ships in v1.0.0 and its release notes name it. The advisory ignore from #271
+stays until testcontainers drops the crate.
 
 The Action's PR comment and Hub upload in a real test repository were not run.
 
 ## Still open for v1.0.0
 
 - §23.4 and the 5-minute video: the real agent, by the maintainer.
-- §23.1 and §23.10: need a machine where installing the unit and the AppArmor
-  profile and running local containers is allowed.
+- §23.1: the AppArmor profile is untested and `make hub-up` does not exist
+  (above). CI evidence covers the rest and does not block v1.0.0 (decision,
+  2026-11-08).
 - §23.9: the Action in a test repository.
 - #239: checkpoint p95 above the 150 ms target (reported, not gating).
