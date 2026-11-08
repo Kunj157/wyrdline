@@ -1,0 +1,63 @@
+# A local Hub for development and the system test (plan §10.4, §23.1):
+# the Hub image built from this checkout, PostgreSQL 17 and MinIO.
+# `make hub-up` writes throwaway credentials to deploy/docker/.env.hub
+# (git-ignored, mode 0600) and starts it; `make hub-down` removes it with
+# its volumes. Only 127.0.0.1 is bound. Not a production deployment: use the
+# Helm chart (deploy/helm/wyrdline-hub) for that.
+name: wyrdline-hub
+
+services:
+  postgres:
+    # Same image as the Hub's container tests (crates/wyrd-hub/tests/common).
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_DB: hub
+      POSTGRES_PASSWORD: ${WYRD_HUB_DEV_PG_PASSWORD:?run make hub-up}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hub", "-d", "hub"]
+      interval: 3s
+      retries: 20
+    volumes:
+      - postgres:/var/lib/postgresql/data
+
+  minio:
+    # Upstream MinIO no longer publishes images; same pin as the tests.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${WYRD_HUB_DEV_S3_KEY:?run make hub-up}
+      MINIO_ROOT_PASSWORD: ${WYRD_HUB_DEV_S3_SECRET:?run make hub-up}
+    volumes:
+      - minio:/data
+
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/hub.Dockerfile
+    image: wyrdline-hub:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      WYRD_HUB_PUBLIC_URL: http://127.0.0.1:${WYRD_HUB_DEV_PORT:-7730}
+      WYRD_HUB_DATABASE_URL: postgres://hub:${WYRD_HUB_DEV_PG_PASSWORD}@postgres:5432/hub
+      WYRD_HUB_S3_ENDPOINT: http://minio:9000
+      WYRD_HUB_S3_BUCKET: wyrdline-bundles
+      WYRD_HUB_S3_ACCESS_KEY_ID: ${WYRD_HUB_DEV_S3_KEY}
+      WYRD_HUB_S3_SECRET_ACCESS_KEY: ${WYRD_HUB_DEV_S3_SECRET}
+    ports:
+      - 127.0.0.1:${WYRD_HUB_DEV_PORT:-7730}:7730
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - hub-data:/data
+
+volumes:
+  postgres:
+  minio:
+  hub-data:
