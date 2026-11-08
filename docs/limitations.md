@@ -177,9 +177,11 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
 
 ## Operational
 
-- **Checkpoints are slow for large changes.** At 1.0 the checkpoint p95
-  was 7.22 s for 200 files and a 50 MB delta, against a 150 ms target; the
-  target is missed and tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239)
+- **Checkpoints miss their latency target for large changes.** For 200
+  files and a 50 MB delta the checkpoint p95 is 158.7 ms on the development
+  machine, against a 150 ms target, and 260–530 ms on a GitHub-hosted
+  runner, whose disk is slower. The target is missed and tracked in
+  [#239](https://github.com/Kunj157/wyrdline/issues/239)
   ([performance](results/perf-v1.0.md)).
 - `wyrd-sensord` runs as root, not as a dedicated user. After it attaches
   its programs it keeps only `CAP_BPF`; the unit's comments explain why it

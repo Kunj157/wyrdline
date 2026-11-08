@@ -63,14 +63,19 @@ Context, not a target:
   earlier version, which had a single barrier and no check) to 159 ms. The load average was about 4
   during these runs and about 2 during the earlier ones, so the medians
   are not directly comparable. The target is not met; the ordering is not
-  weakened to meet it. The next step is to measure the barriers under load
-  on an idle box. See #239.
+  weakened to meet it. A profile with temporary phase timers (2026-11-07,
+  not committed; details in #239) puts about half of the median in the two
+  barriers, mostly the data writeback, and about a quarter in the ledger
+  append and session state save. Merging the barriers would not avoid the
+  writeback; the remaining options change when the ledger reaches disk and
+  wait for a decision in #239.
 - **Checkpoint on the GitHub-hosted runner** (the release pipeline's strict
   perf job, same test, 20 rounds): p95 **633.6 ms** before #245 (run
   40878809197); after it, **263.5 ms** (run 40886048327, samples 202 to
   277 ms) and **526.9 ms** on the same code in the next run (run
-  40893077625, samples 373 to 704 ms). The runner's disk varies about 2x
-  between runs, and the post-#245 samples overlap the pre-#245 p95, so no
+  40893077625, samples 373 to 704 ms). The nightly on `cc6c0cf` measured
+  **483.3 ms** (run 42357223643, samples 413 to 712 ms). The runner's disk
+  varies about 2x between runs, and the post-#245 samples overlap the pre-#245 p95, so no
   time bound on a hosted runner separates a regression from noise. Release
   runs therefore report the checkpoint figure without gating on it; the
   nightly sets `WYRD_PERF_STRICT=1` and enforces 150 ms, so it stays red
