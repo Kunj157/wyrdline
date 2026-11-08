@@ -4,6 +4,8 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 CARGO ?= cargo
 PNPM ?= pnpm
+# Where cargo puts its output: CARGO_TARGET_DIR when set, else target/.
+TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 
 .PHONY: help demo system-test test-evals install fmt fmt-check lint typecheck test build deny secrets check \
 	fmt-check-rust lint-rust typecheck-rust test-rust build-rust deny-rust \
@@ -122,20 +124,20 @@ apparmor-install: ## Install the AppArmor profile that allows user namespaces fo
 
 sensord-install: ## Build and install wyrd-sensord as a systemd service (needs sudo; system change)
 	$(CARGO) build --release --locked -p wyrd-sensord
-	sudo install -m 0755 target/release/wyrd-sensord /usr/local/bin/wyrd-sensord
+	sudo install -m 0755 $(TARGET_DIR)/release/wyrd-sensord /usr/local/bin/wyrd-sensord
 	sudo install -m 0644 deploy/systemd/wyrd-sensord.service /etc/systemd/system/wyrd-sensord.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now wyrd-sensord.service
 
 policies: ## Build the shipped policies (policies/default.wasm, policies/strict.wasm)
 	$(CARGO) build --quiet --locked -p wyrd-cli
-	target/debug/wyrd policy build policies/default
-	target/debug/wyrd policy build policies/strict
+	$(TARGET_DIR)/debug/wyrd policy build policies/default
+	$(TARGET_DIR)/debug/wyrd policy build policies/strict
 
 test-policies: policies ## Policy unit tests (native) and conformance cases against the built components
 	$(CARGO) test --quiet --locked --manifest-path policies/Cargo.toml -p policy-common
-	target/debug/wyrd policy test policies/default.wasm policies/default/cases.toml
-	target/debug/wyrd policy test policies/strict.wasm policies/strict/cases.toml
+	$(TARGET_DIR)/debug/wyrd policy test policies/default.wasm policies/default/cases.toml
+	$(TARGET_DIR)/debug/wyrd policy test policies/strict.wasm policies/strict/cases.toml
 
 policy-fixtures: ## Rebuild the committed test policy components in policies/fixtures/
 	scripts/build-policy-fixtures.sh
@@ -146,7 +148,7 @@ studio-wasm: ## Build the WebAssembly correlator into the Studio (offline mode)
 wasm-parity: ## Native vs WebAssembly correlator output must be identical
 	$(CARGO) run --quiet --locked -p wyrd-correlator --features synth --example parity_fixtures -- target/wasm-parity
 	$(CARGO) build --quiet --locked --release -p wyrd-wasm --target wasm32-unknown-unknown
-	wasm-bindgen --target nodejs --out-dir target/wasm-parity/pkg target/wasm32-unknown-unknown/release/wyrd_wasm.wasm
+	wasm-bindgen --target nodejs --out-dir target/wasm-parity/pkg $(TARGET_DIR)/wasm32-unknown-unknown/release/wyrd_wasm.wasm
 	node scripts/wasm-parity.mjs target/wasm-parity target/wasm-parity/pkg
 
 FUZZ_TARGETS := bundle_reader event_cbor manifest
