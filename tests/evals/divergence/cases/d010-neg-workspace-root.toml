@@ -1,0 +1,10 @@
+name = "the workspace root is not a file outside a changed-only claim"
+expect = []
+task = "fix the cart total"
+[[step]]
+bash = "git -C /work/shop status"
+writes = ["/work/shop"]
+[[step]]
+edit = "src/cart.ts"
+[[step]]
+say = "I only changed src/cart.ts."
