@@ -121,3 +121,79 @@ fn verify_rejects_non_ledger_files() {
     let out = wyrd().arg("verify").arg(&path).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
 }
+
+#[test]
+fn doctor_probes_the_sensor_socket_named_by_the_environment() {
+    // The sensor client honours WYRD_SENSORD_SOCKET; the doctor must check
+    // the same socket, not the system default.
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("sensord.sock");
+    std::fs::write(&sock, "").unwrap();
+    let out = wyrd()
+        .args(["doctor", "--json"])
+        .env("WYRD_SENSORD_SOCKET", &sock)
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let check = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "sensord")
+        .expect("the sensord check");
+    assert_eq!(check["status"], "ok", "{check}");
+    assert!(
+        check["detail"]
+            .as_str()
+            .unwrap()
+            .contains(&sock.display().to_string())
+    );
+}
+
+#[test]
+fn doctor_and_sensor_client_resolve_the_same_socket() {
+    // The doctor keeps its own copy of the client's rule, because wyrdd must not
+    // depend on the sensor crate (its eBPF build script). This keeps them equal.
+    assert_eq!(
+        wyrd_doctor::sensord_socket_path(),
+        wyrd_sensor::client::socket_path()
+    );
+}
+
+#[test]
+fn gc_deletes_unreferenced_chunks_and_a_dry_run_only_reports_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    wyrd_cas::Cas::open(data.join("cas"))
+        .unwrap()
+        .put(b"nobody refers to this")
+        .unwrap();
+    let run = |args: &[&str]| {
+        let out = wyrd()
+            .arg("gc")
+            .args(args)
+            .env("WYRD_DATA_DIR", &data)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+
+    let v = run(&["--dry-run", "--json"]);
+    assert_eq!(v["dry_run"], true);
+    assert_eq!(v["collectable"], 1);
+    assert!(data.join("cas/chunks").exists());
+
+    let v = run(&["--json"]);
+    assert_eq!(v["dry_run"], false);
+    assert_eq!(v["deleted"], 1);
+    assert!(v["bytes_freed"].as_u64().unwrap() > 0);
+
+    let v = run(&["--json"]);
+    assert_eq!(v["deleted"], 0, "a second collection has nothing to free");
+}

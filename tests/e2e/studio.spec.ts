@@ -84,10 +84,18 @@ test("rewind lists what cannot be undone, then creates a branch", async ({
   void consoleErrors;
 });
 
-test("fork validates the branch name", async ({ page, consoleErrors }) => {
+test("fork lists what cannot be undone and validates the branch name", async ({
+  page,
+  consoleErrors,
+}) => {
   await openSession(page);
   await page.getByRole("button", { name: "Fork from c2" }).click();
   const dialog = page.getByRole("dialog", { name: "Fork from c2" });
+  // The rewind test above left branch a for branch b at c3. The .bashrc
+  // write came after c3 on a, and that rewind already listed it, so a fork
+  // from c2, which leaves b, has nothing to warn about (the CLI's rule).
+  await expect(dialog).toContainText("can be undone");
+  await expect(dialog).not.toContainText("/home/user/.bashrc");
   const name = dialog.getByLabel("Branch name");
   await name.fill("bad name!");
   await expect(dialog.getByRole("button", { name: "Fork", exact: true })).toBeDisabled();

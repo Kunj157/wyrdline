@@ -46,8 +46,9 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: kubeconform
         run: |
-          curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
-            | sudo tar -xz -C /usr/local/bin kubeconform
+          # -f: an HTTP error fails here instead of feeding an error page to tar.
+          curl -fsSL --retry 3 --retry-all-errors -o kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          sudo tar -xzf kubeconform.tar.gz -C /usr/local/bin kubeconform
       - name: helm lint --strict
         run: |
           # Lint with values that satisfy the required keys, so templates render.
@@ -152,3 +153,241 @@ jobs:
           kubectl -n "$NAMESPACE" describe pods || true
           kubectl -n "$NAMESPACE" logs deploy/postgres --tail=100 || true
           kubectl -n "$NAMESPACE" logs deploy/minio --tail=100 || true
+
+  # Plan §27: restore the Hub into a fresh kind cluster and re-verify every
+  # bundle. Runs on workflow_dispatch only (about 40 minutes): see
+  # docs/results/v1.0.0/hub-restore.md for the procedure and the recorded run.
+  restore:
+    name: Hub restore · backup, fresh cluster, restore, verify every bundle
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RESTORE_ORG: restore
+      RESTORE_BUNDLES: "3"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the Hub image (loaded locally for kind)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/hub.Dockerfile
+          load: true
+          tags: wyrdline-hub:ci
+          cache-from: type=gha,scope=hub-image
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install nightly for the eBPF object
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: bpf-linker
+      - name: Build the wyrd CLI (creates and pushes the bundles)
+        run: |
+          cargo build --locked -p wyrd-cli
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+      - name: Create the first kind cluster
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: hub
+          wait: 120s
+      - name: Load the image into kind
+        run: kind load docker-image wyrdline-hub:ci --name hub
+      - name: Dependencies and throwaway Secrets (values kept for the restore)
+        run: |
+          set -euo pipefail
+          umask 077
+          secrets="$RUNNER_TEMP/restore-secrets.env"
+          {
+            echo "PG_PASS=$(openssl rand -hex 24)"
+            echo "S3_KEY=$(openssl rand -hex 12)"
+            echo "S3_SECRET=$(openssl rand -hex 24)"
+          } > "$secrets"
+          # shellcheck source=/dev/null
+          . "$secrets"
+          kubectl apply -f deploy/kind/hub-test/dependencies.yaml
+          kubectl -n "$NAMESPACE" create secret generic postgres-auth --from-literal=password="$PG_PASS"
+          kubectl -n "$NAMESPACE" create secret generic minio-auth \
+            --from-literal=access-key-id="$S3_KEY" --from-literal=secret-access-key="$S3_SECRET"
+          kubectl -n "$NAMESPACE" create secret generic hub-s3 \
+            --from-literal=access-key-id="$S3_KEY" --from-literal=secret-access-key="$S3_SECRET"
+          kubectl -n "$NAMESPACE" create secret generic hub-database \
+            --from-literal=database-url="postgres://hub:${PG_PASS}@postgres.${NAMESPACE}.svc.cluster.local:5432/hub"
+          kubectl -n "$NAMESPACE" rollout status deploy/postgres --timeout=180s
+          kubectl -n "$NAMESPACE" rollout status deploy/minio --timeout=180s
+      - name: Install the chart and wait for /readyz
+        run: |
+          set -euo pipefail
+          helm install wyrdline-hub "$CHART" --namespace "$NAMESPACE" \
+            -f "$CHART/ci/kind-values.yaml" --wait --timeout 5m
+          kubectl -n "$NAMESPACE" port-forward svc/wyrdline-hub 7730:80 > pf-hub.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7730/readyz > /dev/null; then echo "ready"; exit 0; fi
+            sleep 3
+          done
+          echo "::error::/readyz did not return 200"; exit 1
+      - name: Seed an organisation, an admin and an API token
+        # The Hub issues tokens to signed-in users only, and CI has no OIDC
+        # provider. The row layout and the SHA-256 token hash are the ones the
+        # Hub reads (crates/wyrd-hub/src/auth.rs, migrations 20261020*).
+        run: |
+          set -euo pipefail
+          umask 077
+          tok="wyrd_restore_$(openssl rand -hex 24)"
+          printf '%s' "$tok" > "$RUNNER_TEMP/restore-token"
+          hash=$(printf '%s' "$tok" | sha256sum | cut -d' ' -f1)
+          kubectl -n "$NAMESPACE" exec -i deploy/postgres -- psql -v ON_ERROR_STOP=1 -U hub -d hub <<SQL
+          INSERT INTO orgs (id, slug, name) VALUES ('org-restore', '$RESTORE_ORG', 'Restore test');
+          INSERT INTO users (id, issuer, subject, name) VALUES ('u-restore', 'ci-test', 'restore-admin', 'Restore test');
+          INSERT INTO memberships (org_id, user_id, role) VALUES ('org-restore', 'u-restore', 'admin');
+          INSERT INTO api_tokens (id, token_hash, user_id, org_id, name, scope)
+            VALUES ('tok-restore', '$hash', 'u-restore', 'org-restore', 'restore test', 'full');
+          SQL
+          echo "seeded org $RESTORE_ORG"
+      - name: Create signed bundles and upload them
+        env:
+          WYRD_DATA_DIR: ${{ runner.temp }}/wyrd-data
+          WYRD_ALLOW_DEGRADED: "true"
+          WYRD_HUB_URL: http://127.0.0.1:7730
+        run: |
+          set -euo pipefail
+          mkdir -p bundles
+          tok=$(cat "$RUNNER_TEMP/restore-token")
+          : > bundles/uploaded.tsv
+          for i in $(seq 1 "$RESTORE_BUNDLES"); do
+            ws="$RUNNER_TEMP/ws$i"; mkdir -p "$ws"
+            wyrd run --observe --name "restore $i" --workspace "$ws" -- \
+              sh -c "echo change $i > f$i.txt" > "run$i.log" 2>&1
+            sid=$(sed -n 's/^wyrd: session \([^ ]*\) started.*/\1/p' "run$i.log" | head -1)
+            test -n "$sid"
+            wyrd export "$sid" -o "bundles/b$i.wyrd" --json > "export$i.json"
+            wyrd verify "bundles/b$i.wyrd"
+            sha=$(sha256sum "bundles/b$i.wyrd" | cut -d' ' -f1)
+            WYRD_HUB_TOKEN="$tok" wyrd push "bundles/b$i.wyrd" \
+              --org "$RESTORE_ORG" --repo restore/test --json > "push$i.json"
+            echo "$i $sha $sid" >> bundles/uploaded.tsv
+          done
+          cat bundles/uploaded.tsv
+      - name: Back up PostgreSQL and the bucket
+        run: |
+          set -euo pipefail
+          . "$RUNNER_TEMP/restore-secrets.env"
+          mkdir -p backup/s3
+          kubectl -n "$NAMESPACE" exec deploy/postgres -- pg_dump -U hub -d hub -Fc > backup/hub.dump
+          test -s backup/hub.dump
+          pkill -f "port-forward svc/minio" || true
+          kubectl -n "$NAMESPACE" port-forward svc/minio 9000:9000 > pf-minio.log 2>&1 &
+          sleep 3
+          export AWS_ACCESS_KEY_ID="$S3_KEY" AWS_SECRET_ACCESS_KEY="$S3_SECRET" AWS_EC2_METADATA_DISABLED=true
+          aws configure set default.s3.addressing_style path
+          aws --endpoint-url http://127.0.0.1:9000 s3 sync "s3://wyrd-bundles" backup/s3
+          find backup/s3 -type f | wc -l
+          (cd backup && find . -type f -exec sha256sum {} + | sort -k2 > MANIFEST.sha256)
+          ls -l backup/hub.dump
+          cat backup/MANIFEST.sha256
+      - name: Delete the cluster and start the clock
+        run: |
+          pkill -f "port-forward" || true
+          kind delete cluster --name hub
+          echo "RESTORE_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Create a fresh kind cluster
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: hub-restored
+          wait: 120s
+      - name: Load the image and restore the dependencies with the same credentials
+        run: |
+          set -euo pipefail
+          kind load docker-image wyrdline-hub:ci --name hub-restored
+          . "$RUNNER_TEMP/restore-secrets.env"
+          kubectl apply -f deploy/kind/hub-test/dependencies.yaml
+          kubectl -n "$NAMESPACE" create secret generic postgres-auth --from-literal=password="$PG_PASS"
+          kubectl -n "$NAMESPACE" create secret generic minio-auth \
+            --from-literal=access-key-id="$S3_KEY" --from-literal=secret-access-key="$S3_SECRET"
+          kubectl -n "$NAMESPACE" create secret generic hub-s3 \
+            --from-literal=access-key-id="$S3_KEY" --from-literal=secret-access-key="$S3_SECRET"
+          kubectl -n "$NAMESPACE" create secret generic hub-database \
+            --from-literal=database-url="postgres://hub:${PG_PASS}@postgres.${NAMESPACE}.svc.cluster.local:5432/hub"
+          kubectl -n "$NAMESPACE" rollout status deploy/postgres --timeout=180s
+          kubectl -n "$NAMESPACE" rollout status deploy/minio --timeout=180s
+      - name: Restore PostgreSQL and the bucket
+        run: |
+          set -euo pipefail
+          . "$RUNNER_TEMP/restore-secrets.env"
+          kubectl -n "$NAMESPACE" exec -i deploy/postgres -- \
+            pg_restore -U hub -d hub --clean --if-exists --no-owner --exit-on-error < backup/hub.dump
+          kubectl -n "$NAMESPACE" port-forward svc/minio 9000:9000 > pf-minio.log 2>&1 &
+          sleep 3
+          export AWS_ACCESS_KEY_ID="$S3_KEY" AWS_SECRET_ACCESS_KEY="$S3_SECRET" AWS_EC2_METADATA_DISABLED=true
+          aws configure set default.s3.addressing_style path
+          aws --endpoint-url http://127.0.0.1:9000 s3api head-bucket --bucket wyrd-bundles 2>/dev/null \
+            || aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://wyrd-bundles
+          aws --endpoint-url http://127.0.0.1:9000 s3 sync backup/s3 "s3://wyrd-bundles"
+      - name: Reinstall the chart and wait for /readyz
+        run: |
+          set -euo pipefail
+          helm install wyrdline-hub "$CHART" --namespace "$NAMESPACE" \
+            -f "$CHART/ci/kind-values.yaml" --wait --timeout 5m
+          kubectl -n "$NAMESPACE" port-forward svc/wyrdline-hub 7730:80 > pf-hub.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7730/readyz > /dev/null; then echo "ready"; exit 0; fi
+            sleep 3
+          done
+          echo "::error::/readyz did not return 200 after the restore"; exit 1
+      - name: List every bundle, download it and verify it
+        env:
+          WYRD_DATA_DIR: ${{ runner.temp }}/wyrd-data
+          WYRD_ALLOW_DEGRADED: "true"
+        run: |
+          set -euo pipefail
+          tok=$(cat "$RUNNER_TEMP/restore-token")
+          mkdir -p restored
+          curl -fsS -H "Authorization: Bearer $tok" \
+            "http://127.0.0.1:7730/api/v1/orgs/$RESTORE_ORG/bundles" > restored/list.json
+          ids=$(jq -r '.bundles[].id' restored/list.json 2>/dev/null || jq -r '.[].id' restored/list.json)
+          n=0; bad=0
+          for id in $ids; do
+            n=$((n+1))
+            curl -fsS -H "Authorization: Bearer $tok" \
+              "http://127.0.0.1:7730/api/v1/bundles/$id/download" -o "restored/$id.wyrd"
+            wyrd verify "restored/$id.wyrd" > /dev/null || { echo "::error::bundle $id does not verify"; bad=$((bad+1)); }
+            echo "$id $(sha256sum "restored/$id.wyrd" | cut -d' ' -f1)" >> restored/downloaded.txt
+          done
+          echo "bundles listed: $n, failed verification: $bad"
+          test "$n" = "$RESTORE_BUNDLES"
+          test "$bad" = 0
+          # Every uploaded bundle must come back byte-identical: compare hashes.
+          while read -r idx sha _sid; do
+            cut -d' ' -f2 restored/downloaded.txt | grep -qx "$sha" \
+              || { echo "::error::uploaded bundle $idx ($sha) is not among the restored bundles"; exit 1; }
+          done < bundles/uploaded.tsv
+          t1=$(date +%s)
+          elapsed=$((t1 - RESTORE_T0))
+          echo "restore time (fresh cluster to every bundle verified): ${elapsed} s"
+          {
+            echo "### Hub restore"
+            echo "- bundles uploaded and restored: $RESTORE_BUNDLES, all verified"
+            echo "- restore time: ${elapsed} s"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "${elapsed}" > restored/elapsed-seconds
+      - name: Keep the restore report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hub-restore-report
+          path: |
+            bundles/uploaded.tsv
+            backup/MANIFEST.sha256
+            restored/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all,pdb || true
+          kubectl -n "$NAMESPACE" logs deploy/wyrdline-hub --tail=200 || true
+          kubectl -n "$NAMESPACE" logs deploy/postgres --tail=100 || true
+          cat run1.log 2>/dev/null || true

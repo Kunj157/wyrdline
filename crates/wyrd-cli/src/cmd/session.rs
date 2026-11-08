@@ -398,13 +398,16 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
         Some(w) => w.clone(),
         None => std::env::current_dir()?,
     };
-    let doctor = wyrd_doctor::run(&wyrd_doctor::Env::new(
-        "/",
-        wyrd_doctor::Probes {
-            landlock_abi: None,
-            uid: rustix::process::getuid().as_raw(),
-        },
-    ));
+    let doctor = wyrd_doctor::run(
+        &wyrd_doctor::Env::new(
+            "/",
+            wyrd_doctor::Probes {
+                landlock_abi: None,
+                uid: rustix::process::getuid().as_raw(),
+            },
+        )
+        .with_sensord_socket(wyrd_doctor::sensord_socket_path()),
+    );
     let policy_path = a
         .policy
         .as_ref()
@@ -515,6 +518,68 @@ pub fn checkpoints(a: &ListCheckpointsArgs) -> anyhow::Result<u8> {
     Ok(exit::OK)
 }
 
+/// After a rewind, warn on stderr about the network effects it could not
+/// undo: one line per effect. Prints nothing when there are none. The rewind
+/// is already committed, so a failure to list them is reported, not fatal.
+fn warn_irreversible(session: &Session, branch_id: &str) {
+    report_irreversible(session.rewind_effects(branch_id));
+}
+
+/// A fork's list comes from the seqs `fork` returned; nothing to say when
+/// there were none.
+fn warn_forked(session: &Session, checkpoint_id: &str, seqs: &[u64]) {
+    if seqs.is_empty() {
+        return;
+    }
+    report_irreversible(session.effects_by_seq(checkpoint_id, seqs).map(Some));
+}
+
+fn report_irreversible(listed: wyrd_cell::Result<Option<wyrd_cell::session::RewindEffects>>) {
+    match listed {
+        Ok(Some(rewound)) if !rewound.effects.is_empty() => {
+            let _ = print_irreversible(&rewound);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "wyrd: warning: could not list irreversible effects: {e}"
+            );
+        }
+    }
+}
+
+fn print_irreversible(rewound: &wyrd_cell::session::RewindEffects) -> std::io::Result<()> {
+    let n = rewound.effects.len();
+    let noun = if n == 1 { "effect" } else { "effects" };
+    let mut stderr = std::io::stderr().lock();
+    writeln!(
+        stderr,
+        "wyrd: warning: {n} {noun} after {} cannot be undone:",
+        rewound.checkpoint_id
+    )?;
+    for ev in &rewound.effects {
+        let what = match &ev.body {
+            wyrd_schema::EventBody::NetConnect(net) => {
+                let addr = if net.family == 6 {
+                    format!("[{}]:{}", net.addr, net.port)
+                } else {
+                    format!("{}:{}", net.addr, net.port)
+                };
+                let verdict = match net.verdict {
+                    wyrd_schema::NetVerdict::Allowed => "allowed",
+                    wyrd_schema::NetVerdict::Denied => "denied",
+                };
+                format!("net.connect {addr} ({verdict})")
+            }
+            wyrd_schema::EventBody::DnsQuery(dns) => format!("net.dns_query {}", dns.name),
+            _ => ev.kind().trim_start_matches("effect.").to_string(),
+        };
+        writeln!(stderr, "  seq {}  {}", ev.seq, printable(&what))?;
+    }
+    Ok(())
+}
+
 fn rewind_or_fork(
     session: &str,
     target: &str,
@@ -522,13 +587,23 @@ fn rewind_or_fork(
     relaunch: bool,
 ) -> anyhow::Result<u8> {
     let mut s = Session::open(&data(), session)?;
-    let b = s.rewind(target, name)?;
+    let (b, forked_effects) = match name {
+        Some(name) => {
+            let (b, seqs) = s.fork(target, name)?;
+            (b, Some(seqs))
+        }
+        None => (s.rewind(target, None)?, None),
+    };
     writeln!(
         out(),
         "wyrd: now on branch {} (from {})",
         b.name,
         b.forked_from.as_deref().unwrap_or("-")
     )?;
+    match forked_effects {
+        Some(seqs) => warn_forked(&s, b.forked_from.as_deref().unwrap_or("-"), &seqs),
+        None => warn_irreversible(&s, &b.id),
+    }
     if relaunch {
         run_session(&mut s, None, None)
     } else {
@@ -560,6 +635,7 @@ pub fn rewind(a: &RewindArgs) -> anyhow::Result<u8> {
             b.name,
             b.forked_from.as_deref().unwrap_or("-")
         )?;
+        warn_irreversible(&s, &b.id);
         return if a.relaunch {
             run_session(&mut s, None, None)
         } else {

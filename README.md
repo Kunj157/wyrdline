@@ -41,7 +41,7 @@ From that it can:
 
 ## Status
 
-Pre-1.0: the 1.0 user documentation is in [`docs/`](#documentation). The
+1.0: the user documentation is in [`docs/`](#documentation). The
 roadmap is [below](#roadmap); what 1.0 does not do is in
 [limitations](docs/limitations.md). The capabilities, in short:
 
@@ -67,6 +67,9 @@ roadmap is [below](#roadmap); what 1.0 does not do is in
 - **Sharing:** signed, redacted `.wyrd` bundles that anyone can verify
   with `wyrd verify`, and a team Hub for uploading and searching them.
 
+The policy commands need the `.wasm` files, which `make policies` builds from a
+checkout; the release archives do not include them.
+
 ```
 wyrd run -- claude -p "fix the failing cart test"   # hooks injected, workspace sandboxed
 wyrd events <session> --plane effect                # what actually happened in the kernel
@@ -76,12 +79,14 @@ wyrd tail <session>                                 # follow a live session
 wyrdd                                               # API on a same-UID socket and 127.0.0.1:7717
 wyrd studio                                         # open Studio in the browser
 wyrd checkpoints <session>                          # one checkpoint per tool call
-wyrd rewind <session> c3 && wyrd diff <session> c3 head
+wyrd rewind <session> c3 && wyrd diff <session> c3 a  # after the rewind, head is c3; a is the old branch
 wyrd apply <session> head                            # bring the result into the real tree
 wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enforce in the kernel
 wyrd ask <session>                                   # answer what the policy asks
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
+wyrd gc --dry-run                                   # report the chunks no checkpoint refers to; deletes nothing
+wyrd gc                                             # delete them (waits briefly for a checkpoint in progress)
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
 wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
 wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
@@ -104,18 +109,20 @@ reproduce them: [performance at v1.0](docs/results/perf-v1.0.md).
 | Target | Measured | Result |
 |---|---|---|
 | Event loss at 50 k events/s | 49 863 events/s (run 2): 200 000 received, 0 dropped | met |
-| Checkpoint p95, 200 files, 50 MB delta (target ≤ 150 ms) | p95 7.22 s; median 5.52 s over 20 rounds | **missed**, tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239) |
+| Checkpoint p95, 200 files, 50 MB delta (target ≤ 150 ms) | p95 158.7 ms; median 139.9 ms over 3 runs × 20 rounds (7.22 s before #245) | **missed by 9 ms**, tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239) |
 | Rewind p95, 1 GB workspace (target ≤ 2 s) | p95 1.16 s; median 0.93 s over 10 rounds | met |
 | Denied-connect latency, p99 | 2.3–2.6 µs | met; the report explains why it is not compared with allowed connects |
 | Allowed-connect latency added, p99 (target ≤ 50 µs) | +0.2 µs (run 2), +1.4 µs (run 1) | met |
 | Overhead on `cargo build`, captured (target ≤ 5 %) | +0.1 % (run 2), −1.3 % (run 1) | met |
-| Overhead on the `pnpm test` workload, captured | −0.5 % (run 2), −0.2 % (run 1), on a 120 ms workload | met, but the workload is too short to trust ([#240](https://github.com/Kunj157/wyrdline/issues/240)) |
+| Overhead on the `pnpm test` workload, captured (target ≤ 5 %) | +0.3 % (run 2), +0.5 % (run 1); the suite runs 20 times per measurement, about 2.4 s ([#240](https://github.com/Kunj157/wyrdline/issues/240)) | met |
 | Judge cost per session | not measured: needs a live `ANTHROPIC_API_KEY` | not measured ([#212](https://github.com/Kunj157/wyrdline/issues/212)) |
 
-**The checkpoint target is missed.** Checkpoint p95 is 7.22 s against a
-150 ms target, about 40× over. Even the fastest of the 20 rounds (5.00 s)
-misses it. The cost has not been profiled yet; it is tracked in
-[#239](https://github.com/Kunj157/wyrdline/issues/239).
+**The checkpoint target is missed.** Checkpoint p95 is 158.7 ms against a
+150 ms target. It was 7.22 s when first measured (#244), before #245
+replaced one fsync per chunk with `syncfs` barriers; the crash-consistency
+order is not weakened to close the rest. On the GitHub-hosted runner the same test measures 260–530 ms,
+because the runner's disk is slower. Where the remaining time goes is in
+[#239](https://github.com/Kunj157/wyrdline/issues/239#issuecomment-6698088538).
 
 On the syscall-dense stress workload (about 7 000 effects per run), a captured
 session costs +9.4 % (run 2) and +9.7 % (run 1). That is above the 5 % budget
@@ -178,19 +185,26 @@ reports exactly what is available and what degrades without it.
 
 - **Using Wyrdline:** [install](docs/install.md), [quick start](docs/quick-start.md)
   (install to a recorded, inspected, exported session), [adapter coverage](docs/adapter-coverage.md)
-  (what each agent reports), [the Hub](docs/hub.md) (team uploads, search, and
+  (what each agent reports), [the Hub](docs/hub.md) (`make hub-up` runs a local one; team uploads, search, and
   analytics), [limitations](docs/limitations.md), [FAQ](docs/faq.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [The Cell](docs/architecture/cell.md), [intent capture](docs/architecture/intent.md),
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
   [the eBPF sensor](docs/architecture/sensor.md), [the correlator](docs/architecture/correlator.md),
   [the daemon and its API](docs/architecture/daemon.md), [the Hub](docs/architecture/hub.md),
-  [collaborative annotations](docs/architecture/annotations.md)
-- [Ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md),
-  [bundle format](docs/bundle-format.md)
+  [collaborative annotations](docs/architecture/annotations.md),
+  [the MCP server](docs/architecture/mcp-server.md)
+- Formats and API: [ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md),
+  [bundle format](docs/bundle-format.md), [event schema](docs/schemas/event.v1.json),
+  [daemon API (OpenAPI)](docs/api/openapi.json)
 - [Writing a policy](docs/policies/README.md)
 - [Architecture decision records](docs/adr/README.md)
-- [Threat model](docs/threat-model/scope.md)
+- [Threat model](docs/threat-model/scope.md), [1.0 security review](docs/threat-model/review-2026.md)
+- Results: [performance at v1.0](docs/results/perf-v1.0.md),
+  [system test for v1.0.0](docs/results/v1.0.0/system-test.md),
+  [enforcement](docs/results/enforcement.md), [attribution](docs/results/attribution.md),
+  [divergence evals baseline](docs/results/evals-baseline.json), [sensor performance](docs/results/perf-sensor.md),
+  [Studio performance](docs/results/studio-perf.md)
 - [Releases: assets, verification, reproducibility](docs/release.md)
 
 ## Contributing

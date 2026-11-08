@@ -103,7 +103,7 @@ suite("model", () => {
     expect(isIrreversible(at(6))).toBe(true);
     expect(meaningOf(at(4))).toBe("denied");
     expect(meaningOf(at(3))).toBe("irreversible");
-    expect(irreversibleAfter(events, 6).map((e) => e.seq)).toEqual([7]);
+    expect(irreversibleAfter(events, { seq: 6, branch: "a" }).map((e) => e.seq)).toEqual([7]);
   });
 
   it("extracts the transcript", () => {
@@ -179,5 +179,87 @@ suite("model", () => {
     expect(bySeq.get(8)).toMatchObject({ lane: "intent", meaning: "divergence" });
     expect(bySeq.get(5)?.meaning).toBe("denied");
     expect(bySeq.has(1)).toBe(false);
+  });
+
+  suite("what a rewind or fork leaves behind (the CLI's rule)", () => {
+    // Seqs: 1 c1 on a, 2 egress on a, 3 rewind to c1 -> b, 4 c2 on b,
+    // 5 egress on b, 6 fork from c2 -> c, 7 egress on c.
+    const s = (n: number, body: Event["body"]): Event => ({
+      seq: n,
+      ts_mono_ns: n,
+      ts_wall_ms: n,
+      process: null,
+      drops_since_last: 0,
+      body,
+    });
+    const egress = (n: number) =>
+      s(n, {
+        kind: "effect.net.connect",
+        payload: { family: 2, addr: `10.0.0.${n}`, port: 443, dns_name: null, verdict: "allowed" },
+      });
+    const log: Event[] = [
+      s(1, { kind: "intent.message", payload: { role: "user", turn: 0, text: "go" } }),
+      egress(2),
+      s(3, {
+        kind: "state.checkpoint.rewound",
+        payload: { checkpoint_id: "c1", branch_id: "b", irreversible_seqs: [2] },
+      }),
+      s(4, { kind: "intent.message", payload: { role: "user", turn: 1, text: "again" } }),
+      egress(5),
+      s(6, {
+        kind: "state.checkpoint.forked",
+        payload: { checkpoint_id: "c2", branch_id: "c", name: "exp" },
+      }),
+      egress(7),
+    ];
+    const cp = (id: string, seq: number, branch: string) => ({
+      id,
+      branch,
+      parent: null,
+      manifest: "b3:00",
+      seq,
+      created_ms: 0,
+      files: 0,
+      bytes_read: 0,
+    });
+    const branch = (id: string, forked_from: string | null) => ({
+      id,
+      name: id,
+      forked_from,
+      created_ms: 0,
+    });
+    const tree = (current: string) => ({
+      current_branch: current,
+      branches: [branch("a", null), branch("b", "c1"), branch("c", "c2")],
+      checkpoints: [cp("c1", 1, "a"), cp("c2", 4, "b")],
+    });
+    const seqs = (es: Event[]) => es.map((e) => e.seq);
+    // While b is current, the fork to c has not happened yet.
+    const onB = log.slice(0, 5);
+    const treeB = () => ({ ...tree("b"), branches: tree("b").branches.slice(0, 2) });
+
+    it("lists the current branch's effects after the checkpoint", () => {
+      expect(seqs(irreversibleAfter(onB, { seq: 4, branch: "b" }, treeB()))).toEqual([5]);
+    });
+
+    it("does not repeat effects on a branch already left", () => {
+      // On b, back to c1: egress 2 was on a, which the rewind to c1 left.
+      expect(seqs(irreversibleAfter(onB, { seq: 1, branch: "a" }, treeB()))).toEqual([5]);
+    });
+
+    it("walks back across a fork to the checkpoint's branch", () => {
+      // On c (forked from c2 on b), back to c1: c's egress 7, and b's
+      // between c1 and c2 (none). Egress 5 came after c2 on b; the fork
+      // that left b already listed it.
+      expect(seqs(irreversibleAfter(log, { seq: 1, branch: "a" }, tree("c")))).toEqual([7]);
+    });
+
+    it("from the branch's own fork point, lists only that branch", () => {
+      expect(seqs(irreversibleAfter(log, { seq: 4, branch: "b" }, tree("c")))).toEqual([7]);
+    });
+
+    it("without the branch tree, lists every effect after the checkpoint", () => {
+      expect(seqs(irreversibleAfter(log, { seq: 1, branch: "a" }))).toEqual([2, 5, 7]);
+    });
   });
 });

@@ -119,6 +119,15 @@ impl FileAt {
     }
 }
 
+/// The network effects a rewind or fork could not undo (see [`Session::rewind_effects`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewindEffects {
+    /// The checkpoint the rewind went back to.
+    pub checkpoint_id: String,
+    /// The `effect.net.*` events, in ledger order.
+    pub effects: Vec<Event>,
+}
+
 /// An open session.
 #[derive(Debug)]
 pub struct Session {
@@ -311,6 +320,12 @@ impl Session {
     fn append(&self, bodies: Vec<EventBody>) -> Result<u64> {
         let mut l = Ledger::open(self.dir.ledger())?;
         Ok(l.append(bodies.into_iter().map(event).collect())?)
+    }
+
+    /// [`append`](Self::append), synced to disk before it returns.
+    fn append_durable(&self, bodies: Vec<EventBody>) -> Result<u64> {
+        let mut l = Ledger::open(self.dir.ledger())?;
+        Ok(l.append_durable(bodies.into_iter().map(event).collect())?)
     }
 
     fn reload(&mut self) -> Result<()> {
@@ -584,6 +599,9 @@ impl Session {
                 "observe-mode sessions have no checkpoints".into(),
             ));
         }
+        // Held until the checkpoint's record is saved: from here, gc may not
+        // sweep the chunks this checkpoint writes before they are named (#296).
+        let _store = self.cas.lock_shared()?;
         // A branch that was never confirmed restored in this boot is restored
         // before it is snapshotted, so a checkpoint never records half a tree.
         self.ensure_restored()?;
@@ -628,7 +646,8 @@ impl Session {
         let id = self.rec.next_checkpoint_id();
         let duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         wyrd_cas::note_step(wyrd_cas::Step::LedgerAppend);
-        let seq = self.append(vec![EventBody::CheckpointCreated(CheckpointCreated {
+        // Durable before `session.json` names the checkpoint (#285).
+        let seq = self.append_durable(vec![EventBody::CheckpointCreated(CheckpointCreated {
             checkpoint_id: id.clone(),
             branch_id: branch.clone(),
             parent_id: parent.as_ref().map(|p| p.id.clone()),
@@ -638,6 +657,7 @@ impl Session {
             bytes_added: stats.bytes_read,
             duration_ms,
         })])?;
+        wyrd_cas::note_step(wyrd_cas::Step::LedgerSync);
         let rec = CheckpointRecord {
             id,
             branch,
@@ -702,18 +722,45 @@ impl Session {
         let _lock = state::lock(&self.dir.lock())?;
         self.reload()?;
         self.rewind_locked(target, fork_name)
+            .map(|(branch, _)| branch)
+    }
+
+    /// [`Session::rewind`] (auto-named branch) that also returns the seqs it
+    /// recorded in `checkpoint.rewound`'s `irreversible_seqs`.
+    pub fn rewind_listing(&mut self, target: &str) -> Result<(Branch, Vec<u64>)> {
+        self.writable()?;
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        self.rewind_locked(target, None)
+    }
+
+    /// Fork a named branch from `target` and make it current. Also returns the
+    /// seqs of the network effects after `target` on the branch being left,
+    /// which [`Session::effects_by_seq`] resolves. `checkpoint.forked` has no
+    /// field for them, so they are not recorded, and the old branch keeps them.
+    pub fn fork(&mut self, target: &str, name: &str) -> Result<(Branch, Vec<u64>)> {
+        self.writable()?;
+        let _lock = state::lock(&self.dir.lock())?;
+        self.reload()?;
+        self.rewind_locked(target, Some(name))
     }
 
     /// [`Session::rewind`] with the session lock already held.
     ///
     /// The branch is recorded before its tree is restored, so a restore that is
     /// interrupted leaves a branch that `ensure_restored` redoes before anything
-    /// reads or checkpoints it (see `docs/cas-format.md`, "Rewind").
-    fn rewind_locked(&mut self, target: &str, fork_name: Option<&str>) -> Result<Branch> {
+    /// reads or checkpoints it (see `docs/cas-format.md`, "Rewind"). Also
+    /// returns the irreversible effects, listed once the agent has stopped.
+    fn rewind_locked(
+        &mut self,
+        target: &str,
+        fork_name: Option<&str>,
+    ) -> Result<(Branch, Vec<u64>)> {
         let cp = self.resolve(target)?;
         if self.stop()? {
             self.set_status(SessionState::Rewinding, Some("stopped the agent to rewind"))?;
         }
+        let irreversible_seqs = self.irreversible_for(&cp)?;
         let id = self.rec.next_branch_id();
         let name = fork_name.map_or_else(|| id.clone(), str::to_string);
         if self.rec.branch(&name).is_some() {
@@ -748,11 +795,104 @@ impl Session {
             None => EventBody::CheckpointRewound(CheckpointRewound {
                 checkpoint_id: cp.id,
                 branch_id: id,
-                irreversible_seqs: Vec::new(),
+                // Only a rewind records them: `checkpoint.forked` has no such field.
+                irreversible_seqs: irreversible_seqs.clone(),
             }),
         }])?;
         self.set_status(SessionState::Paused, Some("rewound"))?;
-        Ok(branch)
+        Ok((branch, irreversible_seqs))
+    }
+
+    /// Seqs of the network effects on the branch being left that a rewind to
+    /// `cp` cannot undo: `effect.net.*` events after `cp`, on the current
+    /// branch and its ancestry back to `cp`'s branch.
+    ///
+    /// Events carry no branch tag, so each branch's span is read from the
+    /// ledger: it starts at the `checkpoint.rewound` or `checkpoint.forked`
+    /// that created the branch (the first branch starts at seq 0), and it
+    /// ends at the checkpoint the branch was forked from. Effects that were
+    /// on an abandoned branch are not listed again: the rewind that abandoned
+    /// them already listed them.
+    fn irreversible_for(&self, cp: &CheckpointRecord) -> Result<Vec<u64>> {
+        let events = self.events()?;
+        let mut entered: BTreeMap<&str, u64> = BTreeMap::new();
+        for e in &events {
+            if let EventBody::CheckpointRewound(CheckpointRewound { branch_id, .. })
+            | EventBody::CheckpointForked(CheckpointForked { branch_id, .. }) = &e.body
+            {
+                entered.entry(branch_id.as_str()).or_insert(e.seq);
+            }
+        }
+        let mut seqs = Vec::new();
+        let mut hi = u64::MAX;
+        let mut branch = self.rec.current_branch.clone();
+        loop {
+            let lo = entered
+                .get(branch.as_str())
+                .copied()
+                .unwrap_or(0)
+                .max(cp.seq);
+            seqs.extend(
+                events
+                    .iter()
+                    .filter(|e| e.seq > lo && e.seq <= hi && e.kind().starts_with("effect.net."))
+                    .map(|e| e.seq),
+            );
+            if branch == cp.branch {
+                break;
+            }
+            let Some(fork) = self
+                .rec
+                .branch(&branch)
+                .and_then(|b| b.forked_from.as_deref())
+                .and_then(|c| self.rec.checkpoint(c))
+            else {
+                break;
+            };
+            if fork.seq <= cp.seq {
+                break;
+            }
+            hi = fork.seq;
+            branch.clone_from(&fork.branch);
+        }
+        // The walk visits the current branch first, so ledger order needs a sort.
+        seqs.sort_unstable();
+        Ok(seqs)
+    }
+
+    /// The network effects a rewind recorded as irreversible: the
+    /// `checkpoint.rewound` that created `branch_id`, with its listed events
+    /// resolved from the ledger. `None` when no rewind made the branch.
+    pub fn rewind_effects(&self, branch_id: &str) -> Result<Option<RewindEffects>> {
+        let events = self.events()?;
+        let Some(rewound) = events.iter().find_map(|e| match &e.body {
+            EventBody::CheckpointRewound(r) if r.branch_id == branch_id => Some(r),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        let effects = events
+            .iter()
+            .filter(|e| rewound.irreversible_seqs.contains(&e.seq))
+            .cloned()
+            .collect();
+        Ok(Some(RewindEffects {
+            checkpoint_id: rewound.checkpoint_id.clone(),
+            effects,
+        }))
+    }
+
+    /// The events behind the seqs [`Session::fork`] returned, in ledger order.
+    pub fn effects_by_seq(&self, checkpoint_id: &str, seqs: &[u64]) -> Result<RewindEffects> {
+        let effects = self
+            .events()?
+            .into_iter()
+            .filter(|e| seqs.contains(&e.seq))
+            .collect();
+        Ok(RewindEffects {
+            checkpoint_id: checkpoint_id.to_string(),
+            effects,
+        })
     }
 
     /// The manifest a branch's tree must match: its latest checkpoint, or the
@@ -954,6 +1094,7 @@ impl Session {
             by: by.into(),
         }))?;
         self.rewind_locked(&r.checkpoint_id, None)
+            .map(|(branch, _)| branch)
     }
 
     /// A human rejects rewind request `id`; nothing else changes.
@@ -1216,6 +1357,9 @@ impl Session {
     pub fn import(data: &DataDir, spec: &ImportSpec) -> Result<Session> {
         mkdirs(&data.sessions())?;
         let cas = Cas::open(data.cas())?;
+        // Held until the session is in place: its chunks are named only by
+        // the session that becomes visible at the rename below (#296).
+        let _store = cas.lock_shared()?;
         for chunk in &spec.chunks {
             cas.put(chunk)?;
         }

@@ -132,8 +132,8 @@ the directory to `GITHUB_PATH`.
 
 ### `.deb`
 
-Each release ships a Debian package; its name and contents are listed in
-the release notes of that version. Verify its
+Each release ships a Debian package (contents in [releases](release.md#assets)).
+Verify its
 checksum against the signed `SHA256SUMS` as above before
 `sudo dpkg -i <file>.deb`, then check `wyrd doctor`: if the package
 did not enable the sensor, finish with step 3.
@@ -208,7 +208,7 @@ it; exit code 2 when Cell mode is not possible.
 | `userns` | unprivileged user namespaces | the Cell cannot be created directly; see the two ways below |
 | `overlay_userns` | overlayfs, kernel ≥ 5.11 | **no Cell mode**: no checkpoints, rewind, or fork |
 | `cgroup_sock_addr` | kernel ≥ 4.17 and cgroup v2 | egress cannot be filtered in the kernel |
-| `sensord` | `wyrd-sensord` listening at `/run/wyrdline/sensord.sock` | only intent (hooks, MCP, OTLP) is captured, not kernel effects |
+| `sensord` | `wyrd-sensord` listening at `/run/wyrdline/sensord.sock`, or at `$WYRD_SENSORD_SOCKET` when that is set (the check probes the same socket the client connects to) | only intent (hooks, MCP, OTLP) is captured, not kernel effects |
 
 The summary line says what the machine supports:
 `Cell mode: yes   Kernel capture: yes   Kernel network enforcement: yes`.
@@ -223,6 +223,10 @@ grants `userns` to the `wyrd` binary and nothing else:
 ```sh
 sudo make apparmor-install WYRD_BIN=$(command -v wyrd)   # from a checkout; installs deploy/apparmor/wyrd
 ```
+
+CI checks this on a hosted runner: the pull-request workflow's Cell job
+confirms that a Cell fails without the profile and starts with it, and that
+its writes stay in the Cell's upper layer.
 
 or let `wyrd run` go through `sudo` for the two internal commands that
 set up the mount namespace, dropping back to your user before the agent

@@ -18,6 +18,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # vmtest is downloaded once, by the build job, and shared as an artifact.
+  # The SHA-256 is of the release asset (checked on every download).
+  VMTEST_VERSION: v0.18.0
+  VMTEST_SHA256: 63270a3f763f97f268e0ee8d3591f79b6ff17ece7b6dff8f9440207bb04b64f3
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-kernels
   cancel-in-progress: true
@@ -39,10 +45,25 @@ jobs:
           tool: bpf-linker
       - name: Build
         run: cargo build --locked -p wyrd-sensor --example matrix_check
+      - name: Fetch vmtest
+        # One download for all kernel jobs: github.com answered 504 to the six
+        # parallel downloads of 2026-11-08 (run 42465527897). Retries wait
+        # between attempts, and the pinned checksum rejects a bad asset.
+        run: |
+          curl -fsSL --retry 8 --retry-delay 10 --retry-all-errors --retry-max-time 300 \
+            -o vmtest "https://github.com/danobi/vmtest/releases/download/${VMTEST_VERSION}/vmtest-x86_64"
+          echo "${VMTEST_SHA256}  vmtest" | sha256sum --check --strict -
+          chmod +x vmtest
+      - name: Collect the artifact
+        # One directory, so both files sit at the root of the artifact: with
+        # two paths, upload-artifact keeps their common ancestor as a prefix.
+        run: |
+          mkdir -p dist
+          cp target/debug/examples/matrix_check vmtest dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: matrix-check
-          path: target/debug/examples/matrix_check
+          path: dist/
           retention-days: 3
 
   kernel:
@@ -64,13 +85,39 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Install QEMU and vmtest
-        env:
-          VMTEST_VERSION: v0.18.0
+        # Usually about 20 s. On some runners the Azure mirror is slow enough
+        # (about 20 packages in 3 minutes) to time the job out. So: no
+        # recommended packages (a headless VM needs no GUI or audio
+        # libraries), bounded attempts that resume the download, and retries
+        # that drop the Azure mirror from the runner's mirror list.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-guest-agent > /dev/null
-          curl -sSL -o vmtest "https://github.com/danobi/vmtest/releases/download/${VMTEST_VERSION}/vmtest-x86_64"
-          chmod +x vmtest
+          apt="sudo timeout 180 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for attempt in 1 2 3; do
+            rc=0
+            $apt update -qq || rc=$?
+            if [ "$rc" = 0 ]; then
+              $apt install -y --no-install-recommends qemu-system-x86 qemu-guest-agent > apt-install.log 2>&1 || rc=$?
+              [ "$rc" = 0 ] && break
+              what="apt-get install"
+              # Show where it stopped, and whether another apt or dpkg
+              # (the runner's own updates) held the lock meanwhile.
+              echo "::group::apt-get install output (last 20 lines) and apt/dpkg processes"
+              tail -n 20 apt-install.log
+              pgrep -a -f 'apt|dpkg|unattended' || true
+              echo "::endgroup::"
+            else
+              what="apt-get update"
+            fi
+            if [ "$attempt" = 3 ]; then echo "::error::installing QEMU failed 3 times (last: $what, exit $rc)"; exit 1; fi
+            echo "::warning::$what failed with exit $rc (124: timed out), attempt $attempt; retrying without the Azure mirror"
+            # Hosted runners read mirrors from apt-mirrors.txt (mirror+file:),
+            # not from the URIs in the sources files.
+            for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+              if [ -f "$f" ]; then sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"; fi
+            done
+            sleep 15
+          done
       - name: Fetch kernel ${{ matrix.kernel }}
         run: |
           docker pull -q "ghcr.io/cilium/ci-kernels:${{ matrix.kernel }}"
@@ -79,7 +126,7 @@ jobs:
           docker rm "$id" > /dev/null
       - name: Run the check inside the VM
         run: |
-          chmod +x matrix_check
+          chmod +x matrix_check vmtest
           ./vmtest --kernel vmlinuz -- "env TMPDIR=/dev/shm $PWD/matrix_check"
 
   runner:

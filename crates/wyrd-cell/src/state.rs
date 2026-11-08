@@ -116,6 +116,26 @@ pub struct SessionLock {
     _file: fs::File,
 }
 
+/// Whether another process holds the session lock. `Session::close` holds it
+/// from saving the record as closed until the closing change is appended, so
+/// a reader that sees a closed record can wait on this instead of guessing.
+/// A free lock is released again at once.
+pub fn is_locked(path: &Path) -> Result<bool> {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(io_err(path)(e)),
+    };
+    match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(false),
+        Err(e) if e == rustix::io::Errno::WOULDBLOCK => Ok(true),
+        Err(e) => Err(CellError::Io {
+            path: path.to_path_buf(),
+            source: e.into(),
+        }),
+    }
+}
+
 pub fn lock(path: &Path) -> Result<SessionLock> {
     let file = fs::OpenOptions::new()
         .create(true)

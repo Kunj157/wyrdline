@@ -120,9 +120,44 @@ export function isIrreversible(e: Event): boolean {
   }
 }
 
-/** Irreversible effects recorded after `seq` (what a rewind to it leaves behind). */
-export function irreversibleAfter(events: Event[], seq: number): Event[] {
-  return events.filter((e) => e.seq > seq && isIrreversible(e));
+/**
+ * The irreversible effects a rewind or fork to checkpoint `cp` leaves
+ * behind, by the rule `wyrd rewind` and `wyrd fork` use: effects after `cp`
+ * on the current branch and its ancestry back to `cp`'s branch. Effects on a
+ * branch that was already left are not repeated; the rewind or fork that
+ * left it listed them. Without the branch tree (a bundle or a replay), every
+ * effect after `cp` counts.
+ */
+export function irreversibleAfter(
+  events: Event[],
+  cp: { seq: number; branch: string },
+  tree?: Pick<api.Checkpoints, "current_branch" | "branches" | "checkpoints">,
+): Event[] {
+  if (!tree) return events.filter((e) => e.seq > cp.seq && isIrreversible(e));
+  // Each branch starts at the rewind or fork that created it.
+  const entered = new Map<string, number>();
+  for (const e of events) {
+    if (e.body.kind === "state.checkpoint.rewound" || e.body.kind === "state.checkpoint.forked") {
+      const id = e.body.payload.branch_id;
+      if (!entered.has(id)) entered.set(id, e.seq);
+    }
+  }
+  const spans: [number, number][] = [];
+  let hi = Number.POSITIVE_INFINITY;
+  let branch = tree.current_branch;
+  // Each step moves to an older branch; the bound stops a malformed tree.
+  for (let step = 0; step <= tree.branches.length; step += 1) {
+    spans.push([Math.max(entered.get(branch) ?? 0, cp.seq), hi]);
+    if (branch === cp.branch) break;
+    const from = tree.branches.find((b) => b.id === branch)?.forked_from;
+    const fork = tree.checkpoints.find((c) => c.id === from);
+    if (!fork || fork.seq <= cp.seq) break;
+    hi = fork.seq;
+    branch = fork.branch;
+  }
+  return events.filter(
+    (e) => isIrreversible(e) && spans.some(([lo, top]) => e.seq > lo && e.seq <= top),
+  );
 }
 
 export interface Turn {

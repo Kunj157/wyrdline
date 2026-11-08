@@ -20,7 +20,7 @@ pub fn run(args: &Args) -> anyhow::Result<u8> {
         landlock_abi: landlock_abi_from_child(),
         uid: rustix::process::getuid().as_raw(),
     };
-    let mut env = Env::new("/", probes);
+    let mut env = Env::new("/", probes).with_sensord_socket(wyrd_doctor::sensord_socket_path());
     env.mask = std::env::var("WYRD_DOCTOR_MASK").ok();
     let report = wyrd_doctor::run(&env);
 

@@ -65,7 +65,8 @@ pub fn doctor_report(wyrd_bin: &Path) -> wyrd_doctor::Report {
             landlock_abi,
             uid: rustix::process::getuid().as_raw(),
         },
-    );
+    )
+    .with_sensord_socket(wyrd_doctor::sensord_socket_path());
     env.mask = std::env::var("WYRD_DOCTOR_MASK").ok();
     wyrd_doctor::run(&env)
 }
@@ -81,10 +82,17 @@ pub async fn capabilities(
 }
 
 pub async fn metrics(State(s): State<Arc<AppState>>) -> impl IntoResponse {
-    let data = s.data.clone();
-    let snap = tokio::task::spawn_blocking(move || crate::Snapshot::read(&data))
-        .await
-        .unwrap_or_default();
+    let st = s.clone();
+    let snap = tokio::task::spawn_blocking(move || {
+        let mut cache = st
+            .metrics
+            .tallies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::Snapshot::read(&st.data, &mut cache)
+    })
+    .await
+    .unwrap_or_default();
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         s.metrics.render(&snap),

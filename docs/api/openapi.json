@@ -200,10 +200,20 @@
         "properties": {
           "branch": {
             "$ref": "#/components/schemas/Branch"
+          },
+          "irreversible_seqs": {
+            "description": "Seqs of the network effects after the checkpoint, on the branch that\nwas left, that the rewind or fork cannot undo (the same list `wyrd\nrewind` and `wyrd fork` print). Empty when there are none.",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "branch"
+          "branch",
+          "irreversible_seqs"
         ],
         "type": "object"
       },
@@ -2662,7 +2672,7 @@
         "type": "object"
       },
       "Relaunching": {
-        "description": "A rewind or fork handed to a detached `wyrd … --relaunch` (202).",
+        "description": "A rewind or fork handed to a detached `wyrd … --relaunch` (202). The\nrewind or fork happens in that process, so this answer has no\n`irreversible_seqs`: the warning goes to its `relaunch.log`, and a\nrewind's list is in its `checkpoint.rewound` event.",
         "properties": {
           "pid": {
             "format": "uint32",

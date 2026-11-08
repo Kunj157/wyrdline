@@ -46,6 +46,8 @@ In the repository you want the agent to work on:
 wyrd run --policy policies/default.wasm -- claude -p "fix the failing cart test"
 ```
 
+`policies/default.wasm` is built in a checkout by `make policies` ([install](install.md#from-source)). A release archive does not contain it, so outside a checkout pass the path of the policy you use.
+
 What happens:
 
 - The agent starts inside a **Cell**: its own cgroup, mount and user
@@ -83,7 +85,7 @@ wyrd run -- claude                                   # no policy: record, checkp
 wyrd run --observe -- claude …                       # no sandbox, no checkpoints: record only
 wyrd run --name "cart fix" --workspace ~/shop -- …   # name it; sandbox a directory other than the cwd
 wyrd run --deny-tool WebFetch --deny-tool 'mcp__github__*' -- …   # a static deny list, no policy needed
-wyrd run --agent fakeagent -- wyrd-fakeagent run demo/scenarios/basic.wyrdscript.toml   # the scripted agent
+wyrd run --agent fakeagent -- wyrd-fakeagent run demo/scenarios/basic.wyrdscript.toml   # the scripted agent; its workspace needs greet.txt and old.txt, and WYRD_SCENARIO_SECRET set
 ```
 
 Every session id is a ULID; any unique prefix works in the commands
@@ -136,14 +138,25 @@ sessions, where findings are acknowledged or marked false positives.
 ```sh
 wyrd checkpoints <session>          # c1, c2, … per branch
 wyrd rewind <session> c3            # new branch from checkpoint 3; --relaunch starts the agent on it
-wyrd fork <session> c3 --name b     # the same, with a name
-wyrd diff <session> c3 head         # + added, - removed, ~ modified between two checkpoints or branches
-wyrd apply <session> head --dry-run # what would change in the real workspace
-wyrd apply <session> head           # write it; refuses (exit 4) if you changed those files meanwhile, --force overrides
+wyrd fork <session> c3 --name side  # the same, with a name (not b: the rewind just named its branch b)
+wyrd diff <session> c3 a            # + added, - removed, ~ modified from c3 to branch a's head (a is the branch before the rewind)
+wyrd apply <session> a --dry-run    # what would change in the real workspace
+wyrd apply <session> a              # write it; refuses (exit 4) if you changed those files meanwhile, --force overrides
 ```
+
+A file that already holds what `apply` would write, such as after an
+earlier `apply`, is not a conflict.
 
 Old branches are never modified; `apply` is the only command that
 touches the real working tree.
+
+A rewind cannot take back network requests the agent made after the
+checkpoint. When there are any, `wyrd rewind` prints a warning on stderr
+with one line per request (its seq, address, port and verdict), and the
+`state.checkpoint.rewound` event lists the same seqs in
+`irreversible_seqs`. `wyrd fork` prints the same warning, but
+`state.checkpoint.forked` has no such list. Nothing is printed when the
+list is empty.
 
 An agent connected through `wyrd mcp` can ask for a rewind but cannot do
 one itself. The request is recorded in the ledger and waits for you:

@@ -181,9 +181,16 @@ pub struct Stopped {
 #[derive(Debug, Serialize, JsonSchema, TS)]
 pub struct BranchCreated {
     pub branch: Branch,
+    /// Seqs of the network effects after the checkpoint, on the branch that
+    /// was left, that the rewind or fork cannot undo (the same list `wyrd
+    /// rewind` and `wyrd fork` print). Empty when there are none.
+    pub irreversible_seqs: Vec<u64>,
 }
 
-/// A rewind or fork handed to a detached `wyrd … --relaunch` (202).
+/// A rewind or fork handed to a detached `wyrd … --relaunch` (202). The
+/// rewind or fork happens in that process, so this answer has no
+/// `irreversible_seqs`: the warning goes to its `relaunch.log`, and a
+/// rewind's list is in its `checkpoint.rewound` event.
 #[derive(Debug, Serialize, JsonSchema, TS)]
 pub struct Relaunching {
     pub relaunching: bool,

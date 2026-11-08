@@ -27,7 +27,18 @@ By decision (plan scope, not for lack of time):
   machine has happened. Wyrdline denies forbidden connections before
   they happen (cgroup BPF, Landlock ports) and flags allowed ones; it
   cannot reverse them. The same holds for anything the agent did
-  outside the overlay through an allowed channel.
+  outside the overlay through an allowed channel. A rewind or fork does
+  not undo them either: `wyrd rewind` and `wyrd fork` warn about each
+  network effect after the checkpoint, denied attempts included. The
+  `state.checkpoint.rewound` event lists them in `irreversible_seqs`; a
+  fork's event does not. Studio's rewind and fork dialogs list the
+  effects before you confirm, by the same branch rule as the CLI (in a
+  bundle or replay, which has no branch tree, every effect after the
+  checkpoint). They count allowed connections and writes outside the
+  Cell; the CLI also lists denied connection attempts.
+  The daemon API's rewind and fork responses return the same list as the
+  CLI in `irreversible_seqs`, except a relaunch (202), which runs detached
+  ([quick start](quick-start.md#4-rewind-fork-apply-20-s)).
 - **No node-wide or cluster capture.** No Kubernetes operator, no
   DaemonSet mode: Wyrdline records sessions it starts with `wyrd run`
   (locally or in the GitHub Action).
@@ -65,7 +76,12 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
   resolved by `wyrd run` (again every 60 s) into addresses for the
   cgroup `connect4`/`connect6` programs. A CDN or shared address that
   an allowed name resolves to is allowed for every other name on it.
-  DNS itself is not intercepted.
+  DNS itself is not intercepted. A connect is recorded with a host name
+  (`dns_name`) only when its address is one an allowed name resolved to in
+  that session. The name is `wyrd run`'s own resolution of the policy's
+  allowed hosts, not an answer the agent received: an address the agent
+  reached through another name, or one no allowed name resolved to, is
+  recorded with the address alone.
 - **UDP.** The connect programs decide `connect()`; TCP and connected
   UDP are covered, unconnected UDP (`sendto` without `connect`) is not.
 - **Exec denial is detect-and-stop.** `exec-deny` and `on-effect` run
@@ -120,6 +136,26 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
   `WYRD_LLM_MAX_COST_USD`, 0.50 by default; the cost per session has not
   been measured from live runs, [#212](https://github.com/Kunj157/wyrdline/issues/212)), and only ever adds claims
   whose quote is a verbatim substring of the transcript.
+- **D003 pairs a secret read with any connect in the agent's tree.** A
+  secret read (kernel-reported, a tool call whose path argument names a
+  secret, or a command that names one) is paired with a connect when the
+  connect comes within `egress_window_ms` (10 s by default) and both
+  processes are in the agent's process tree. The tree includes the agent's
+  root process. The demo scenario (a `.env` read by one tool call, then
+  `curl` from another) needs only sibling pairing. The root-inclusive tree
+  is a deliberate superset of that. It exists because the agent root can
+  read a tool's output, which may contain the secret, and send it over its
+  own socket. So a read by a tool subprocess also pairs with a connect the
+  agent root makes itself, for example to its model or telemetry endpoint.
+  That is intended. It also means an unrelated root connect in the window
+  can be paired with a read it had nothing to do with. Real-agent example
+  (2026-11-08, the first real-agent run of the system test): `npm test`
+  read `~/.npmrc`, and the agent root's telemetry connect, denied by
+  policy, came within 10 s. D003 fired twice (critical). Mark such a
+  finding as a false positive with `wyrd triage` when the connect is known
+  to be unrelated; the rule itself is not narrowed. The eval case
+  `d003-pos-subprocess-read-root-connect` pins this pairing, so a change
+  to it has to be deliberate.
 - **Redaction is pattern-based.** The `standard` level catches known
   secret formats, auth headers, URL passwords, and high-entropy tokens;
   `strict` adds user and host names. A secret that looks like ordinary
@@ -166,9 +202,19 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
 
 ## Operational
 
-- **Checkpoints are slow for large changes.** At 1.0 the checkpoint p95
-  was 7.22 s for 200 files and a 50 MB delta, against a 150 ms target; the
-  target is missed and tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239)
+- **No `wyrd backup` or `wyrd restore` yet** ([#318](https://github.com/Kunj157/wyrdline/issues/318)).
+  To back up, stop the sessions (`wyrd stop`, or wait for them to finish),
+  then copy the data directory (`$WYRD_DATA_DIR`, else
+  `$XDG_DATA_HOME/wyrdline`, else `~/.local/share/wyrdline`): the ledgers
+  with their `-wal` and `-shm` files, `cas/`, `sessions/`, and
+  `keys/host.key`, which stays mode 0600. Overlay `work/` directories may be
+  root-owned scratch space and need not be copied. The daemon token is not
+  in the data directory (`wyrd token path`).
+- **Checkpoints miss their latency target for large changes.** For 200
+  files and a 50 MB delta the checkpoint p95 is 158.7 ms on the development
+  machine, against a 150 ms target, and 260–530 ms on a GitHub-hosted
+  runner, whose disk is slower. The target is missed and tracked in
+  [#239](https://github.com/Kunj157/wyrdline/issues/239)
   ([performance](results/perf-v1.0.md)).
 - `wyrd-sensord` runs as root, not as a dedicated user. After it attaches
   its programs it keeps only `CAP_BPF`; the unit's comments explain why it
@@ -180,8 +226,11 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
   session directory.
 - Applying a subset of paths (`wyrd apply --paths`) is not implemented;
   `apply` writes a whole checkpoint or branch.
-- `wyrd gc` does not exist yet; the CAS is never garbage-collected
-  automatically.
+- `wyrd gc` deletes the content store's chunks that no session's checkpoint
+  refers to, or with `--dry-run` only reports them. It waits at most ten
+  seconds for a checkpoint or import in progress, then fails without
+  deleting. It does not delete a checkpoint or any session: history is kept
+  as long as its session exists ([#296](https://github.com/Kunj157/wyrdline/issues/296)).
 - The sensor sees exactly the syscalls its programs trace
   ([sensor](architecture/sensor.md)); file operations issued through
   other interfaces (for example `io_uring`) are not among them. Reads
