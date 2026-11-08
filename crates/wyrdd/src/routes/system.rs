@@ -65,7 +65,8 @@ pub fn doctor_report(wyrd_bin: &Path) -> wyrd_doctor::Report {
             landlock_abi,
             uid: rustix::process::getuid().as_raw(),
         },
-    );
+    )
+    .with_sensord_socket(wyrd_doctor::sensord_socket_path());
     env.mask = std::env::var("WYRD_DOCTOR_MASK").ok();
     wyrd_doctor::run(&env)
 }

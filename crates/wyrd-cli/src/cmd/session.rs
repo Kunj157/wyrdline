@@ -398,13 +398,16 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
         Some(w) => w.clone(),
         None => std::env::current_dir()?,
     };
-    let doctor = wyrd_doctor::run(&wyrd_doctor::Env::new(
-        "/",
-        wyrd_doctor::Probes {
-            landlock_abi: None,
-            uid: rustix::process::getuid().as_raw(),
-        },
-    ));
+    let doctor = wyrd_doctor::run(
+        &wyrd_doctor::Env::new(
+            "/",
+            wyrd_doctor::Probes {
+                landlock_abi: None,
+                uid: rustix::process::getuid().as_raw(),
+            },
+        )
+        .with_sensord_socket(wyrd_doctor::sensord_socket_path()),
+    );
     let policy_path = a
         .policy
         .as_ref()

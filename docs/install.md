@@ -208,7 +208,7 @@ it; exit code 2 when Cell mode is not possible.
 | `userns` | unprivileged user namespaces | the Cell cannot be created directly; see the two ways below |
 | `overlay_userns` | overlayfs, kernel ≥ 5.11 | **no Cell mode**: no checkpoints, rewind, or fork |
 | `cgroup_sock_addr` | kernel ≥ 4.17 and cgroup v2 | egress cannot be filtered in the kernel |
-| `sensord` | `wyrd-sensord` listening at `/run/wyrdline/sensord.sock` | only intent (hooks, MCP, OTLP) is captured, not kernel effects |
+| `sensord` | `wyrd-sensord` listening at `/run/wyrdline/sensord.sock`, or at `$WYRD_SENSORD_SOCKET` when that is set (the check probes the same socket the client connects to) | only intent (hooks, MCP, OTLP) is captured, not kernel effects |
 
 The summary line says what the machine supports:
 `Cell mode: yes   Kernel capture: yes   Kernel network enforcement: yes`.

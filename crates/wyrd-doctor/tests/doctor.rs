@@ -208,3 +208,27 @@ fn kernel_version_parsing() {
     assert_eq!(parse_kernel_version("garbage"), None);
     assert_eq!(parse_kernel_version(""), None);
 }
+
+#[test]
+fn sensord_check_probes_the_configured_socket() {
+    // `WYRD_SENSORD_SOCKET` moves the socket the client connects to. The doctor
+    // must probe that path, not the system default under the root.
+    let dir = tempfile::tempdir().unwrap();
+    ubuntu_2404(dir.path());
+    write(dir.path(), "run/wyrdline/sensord.sock", "");
+    let scratch = tempfile::tempdir().unwrap();
+    let configured = scratch.path().join("sensord.sock");
+
+    let r = run(&env(dir.path(), Some(7)).with_sensord_socket(&configured));
+    let c = r.get(CheckId::Sensord).unwrap();
+    assert_eq!(c.status, Status::Missing, "the root default must not count");
+    assert!(
+        c.detail.contains(&configured.display().to_string()),
+        "the detail names the probed path: {}",
+        c.detail
+    );
+
+    write(scratch.path(), "sensord.sock", "");
+    let r = run(&env(dir.path(), Some(7)).with_sensord_socket(&configured));
+    assert_eq!(r.get(CheckId::Sensord).unwrap().status, Status::Ok);
+}
