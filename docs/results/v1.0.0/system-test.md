@@ -38,7 +38,7 @@ step checks its result, and the script fails if any check fails. This run:
 | 23.7  | Offline, collaboration | **Pass** for export and scan; browser half covered by CI only |
 | 23.8  | Backtest               | **Pass**                                                      |
 | 23.9  | CI                     | **Pass** in a test repo; Hub upload not run (no Hub)          |
-| 23.10 | Observability          | Not run: Hub dashboards need Docker                           |
+| 23.10 | Observability          | **Pass** by tests (CI evidence, decision); limits below       |
 | 23.11 | Release evidence       | Partial: this file and `perf-v1.0.md` so far                  |
 
 ## Suites
@@ -285,6 +285,37 @@ request, and its PR #1, run 42477656970, passed both jobs:
 The Hub upload was not run: the test repository has no Hub. Hub ingest is
 covered by `Hub · Postgres and MinIO integration` and the Action's
 `hub-upload.test.sh`.
+
+## 23.10 Observability
+
+By decision (2026-11-08) CI evidence counts here.
+
+- **The daemon's `/v1/metrics`** exports every number the step names since
+  #283:
+  - events by plane (`rate()` gives the ingest rate)
+  - dropped effects and sensor losses
+  - a histogram of checkpoint durations
+  - denials by kind and divergences by rule
+  - judge runs, tokens and estimated cost
+
+  `metrics_count_ledger_numbers_and_follow_new_events` and
+  `metrics_skip_an_unreadable_ledger_and_say_so` (`crates/wyrdd/tests`, in
+  `Rust · fmt, clippy, tests, build`) check them against a real session
+  ledger. The checkpoint histogram counts the duration that
+  `state.checkpoint.created` records. That stops before the ledger append
+  and the state save, which the 150 ms target also counts.
+- **The Hub's numbers:** `stats_cover_the_dashboard`
+  (`crates/wyrd-hub/tests/containers_analytics.rs`, in `Hub · Postgres and
+  MinIO integration`) checks the org stats API against real uploads: sessions
+  per repository and agent, divergences per rule, denials, dropped events,
+  sensor losses, and judge tokens and cost.
+- **The Hub dashboard page** (`tests/e2e/hub.spec.ts`, in `Studio · end to
+  end`) shows sessions, divergence rates, denials and loss, but against a
+  stand-in Hub API, not a running Hub.
+
+Not covered: no test opens the dashboard against a running Hub; `make hub-up`
+(#291) makes that possible. The judge numbers are zero in every run so far:
+no live model run has been recorded (#212).
 
 ## Still open for v1.0.0
 
