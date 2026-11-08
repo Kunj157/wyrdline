@@ -134,6 +134,9 @@ pub enum Step {
     Rename(PathBuf, PathBuf),
     /// A ledger event was appended (noted by the caller, see [`note_step`]).
     LedgerAppend,
+    /// The ledger commit just appended was synced to disk (noted by the
+    /// caller after a durable append).
+    LedgerSync,
 }
 
 /// The steps of the recording in progress, from any thread, or `None`.
