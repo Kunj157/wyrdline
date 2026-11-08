@@ -30,7 +30,15 @@ their own section, [analytics and search](#analytics-and-search).
 
 ## Run it
 
-Two ways:
+To try it on one machine, `make hub-up` builds the image from the
+checkout and starts it with PostgreSQL 17 and MinIO in Docker
+(`deploy/docker/compose.yaml`), on `http://127.0.0.1:7730`. It waits until
+`/readyz` answers. On first use it writes throwaway credentials to
+`deploy/docker/.env.hub` (git-ignored, mode 0600). `make hub-down` stops it
+and deletes its volumes. Nothing listens beyond loopback, there is no TLS
+and no OIDC: it is for development and the system test, not for a team.
+
+For a team, two ways:
 
 - **Container image** (`ghcr.io/kunj157/wyrdline-hub`, from
   `deploy/docker/hub.Dockerfile`). It is a distroless image that runs as

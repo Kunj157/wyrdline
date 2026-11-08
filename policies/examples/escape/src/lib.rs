@@ -15,7 +15,9 @@ impl Guest for Escape {
             fs_write_allow: Vec::new(),
             exec_deny: vec!["curl".into()],
             egress_allow_cidrs: vec!["10.0.0.0/8".into(), "127.0.0.0/8".into()],
-            egress_allow_hosts: Vec::new(),
+            // Loopback is allowed by prefix already; the name lets a test
+            // check that connects to an allowed host are named.
+            egress_allow_hosts: vec!["localhost".into()],
             egress_allow_ports: vec![443],
         }
     }

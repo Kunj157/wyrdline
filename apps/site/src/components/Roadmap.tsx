@@ -11,10 +11,11 @@ export function Roadmap() {
       <Reveal>
         <p className="text-sm font-semibold tracking-widest text-accent uppercase">Next</p>
         <h2 id="roadmap-title" className="mt-2 text-4xl font-semibold tracking-tight">
-          Where the thread goes next.
+          The phases behind 1.0.
         </h2>
         <p className="mt-4 max-w-2xl text-lg text-text-secondary">
-          Phases 0 to 8 are released. Each phase below gets its own section here when it ships.
+          Phases 0 to 14 are released with 1.0. The features above cover phases 2 to 9; the phases
+          below are 10 to 14.
         </p>
       </Reveal>
       <ol className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -47,9 +48,10 @@ export function GetStarted() {
             Build it from source
           </h2>
           <p className="mt-3 max-w-2xl text-text-secondary">
-            Linux with BTF and cgroup v2 (kernel 5.15 or newer). Signed packages arrive with the
-            launch; until then, build it yourself. <code className="font-mono">wyrd doctor</code>{" "}
-            reports what your kernel supports and what degrades without it.
+            Linux with BTF and cgroup v2 (kernel 5.15 or newer). Each release has signed archives
+            and a Debian package; or build it yourself.{" "}
+            <code className="font-mono">wyrd doctor</code> reports what your kernel supports and
+            what degrades without it.
           </p>
           <pre
             tabIndex={0}
