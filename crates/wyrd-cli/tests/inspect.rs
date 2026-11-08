@@ -50,6 +50,18 @@ fn env() -> Env {
     Env { tmp, data, id }
 }
 
+/// Append more synthetic events, so `wyrd events` prints more than a pipe
+/// buffer holds (64 KiB).
+fn grow_ledger(e: &Env) {
+    let session = Session::open(&e.data, &e.id).unwrap();
+    let mut ledger = wyrd_ledger::Ledger::open(session.dir().ledger()).unwrap();
+    for seed in 4..16 {
+        ledger
+            .append(wyrd_correlator::synth::session(seed).events)
+            .unwrap();
+    }
+}
+
 fn wyrd(e: &Env) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_wyrd"));
     c.env("WYRD_DATA_DIR", e.data.root())
@@ -236,4 +248,61 @@ fn daemon_status_exits_5_without_a_daemon() {
     assert_eq!(code, 5);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["running"], false);
+}
+
+#[test]
+fn a_reader_that_closes_early_gets_a_quiet_status_141() {
+    // `wyrd events … | head -n1`: the reader takes one line and goes away. The
+    // output is larger than a pipe buffer, so wyrd is still writing when the
+    // reader closes and gets EPIPE. That is not an error: it exits quietly
+    // with 141 (128 + SIGPIPE), the status a shell reports for a filter that
+    // was stopped by the pipe, and prints nothing.
+    use std::io::Read as _;
+    let e = env();
+    grow_ledger(&e);
+    let full = wyrd(&e).args(["events", &e.id]).output().unwrap();
+    assert!(
+        full.stdout.len() > 65_536,
+        "the output must not fit a pipe buffer ({} bytes)",
+        full.stdout.len()
+    );
+
+    let mut child = wyrd(&e)
+        .args(["events", &e.id])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let mut first = [0u8; 1];
+    stdout.read_exact(&mut first).unwrap();
+    drop(stdout);
+    let status = child.wait().unwrap();
+    let mut err = String::new();
+    stderr.read_to_string(&mut err).unwrap();
+    assert_eq!(status.code(), Some(141), "stderr: {err}");
+    assert!(err.is_empty(), "nothing is printed: {err}");
+}
+
+#[test]
+fn a_closed_pipe_shared_by_both_streams_still_exits_141() {
+    // `wyrd events … 2>&1 | head -n1`: stdout and stderr are one pipe. Once the
+    // reader is gone, stderr is closed too, so an error report written with
+    // eprintln! would panic and exit 101. Status 141 shows nothing was printed.
+    use std::io::Read as _;
+    let e = env();
+    grow_ledger(&e);
+    let (mut reader, writer) = std::io::pipe().unwrap();
+    let mut cmd = wyrd(&e);
+    cmd.args(["events", &e.id])
+        .stdout(writer.try_clone().unwrap())
+        .stderr(writer);
+    let mut child = cmd.spawn().unwrap();
+    drop(cmd);
+    let mut first = [0u8; 1];
+    reader.read_exact(&mut first).unwrap();
+    drop(reader);
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(141), "{status:?}");
 }
