@@ -8,6 +8,11 @@ requires a full repeat because #268 changed the Cell's apply, and #276 and
 #277 changed rewind and fork answers. Earlier runs: `c44f584` (2026-11-03) and
 `b307ba2` (2026-11-04, after the policy-runtime update #266).
 
+Repeated on 2026-11-08 at `2b7d7b1`, the branch of #286 (`dev` `8f6fe91` plus
+the fix), because #286 changes the Cell: the checkpoint event is now synced
+before `session.json` names it (#285). Every suite below gave the same result
+as on `a0fa527`, and `make system-test` again passed 30 of 30 checks.
+
 Machine: ws11, Ubuntu 24.04, kernel 6.17.0-14-generic, shared and loaded. The
 sensor ran as a throwaway `wyrd-sensord` through `sudo -n` on a temporary
 socket, as the privileged tests do; no system unit was installed. The agent is
