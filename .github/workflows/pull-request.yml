@@ -79,6 +79,33 @@ jobs:
         run: cargo run --quiet --locked -p wyrd-cli -- doctor || true
       - name: Privileged Cell tests
         run: make test-integration
+      - name: The AppArmor profile lets an unprivileged Cell start
+        # Hosted runners restrict unprivileged user namespaces through
+        # AppArmor, as Ubuntu does. Without deploy/apparmor/wyrd a Cell
+        # cannot start without a privileged helper; with it, it can.
+        run: |
+          set -euo pipefail
+          test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+          cargo build --quiet --locked -p wyrd-cli
+          wyrd=$PWD/target/debug/wyrd
+          attempt() { # $1: name; leaves rc, data and ws set
+            ws=$(mktemp -d) data=$(mktemp -d) rc=0
+            echo kept > "$ws/a.txt"
+            env -u WYRD_PRIVILEGED_HELPER WYRD_DATA_DIR="$data" \
+              "$wyrd" run --name "$1" --workspace "$ws" -- sh -c 'echo new > b.txt' || rc=$?
+          }
+          attempt without-profile
+          echo "without the profile: exit $rc"
+          test "$rc" != 0
+          make apparmor-install WYRD_BIN="$wyrd"
+          attempt with-profile
+          echo "with the profile: exit $rc"
+          test "$rc" = 0
+          WYRD_DATA_DIR=$data "$wyrd" sessions --json | jq -e '.[0].mode == "cell"'
+          sid=$(WYRD_DATA_DIR=$data "$wyrd" sessions --json | jq -r '.[0].id')
+          # The write went to the Cell's upper layer, not the workspace.
+          test "$(cat "$data/sessions/$sid/branches/a/upper/b.txt")" = new
+          test ! -e "$ws/b.txt" && test "$(cat "$ws/a.txt")" = kept
 
   hub:
     name: Hub · Postgres and MinIO integration

@@ -3,6 +3,7 @@ pub mod bundle;
 pub mod daemon;
 pub mod doctor;
 pub mod effects;
+pub mod gc;
 pub mod graph;
 pub mod guard;
 pub mod hook;
