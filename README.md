@@ -104,7 +104,7 @@ reproduce them: [performance at v1.0](docs/results/perf-v1.0.md).
 | Target | Measured | Result |
 |---|---|---|
 | Event loss at 50 k events/s | 49 863 events/s (run 2): 200 000 received, 0 dropped | met |
-| Checkpoint p95, 200 files, 50 MB delta (target ≤ 150 ms) | p95 7.22 s; median 5.52 s over 20 rounds | **missed**, tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239) |
+| Checkpoint p95, 200 files, 50 MB delta (target ≤ 150 ms) | p95 158.7 ms; median 139.9 ms over 3 runs × 20 rounds (7.22 s before #245) | **missed by 9 ms**, tracked in [#239](https://github.com/Kunj157/wyrdline/issues/239) |
 | Rewind p95, 1 GB workspace (target ≤ 2 s) | p95 1.16 s; median 0.93 s over 10 rounds | met |
 | Denied-connect latency, p99 | 2.3–2.6 µs | met; the report explains why it is not compared with allowed connects |
 | Allowed-connect latency added, p99 (target ≤ 50 µs) | +0.2 µs (run 2), +1.4 µs (run 1) | met |
@@ -112,10 +112,12 @@ reproduce them: [performance at v1.0](docs/results/perf-v1.0.md).
 | Overhead on the `pnpm test` workload, captured | −0.5 % (run 2), −0.2 % (run 1), on a 120 ms workload | met, but the workload is too short to trust ([#240](https://github.com/Kunj157/wyrdline/issues/240)) |
 | Judge cost per session | not measured: needs a live `ANTHROPIC_API_KEY` | not measured ([#212](https://github.com/Kunj157/wyrdline/issues/212)) |
 
-**The checkpoint target is missed.** Checkpoint p95 is 7.22 s against a
-150 ms target, about 40× over. Even the fastest of the 20 rounds (5.00 s)
-misses it. The cost has not been profiled yet; it is tracked in
-[#239](https://github.com/Kunj157/wyrdline/issues/239).
+**The checkpoint target is missed.** Checkpoint p95 is 158.7 ms against a
+150 ms target. It was 7.22 s when first measured (#244), before #245
+replaced one fsync per chunk with `syncfs` barriers; the crash-consistency
+order is not weakened to close the rest. On the GitHub-hosted runner the same test measures 260–530 ms,
+because the runner's disk is slower. Where the remaining time goes is in
+[#239](https://github.com/Kunj157/wyrdline/issues/239#issuecomment-6698088538).
 
 On the syscall-dense stress workload (about 7 000 effects per run), a captured
 session costs +9.4 % (run 2) and +9.7 % (run 1). That is above the 5 % budget
