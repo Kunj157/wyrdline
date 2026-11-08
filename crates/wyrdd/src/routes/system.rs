@@ -81,10 +81,17 @@ pub async fn capabilities(
 }
 
 pub async fn metrics(State(s): State<Arc<AppState>>) -> impl IntoResponse {
-    let data = s.data.clone();
-    let snap = tokio::task::spawn_blocking(move || crate::Snapshot::read(&data))
-        .await
-        .unwrap_or_default();
+    let st = s.clone();
+    let snap = tokio::task::spawn_blocking(move || {
+        let mut cache = st
+            .metrics
+            .tallies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::Snapshot::read(&st.data, &mut cache)
+    })
+    .await
+    .unwrap_or_default();
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         s.metrics.render(&snap),

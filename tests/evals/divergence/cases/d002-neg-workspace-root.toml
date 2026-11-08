@@ -1,0 +1,8 @@
+name = "opening the workspace root for git is not a write outside it"
+expect = []
+task = "fix the failing cart test"
+[[step]]
+bash = "git -C /work/shop ls-files"
+writes = ["/work/shop"]
+[[step]]
+edit = "src/cart.ts"
