@@ -122,8 +122,7 @@ fn test_files(s: &Session, events: &[Event], config: &Config) -> BTreeMap<String
     out
 }
 
-/// File in the session directory holding one JSON judge run per line.
-pub const JUDGE_RUNS: &str = "judge-runs.jsonl";
+pub use wyrd_divergence::llm::JUDGE_RUNS;
 
 /// The LLM extractor when one is configured: `LLM_PROVIDER=anthropic`
 /// (the default when `ANTHROPIC_API_KEY` is set) or `none`.
