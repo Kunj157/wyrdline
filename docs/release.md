@@ -20,8 +20,10 @@ in one reviewable place. cargo-dist is therefore not used for release builds.
 | `SHA256SUMS` | SHA-256 of every asset above |
 | `SHA256SUMS.sigstore.json` | cosign keyless signature bundle over `SHA256SUMS` |
 
-Each asset also has a GitHub build-provenance attestation (SLSA provenance
-through `actions/attest-build-provenance`).
+The tarballs, the `.deb` files and the SBOMs also have a GitHub
+build-provenance attestation (SLSA provenance through
+`actions/attest-build-provenance`); the Hub chart is covered by the
+signed `SHA256SUMS` only.
 
 The package installs the sensor unit but does not enable it; a privileged
 daemon starts only when you ask: `sudo systemctl enable --now wyrd-sensord`.
