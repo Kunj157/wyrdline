@@ -186,7 +186,9 @@ jobs:
         with:
           tool: bpf-linker
       - name: Build the wyrd CLI (creates and pushes the bundles)
-        run: cargo build --locked -p wyrd-cli
+        run: |
+          cargo build --locked -p wyrd-cli
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
       - name: Create the first kind cluster
         uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
