@@ -133,6 +133,26 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
   `WYRD_LLM_MAX_COST_USD`, 0.50 by default; the cost per session has not
   been measured from live runs, [#212](https://github.com/Kunj157/wyrdline/issues/212)), and only ever adds claims
   whose quote is a verbatim substring of the transcript.
+- **D003 pairs a secret read with any connect in the agent's tree.** A
+  secret read (kernel-reported, a tool call whose path argument names a
+  secret, or a command that names one) is paired with a connect when the
+  connect comes within `egress_window_ms` (10 s by default) and both
+  processes are in the agent's process tree. The tree includes the agent's
+  root process. The demo scenario (a `.env` read by one tool call, then
+  `curl` from another) needs only sibling pairing. The root-inclusive tree
+  is a deliberate superset of that. It exists because the agent root can
+  read a tool's output, which may contain the secret, and send it over its
+  own socket. So a read by a tool subprocess also pairs with a connect the
+  agent root makes itself, for example to its model or telemetry endpoint.
+  That is intended. It also means an unrelated root connect in the window
+  can be paired with a read it had nothing to do with. Real-agent example
+  (2026-11-08, the first real-agent run of the system test): `npm test`
+  read `~/.npmrc`, and the agent root's telemetry connect, denied by
+  policy, came within 10 s. D003 fired twice (critical). Mark such a
+  finding as a false positive with `wyrd triage` when the connect is known
+  to be unrelated; the rule itself is not narrowed. The eval case
+  `d003-pos-subprocess-read-root-connect` pins this pairing, so a change
+  to it has to be deliberate.
 - **Redaction is pattern-based.** The `standard` level catches known
   secret formats, auth headers, URL passwords, and high-entropy tokens;
   `strict` adds user and host names. A secret that looks like ordinary
@@ -195,8 +215,11 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
   session directory.
 - Applying a subset of paths (`wyrd apply --paths`) is not implemented;
   `apply` writes a whole checkpoint or branch.
-- `wyrd gc` does not exist yet; the CAS is never garbage-collected
-  automatically.
+- The content store is never collected. `wyrd gc --dry-run` reports how many
+  chunks no session's checkpoint refers to and how many bytes collecting them
+  would free (no chunks are deleted); deleting them is not implemented yet, because it needs a
+  store-wide lock against a checkpoint writing at the same time
+  ([#296](https://github.com/Kunj157/wyrdline/issues/296)).
 - The sensor sees exactly the syscalls its programs trace
   ([sensor](architecture/sensor.md)); file operations issued through
   other interfaces (for example `io_uring`) are not among them. Reads
