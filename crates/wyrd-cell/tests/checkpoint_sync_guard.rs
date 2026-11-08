@@ -50,6 +50,27 @@ fn count(steps: &[Step], pred: impl Fn(&Step) -> bool) -> usize {
     steps.iter().filter(|t| pred(t)).count()
 }
 
+/// The checkpoint event is appended, then synced, and only then does the
+/// session record (`session.json`) name it (#285).
+fn assert_event_durable_before_record(steps: &[Step]) {
+    let event = positions(steps, |t| *t == Step::LedgerAppend);
+    let synced = positions(steps, |t| *t == Step::LedgerSync);
+    assert_eq!(synced.len(), 1, "one ledger sync: {steps:?}");
+    assert!(
+        event[0] < synced[0],
+        "the sync follows the event: {steps:?}"
+    );
+    let record = positions(
+        steps,
+        |t| matches!(t, Step::Rename(_, to) if to.ends_with("session.json")),
+    );
+    assert!(!record.is_empty(), "the record is written: {steps:?}");
+    assert!(
+        record.iter().all(|r| *r > synced[0]),
+        "the record follows the synced event: {steps:?}"
+    );
+}
+
 fn positions(steps: &[Step], pred: impl Fn(&Step) -> bool) -> Vec<usize> {
     steps
         .iter()
@@ -120,6 +141,7 @@ fn a_checkpoint_of_fifty_changed_files_makes_exactly_two_barriers_and_no_per_fil
         second < event[0],
         "the event is written after the second barrier: {steps:?}"
     );
+    assert_event_durable_before_record(&steps);
 }
 
 #[test]
@@ -150,4 +172,5 @@ fn a_checkpoint_with_no_changes_pins_its_current_barriers_and_event() {
         record.iter().all(|r| *r > event),
         "the record follows the event: {steps:?}"
     );
+    assert_event_durable_before_record(&steps);
 }
