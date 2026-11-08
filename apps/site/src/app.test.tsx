@@ -16,7 +16,7 @@ describe("landing page", () => {
     for (const f of features) {
       expect(screen.getByRole("heading", { level: 3, name: f.title })).toBeInTheDocument();
     }
-    const next = screen.getByRole("region", { name: "Where the thread goes next." });
+    const next = screen.getByRole("region", { name: "The phases behind 1.0." });
     expect(within(next).getAllByRole("listitem")).toHaveLength(roadmap.length);
   });
 

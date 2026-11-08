@@ -104,7 +104,7 @@ Yes: `wyrd run -- <agent>` records, checkpoints, and lets you rewind,
 with the agent's own permission prompts untouched. `--deny-tool` adds a
 static deny list without writing a policy. `--policy` adds decisions
 per tool call, `ask` prompts, kernel file and egress rules, and
-effect-time stops. The shipped `policies/default.wasm` is the sensible
+effect-time stops. `policies/default.wasm`, built from a checkout with `make policies` (the release archives do not include policies), is the sensible
 start: writes only inside the workspace, asks before reading secrets or
 fetching unknown hosts, denies force-pushes and `rm -rf`-shaped
 commands, egress only to package registries, GitHub, and the model API
