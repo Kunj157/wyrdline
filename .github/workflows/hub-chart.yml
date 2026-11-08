@@ -206,6 +206,7 @@ jobs:
             echo "S3_KEY=$(openssl rand -hex 12)"
             echo "S3_SECRET=$(openssl rand -hex 24)"
           } > "$secrets"
+          # shellcheck source=/dev/null
           . "$secrets"
           kubectl apply -f deploy/kind/hub-test/dependencies.yaml
           kubectl -n "$NAMESPACE" create secret generic postgres-auth --from-literal=password="$PG_PASS"
@@ -359,7 +360,7 @@ jobs:
           test "$n" = "$RESTORE_BUNDLES"
           test "$bad" = 0
           # Every uploaded bundle must come back byte-identical: compare hashes.
-          while read -r idx sha sid; do
+          while read -r idx sha _sid; do
             cut -d' ' -f2 restored/downloaded.txt | grep -qx "$sha" \
               || { echo "::error::uploaded bundle $idx ($sha) is not among the restored bundles"; exit 1; }
           done < bundles/uploaded.tsv
