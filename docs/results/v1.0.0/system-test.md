@@ -53,7 +53,7 @@ step checks its result, and the script fails if any check fails. This run:
 | 23.8  | Backtest               | **Pass**                                                      |
 | 23.9  | CI                     | **Pass** in a test repo; Hub upload not run (no Hub)          |
 | 23.10 | Observability          | **Pass** by tests (CI evidence, decision); limits below       |
-| 23.11 | Release evidence       | **Pass** as an index (`v1.0.0/README.md`); the restore test and the kernel matrix on the candidate are listed under "Still open" |
+| 23.11 | Release evidence       | **Pass**: the index (`v1.0.0/README.md`) and the Hub restore test (`hub-restore.md`); the tag run adds the kernel matrix and install timing |
 
 ## Suites
 
@@ -372,16 +372,17 @@ bundle verified again and every hash equal to the uploaded one (run
 
 ## Still open for v1.0.0
 
-- The kernel matrix on the release candidate. The last nightly was red on the
-  vmtest download (run 42465527897); #307 downloads vmtest once and checks its
-  SHA-256. A green `kernel-matrix.yml` run on the candidate is required before
-  the tag.
+- The kernel matrix on the tag. The 2026-11-08 nightly was red on the vmtest
+  download (run 42465527897); #307 downloads it once and checks its SHA-256.
+  After #307, run 42505435650 on `dev` at `836471c` passed on all six VM
+  kernels and both runner kernels. The commits merged after it do not touch
+  the sensor or eBPF crates; the release workflow runs the matrix again on the
+  tag and gates on it.
 - Install timing from the published release on a clean Ubuntu 24.04 runner
   (plan §29, under 2 minutes). The only timing so far is the release workflow's
   smoke install of v0.13.1 (about 32 s), which installs from the workflow's own
   built assets.
 - The tag and the release notes (`release/launch` to `main`, tag `v1.0.0`).
-- #288: D007 flags the agent's own model-API traffic.
 - #239: checkpoint p95 above the 150 ms target (reported, not gating).
 - The 5-minute video (#169, plan §29) does not block v1.0.0. It moved to a
   post-1.0 follow-up issue, #298, by the maintainer's decision (2026-11-08).
