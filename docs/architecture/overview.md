@@ -51,7 +51,7 @@ flowchart LR
 | Plane | Sources | Examples |
 |---|---|---|
 | Intent | hook adapters, MCP gateway, OTLP GenAI spans | tool call started/finished, assistant message |
-| Effect | eBPF programs filtered by session cgroup | exec, file write/rename/unlink, connect, DNS |
+| Effect | eBPF programs filtered by session cgroup | exec, file write/rename/unlink, connect (named when an allowed host name resolved to its address; DNS is not captured) |
 | State | Cell checkpoints | checkpoint created / rewound / forked / applied |
 | Guard | policy host, kernel enforcement | allow / deny / ask decisions |
 | Verdict | divergence engine | claim extracted, divergence raised |
