@@ -132,8 +132,8 @@ the directory to `GITHUB_PATH`.
 
 ### `.deb`
 
-Each release ships a Debian package; its name and contents are listed in
-the release notes of that version. Verify its
+Each release ships a Debian package (contents in [releases](release.md#assets)).
+Verify its
 checksum against the signed `SHA256SUMS` as above before
 `sudo dpkg -i <file>.deb`, then check `wyrd doctor`: if the package
 did not enable the sensor, finish with step 3.

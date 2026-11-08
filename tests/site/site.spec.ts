@@ -27,7 +27,7 @@ test("renders every section with no console errors", async ({ page }) => {
     "What an agent says it did and what it actually did can differ.",
     "Record, correlate, rewind.",
     "The real Studio, in your browser.",
-    "Where the thread goes next.",
+    "The phases behind 1.0.",
     "Build it from source",
   ]) {
     await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
