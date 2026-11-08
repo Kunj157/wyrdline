@@ -1,7 +1,10 @@
 # Full system test for v1.0.0 — plan §23
 
-Status: **in progress. v1.0.0 is not declared.** Steps below that were not run
-are listed as not run, not as passed.
+Status: **v1.0.0: all steps recorded.** The final plan §24 run passed on the
+release candidate (below). The maintainer moved the 5-minute video to #298 and
+accepted the real-agent run (§23.4) as the pass for that step. What remains
+for the tag is listed under "Still open". v1.0.0 is declared when the tag is
+pushed.
 
 Run on 2026-11-06 against `dev` at `a0fa527`, with a debug build. Plan §24
 requires a full repeat because #268 changed the Cell's apply, and #276 and
@@ -10,8 +13,19 @@ requires a full repeat because #268 changed the Cell's apply, and #276 and
 
 Repeated on 2026-11-08 at `2b7d7b1`, the branch of #286 (`dev` `8f6fe91` plus
 the fix), because #286 changes the Cell: the checkpoint event is now synced
-before `session.json` names it (#285). Every suite below gave the same result
-as on `a0fa527`, and `make system-test` again passed 30 of 30 checks.
+before `session.json` names it (#285). Every suite gave the same result as on
+`a0fa527`, and `make system-test` passed 30 of 30 checks.
+
+**Final repeat on 2026-11-08 at `bdd98d8`, the release candidate** (the merge
+of #314, with every queued PR merged into `dev`). The release branch
+`release/launch` moved to `a667d87`, a merge of `main` with the same tree
+(`fe16da3`), so these results apply to that head too. Nine targets ran in
+order from a clean detach, with a debug build and the same machine:
+`make lint-rust`, `make test-rust`, `make system-test`,
+`make test-integration`, `make test-escape`, `make test-scenarios`,
+`make demo`, `make test-evals`. All nine exited 0. Counts are in the table
+under "Suites". The privileged targets ran through `sudo -n`, with throwaway
+sensors.
 
 Machine: ws11, Ubuntu 24.04, kernel 6.17.0-14-generic, shared and loaded. The
 sensor ran as a throwaway `wyrd-sensord` through `sudo -n` on a temporary
@@ -39,18 +53,20 @@ step checks its result, and the script fails if any check fails. This run:
 | 23.8  | Backtest               | **Pass**                                                      |
 | 23.9  | CI                     | **Pass** in a test repo; Hub upload not run (no Hub)          |
 | 23.10 | Observability          | **Pass** by tests (CI evidence, decision); limits below       |
-| 23.11 | Release evidence       | Partial: this file and `perf-v1.0.md` so far                  |
+| 23.11 | Release evidence       | **Pass**: the index (`v1.0.0/README.md`) and the Hub restore test (`hub-restore.md`); the tag run adds the kernel matrix and install timing |
 
 ## Suites
 
 | Target                          | Result                      |
 | ------------------------------- | --------------------------- |
-| `make demo`                     | 1 of 1 passed               |
+| `make lint-rust`                | clean (clippy, fmt)         |
+| `make test-rust`                | 538 of 538 passed, 7 skipped |
+| `make system-test`              | 30 of 30 checks passed      |
 | `make test-integration`         | 27 of 27 passed (1 leaky)   |
 | `make test-escape`              | 2 of 2 passed               |
 | `make test-scenarios`           | 4 of 4 passed               |
-| `-p wyrd-bundle -p wyrd-policy` | 64 of 64 passed, corpus too |
-| `make system-test`              | 30 of 30 checks passed      |
+| `make demo`                     | 1 of 1 passed               |
+| `make test-evals`               | 10 of 10 rules at precision and recall 1.000 on 96 divergence cases; regex extractor precision 0.987, recall 0.763 on 155 assistant turns (LLM extractor not measured) |
 
 The leaky test is `privileged_drops_are_counted_with_a_tiny_ring_buffer`
 (sensord golden), the same one as in every earlier run.
@@ -345,9 +361,28 @@ Not covered: no test opens the dashboard against a running Hub. `make hub-up`
 (#291) makes that possible, but no CI job opens the dashboard on it. The judge numbers are zero in every run so far:
 no live model run has been recorded (#212).
 
+## 23.11 Release evidence
+
+The evidence index is [`v1.0.0/README.md`](README.md): each committed report,
+the CI runs behind each gate, and what the release produces. The Hub restore
+test (plan §27), run in CI, is recorded in [`hub-restore.md`](hub-restore.md):
+a three-bundle Hub restored into a fresh kind cluster in 53 s, with every
+bundle verified again and every hash equal to the uploaded one (run
+42490850455). The operator procedure is in [docs/hub.md](../../hub.md#back-up-and-restore).
+
 ## Still open for v1.0.0
 
+- The kernel matrix on the tag. The 2026-11-08 nightly was red on the vmtest
+  download (run 42465527897); #307 downloads it once and checks its SHA-256.
+  After #307, run 42505435650 on `dev` at `836471c` passed on all six VM
+  kernels and both runner kernels. The commits merged after it do not touch
+  the sensor or eBPF crates; the release workflow runs the matrix again on the
+  tag and gates on it.
+- Install timing from the published release on a clean Ubuntu 24.04 runner
+  (plan §29, under 2 minutes). The only timing so far is the release workflow's
+  smoke install of v0.13.1 (about 32 s), which installs from the workflow's own
+  built assets.
+- The tag and the release notes (`release/launch` to `main`, tag `v1.0.0`).
+- #239: checkpoint p95 above the 150 ms target (reported, not gating).
 - The 5-minute video (#169, plan §29) does not block v1.0.0. It moved to a
   post-1.0 follow-up issue, #298, by the maintainer's decision (2026-11-08).
-- #288: D007 flags the agent's own model-API traffic.
-- #239: checkpoint p95 above the 150 ms target (reported, not gating).

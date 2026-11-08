@@ -14,7 +14,7 @@ is not repeated here.
 | Performance at 1.0 (plan §18.2) | [../perf-v1.0.md](../perf-v1.0.md) | Event loss, checkpoint, rewind, connect latency, capture overhead, with both runs and the method. Checkpoint p95 is 158.7 ms against 150 ms: missed, tracked in #239 |
 | Enforcement latency | [../enforcement.md](../enforcement.md) | Denied-connect latency, and the escape-suite attempts with their outcomes |
 | Attribution | [../attribution.md](../attribution.md) | Correlator precision and recall on 300 generated sessions with known ground truth (`wyrd-correlator`, test `eval`) |
-| Divergence and claim evals | [../evals-baseline.json](../evals-baseline.json) | Per-rule precision and recall on 91 labelled divergence cases and 155 labelled assistant turns. The datasets are synthetic, so these are an upper bound for unseen agents |
+| Divergence and claim evals | [../evals-baseline.json](../evals-baseline.json) | Per-rule precision and recall on 96 labelled divergence cases and 155 labelled assistant turns (`make test-evals`, 2026-11-08). The datasets are synthetic, so these are an upper bound for unseen agents |
 | Studio river performance | [../studio-perf.md](../studio-perf.md) | Canvas2D at 60 fps (p95 frame 16.8 ms) with 200 000 events in headless Chromium; WebGPU on a software rasteriser at 30 fps. See the gap below |
 | Sensor and earlier performance | [../perf-sensor.md](../perf-sensor.md) | Design history of the sensor's overhead and throughput |
 | Threat model and 1.0 security review | [../../threat-model/scope.md](../../threat-model/scope.md), [../../threat-model/review-2026.md](../../threat-model/review-2026.md) | Trust boundaries, threats and their mitigations, and the review findings that were fixed before 1.0 |
