@@ -1,12 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! `wyrd gc --dry-run`: the roots come from the session records and the
-//! ledgers, an unreadable session stops the report, and nothing is deleted
-//! (#296).
+//! `wyrd gc`: the roots come from the session records and the ledgers, an
+//! unreadable session stops the collection, a dry run deletes nothing, and a
+//! collection deletes only what no checkpoint reaches (#296).
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
-use wyrd_cas::{Cas, Manifest};
+use wyrd_cas::{Cas, ChunkHash, Manifest};
 use wyrd_cell::session::CreateOptions;
 use wyrd_cell::state::{self, CheckpointRecord};
 use wyrd_cell::{DataDir, Session, gc};
@@ -125,6 +126,78 @@ fn an_unreadable_record_or_ledger_stops_the_report() {
     std::fs::write(&ledger, b"not a database").unwrap();
     let e = gc::dry_run(&data).unwrap_err().to_string();
     assert!(e.contains("ledger cannot be read"), "{e}");
+}
+
+#[test]
+fn a_collection_deletes_only_what_no_checkpoint_reaches() {
+    let (_tmp, data, _s) = store();
+    let before = chunk_files(&data);
+    let r = gc::collect(&data, false, Duration::ZERO).unwrap();
+    assert_eq!(r.deleted, 1, "{r:?}");
+    assert_eq!(chunk_files(&data), before - 1);
+    assert_eq!(
+        gc::dry_run(&data).unwrap().deleted,
+        0,
+        "nothing left to free"
+    );
+}
+
+#[test]
+fn a_collection_waits_a_bounded_time_for_a_writer_then_fails() {
+    let (_tmp, data, _s) = store();
+    let before = chunk_files(&data);
+    let writer = Cas::open(data.cas()).unwrap().lock_shared().unwrap();
+    let err = gc::collect(&data, false, Duration::from_millis(50)).unwrap_err();
+    assert!(err.to_string().contains("busy"), "{err}");
+    assert_eq!(chunk_files(&data), before, "a busy store deletes nothing");
+    drop(writer);
+    assert_eq!(
+        gc::collect(&data, false, Duration::ZERO).unwrap().deleted,
+        1
+    );
+}
+
+/// Materialise checkpoint `id` of `s` into a fresh directory and read `f`.
+fn file_in(cas: &Cas, s: &Session, id: &str, dir: &std::path::Path) -> String {
+    let cp = s.record().checkpoints.iter().find(|c| c.id == id).unwrap();
+    let manifest = cas
+        .get_manifest(ChunkHash::from_hex(&cp.manifest).unwrap())
+        .unwrap();
+    let dest = dir.join(id);
+    cas.materialize(&manifest, &dest).unwrap();
+    std::fs::read_to_string(dest.join("f")).unwrap()
+}
+
+#[test]
+fn checkpoints_materialise_and_rewind_after_a_collection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = DataDir::new(tmp.path().join("data"));
+    let mut s = session(&data, &tmp.path().join("ws"));
+    let upper = |s: &Session| s.dir().upper(&s.record().current_branch);
+    std::fs::write(upper(&s).join("f"), "one").unwrap();
+    let c1 = s.checkpoint(None).unwrap();
+    std::fs::write(upper(&s).join("f"), "two").unwrap();
+    std::fs::write(upper(&s).join("g"), "extra").unwrap();
+    let c2 = s.checkpoint(None).unwrap();
+    s.rewind(&c1.id, None).unwrap();
+    std::fs::write(upper(&s).join("f"), "three").unwrap();
+    let c3 = s.checkpoint(None).unwrap();
+    Cas::open(data.cas()).unwrap().put(b"orphan").unwrap();
+
+    let r = gc::collect(&data, false, Duration::ZERO).unwrap();
+    assert_eq!(r.deleted, 1, "{r:?}");
+
+    let cas = Cas::open(data.cas()).unwrap();
+    let out = tmp.path().join("materialised");
+    std::fs::create_dir(&out).unwrap();
+    assert_eq!(file_in(&cas, &s, &c1.id, &out), "one");
+    assert_eq!(file_in(&cas, &s, &c2.id, &out), "two");
+    assert_eq!(file_in(&cas, &s, &c3.id, &out), "three");
+
+    let changes = s.diff(&c1.id, &c2.id).unwrap();
+    assert!(changes.iter().any(|c| c.path == "f"), "{changes:?}");
+    s.rewind(&c2.id, None).unwrap();
+    assert_eq!(std::fs::read_to_string(upper(&s).join("f")).unwrap(), "two");
 }
 
 #[test]

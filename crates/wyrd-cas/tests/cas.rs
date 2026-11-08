@@ -277,10 +277,11 @@ fn gc_keeps_reachable_chunks_only() {
     let (m, _) = cas.snapshot(&src, None).unwrap();
     let root = cas.put_manifest(&m).unwrap();
     let orphan = cas.put(b"orphan chunk").unwrap();
-    let dry = cas.gc(&[root], true).unwrap();
+    let lock = cas.lock_exclusive(std::time::Duration::ZERO).unwrap();
+    let dry = cas.gc(&lock, &[root], true).unwrap();
     assert_eq!((dry.kept, dry.deleted), (2, 1));
     assert!(cas.contains(orphan), "dry run deletes nothing");
-    let real = cas.gc(&[root], false).unwrap();
+    let real = cas.gc(&lock, &[root], false).unwrap();
     assert_eq!(real.deleted, 1);
     assert!(!cas.contains(orphan));
     let dst = tmp.path().join("dst");

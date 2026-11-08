@@ -7,6 +7,7 @@ Used for Cell checkpoints and, later, bundle content.
 ```
 <root>/
 ├── FORMAT                 # "wyrdline.cas.v1"
+├── LOCK                   # store lock (flock); coordination only, not data (see Store lock)
 ├── chunks/ab/cd/<hex>     # zstd(level 3) of the chunk bytes; <hex> = BLAKE3 of the *uncompressed* bytes
 └── tmp/                   # staging for atomic writes (write → rename; see Durability)
 ```
@@ -102,8 +103,63 @@ Those edits were never durable, and nothing here changes that.
 
 ## Garbage collection
 
-Mark from root manifest hashes, sweep every unreferenced chunk. `dry_run`
-reports without deleting.
+`wyrd gc` (`wyrd_cell::gc::collect`) deletes every chunk that no root reaches, and
+with `--dry-run` only reports them. The roots are every checkpoint manifest of
+every session: the session record's checkpoints and the ledger's
+`state.checkpoint.created` events, so a checkpoint known to only one of them
+keeps its chunks. Two kinds of session directory are not read as sessions: an
+import's staging directory (`.import-<id>`, not visible yet) and a session
+imported without content (`--no-content`), which names manifests the store
+never received. A session whose record or ledger cannot be read stops the
+collection, because its roots would be missing and its chunks would look
+collectable.
+
+Collection order, under the exclusive store lock (see Store lock):
+
+1. Take the lock exclusive, waiting at most ten seconds. If a writer still
+   holds it, fail with a busy error and delete nothing.
+2. Compute the roots from the session records and ledgers.
+3. Mark every chunk the roots reach (each root manifest and its file chunks).
+   A root that cannot be read fails the collection before anything is deleted.
+4. Remove staging files of dead processes (the rule at `Cas::open`); a dry run
+   does not.
+5. Delete each unmarked chunk file. A dry run only counts them.
+
+Deletions are not synced. A crash can bring a deleted chunk back, and it is
+then an unreferenced chunk that the next collection removes, so no reference
+can point at a missing chunk.
+
+## Store lock
+
+`LOCK` is an advisory `flock` on the store, and it is held by two kinds of
+holder:
+
+- **A writer** that adds chunks and then records a reference to them holds it
+  shared, from before its first chunk write or verify until its reference is
+  durable. A checkpoint holds it from its start, before the snapshot and the
+  cgroup freeze, until `session.json` is saved. An import holds it from the
+  store open until the session is renamed into place and its directory is
+  synced. Shared holders do not block one another.
+- **Garbage collection** holds it exclusive while it reads the roots and
+  sweeps. It never takes a session lock while it holds the store lock, and a
+  checkpoint takes the session lock before the store lock, so the two cannot
+  deadlock.
+
+So a sweep never runs while a chunk is written but not yet referenced: the
+roots it reads include every reference that was made before it took the lock,
+and no writer can add a chunk until it finishes. Dedupe is covered too: a checkpoint that finds an intact chunk and
+reuses it without writing still holds the lock, so the chunk cannot be swept
+before the checkpoint names it.
+
+The lock is a coordination file, not data: `FORMAT` is unchanged. A binary
+that predates this lock takes no lock when it checkpoints or imports, so a
+`wyrd gc` run beside it can sweep a chunk that binary has staged but not yet
+referenced. Run `wyrd gc` only with binaries that take the lock.
+
+The order of the lock, the chunk writes and the reference is pinned by
+`crates/wyrd-cell/tests/store_lock.rs` (recorded steps: `Lock` before the
+first chunk write, `Unlock` after the state save or the session rename), and
+the lock's exclusion by `crates/wyrd-cas/tests/store_lock.rs`.
 
 ## Durability
 
@@ -164,6 +220,9 @@ A chunk that already verifies is synced by its directory, which covers a
 rename made by another batch that is still waiting for its second barrier.
 Staged writes (the checkpoint path) create their directories without syncing
 them: the first `syncfs` of the commit covers them, before any rename.
+
+These steps run while the writer holds the store lock shared (see Store lock),
+so a sweep cannot delete a chunk between its rename and its reference.
 
 Opening a store applies the same rule to `chunks/` and `tmp/`. The `FORMAT`
 marker is written to a staging file, synced, renamed into place, and its

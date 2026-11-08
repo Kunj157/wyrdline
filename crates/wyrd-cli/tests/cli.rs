@@ -123,29 +123,39 @@ fn verify_rejects_non_ledger_files() {
 }
 
 #[test]
-fn gc_reports_a_dry_run_and_refuses_to_delete() {
+fn gc_deletes_unreferenced_chunks_and_a_dry_run_only_reports_them() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
-    let out = wyrd()
-        .arg("gc")
-        .env("WYRD_DATA_DIR", &data)
-        .output()
+    wyrd_cas::Cas::open(data.join("cas"))
+        .unwrap()
+        .put(b"nobody refers to this")
         .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("--dry-run"));
+    let run = |args: &[&str]| {
+        let out = wyrd()
+            .arg("gc")
+            .args(args)
+            .env("WYRD_DATA_DIR", &data)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
 
-    let out = wyrd()
-        .args(["gc", "--dry-run", "--json"])
-        .env("WYRD_DATA_DIR", &data)
-        .output()
-        .unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let v = run(&["--dry-run", "--json"]);
     assert_eq!(v["dry_run"], true);
-    assert_eq!(v["collectable"], 0);
+    assert_eq!(v["collectable"], 1);
+    assert!(data.join("cas/chunks").exists());
+
+    let v = run(&["--json"]);
+    assert_eq!(v["dry_run"], false);
+    assert_eq!(v["deleted"], 1);
+    assert!(v["bytes_freed"].as_u64().unwrap() > 0);
+
+    let v = run(&["--json"]);
+    assert_eq!(v["deleted"], 0, "a second collection has nothing to free");
 }
