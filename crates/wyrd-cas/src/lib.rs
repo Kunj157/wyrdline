@@ -30,6 +30,8 @@ use std::io::{Read, Write as _};
 #[cfg(feature = "store")]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(feature = "store")]
+use std::time::{Duration, Instant};
 
 /// Chunking parameters.
 pub const MIN_CHUNK: usize = 16 * 1024;
@@ -105,6 +107,8 @@ pub enum CasError {
     UnsafePath(String),
     #[error("not a {FORMAT_ID} store: {0}")]
     Format(String),
+    #[error("content store {0} is busy: a checkpoint or import is writing to it; try again")]
+    Busy(PathBuf),
 }
 
 pub type Result<T> = std::result::Result<T, CasError>;
@@ -134,6 +138,11 @@ pub enum Step {
     Rename(PathBuf, PathBuf),
     /// A ledger event was appended (noted by the caller, see [`note_step`]).
     LedgerAppend,
+    /// The store lock was taken: shared (`exclusive: false`) by a writer,
+    /// exclusive by `gc`.
+    Lock { exclusive: bool },
+    /// The store lock was released.
+    Unlock,
 }
 
 /// The steps of the recording in progress, from any thread, or `None`.
@@ -534,15 +543,27 @@ impl Cas {
         Manifest::from_cbor(&self.get(h)?)
     }
 
-    /// Delete every chunk not reachable from `roots` (manifest hashes).
-    /// With `dry_run`, only report what would be deleted.
-    pub fn gc(&self, roots: &[ChunkHash], dry_run: bool) -> Result<GcReport> {
+    /// Delete every chunk not reachable from `roots` (manifest hashes), and
+    /// the staging files of dead processes. With `dry_run`, only report what
+    /// would be deleted. The caller holds the exclusive store lock, which is
+    /// what makes `roots` and the sweep see the same store: no writer can add
+    /// a chunk, or a reference to one, in between. Nothing is deleted if a
+    /// root cannot be read.
+    pub fn gc(
+        &self,
+        _lock: &ExclusiveLock,
+        roots: &[ChunkHash],
+        dry_run: bool,
+    ) -> Result<GcReport> {
         let mut live: HashSet<ChunkHash> = HashSet::new();
         for root in roots {
             live.insert(*root);
             for e in self.get_manifest(*root)?.entries {
                 live.extend(e.chunks);
             }
+        }
+        if !dry_run {
+            sweep_staging(&self.root.join("tmp"))?;
         }
         let mut report = GcReport::default();
         let chunks = self.root.join("chunks");
@@ -567,6 +588,103 @@ impl Cas {
             }
         }
         Ok(report)
+    }
+
+    /// Take the store lock shared, blocking while `gc` holds it. A writer
+    /// holds it from before its first chunk write until its reference is
+    /// durable (see `docs/cas-format.md`, "Store lock").
+    pub fn lock_shared(&self) -> Result<SharedLock> {
+        let file = self.open_lock()?;
+        flock(&file, rustix::fs::FlockOperation::LockShared, &self.root)?;
+        step(Step::Lock { exclusive: false });
+        Ok(SharedLock {
+            _held: Held { file },
+        })
+    }
+
+    /// Take the store lock exclusive, waiting at most `wait` for writers to
+    /// finish. Fails with [`CasError::Busy`] instead of waiting longer.
+    pub fn lock_exclusive(&self, wait: Duration) -> Result<ExclusiveLock> {
+        let file = self.open_lock()?;
+        let deadline = Instant::now() + wait;
+        loop {
+            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => break,
+                Err(rustix::io::Errno::WOULDBLOCK) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return Err(CasError::Busy(self.root.clone()));
+                    }
+                    std::thread::sleep(left.min(LOCK_POLL));
+                }
+                Err(e) => {
+                    return Err(CasError::Io {
+                        path: self.root.join(LOCK_FILE),
+                        source: e.into(),
+                    });
+                }
+            }
+        }
+        step(Step::Lock { exclusive: true });
+        Ok(ExclusiveLock {
+            _held: Held { file },
+        })
+    }
+
+    fn open_lock(&self) -> Result<fs::File> {
+        let path = self.root.join(LOCK_FILE);
+        fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(io_err(&path))
+    }
+}
+
+/// Name of the store lock file, in the store root.
+#[cfg(feature = "store")]
+const LOCK_FILE: &str = "LOCK";
+
+/// How often a waiting exclusive lock tries again.
+#[cfg(feature = "store")]
+const LOCK_POLL: Duration = Duration::from_millis(20);
+
+#[cfg(feature = "store")]
+fn flock(file: &fs::File, op: rustix::fs::FlockOperation, root: &Path) -> Result<()> {
+    rustix::fs::flock(file, op).map_err(|e| CasError::Io {
+        path: root.join(LOCK_FILE),
+        source: e.into(),
+    })
+}
+
+/// The store lock, held shared by a writer. Released on drop.
+#[cfg(feature = "store")]
+#[derive(Debug)]
+pub struct SharedLock {
+    _held: Held,
+}
+
+/// The store lock, held exclusive by [`Cas::gc`]. Released on drop.
+#[cfg(feature = "store")]
+#[derive(Debug)]
+pub struct ExclusiveLock {
+    _held: Held,
+}
+
+/// An advisory `flock` on the store lock file. The lock is released when the
+/// file is closed; the release is recorded as a step first.
+#[cfg(feature = "store")]
+#[derive(Debug)]
+struct Held {
+    file: fs::File,
+}
+
+#[cfg(feature = "store")]
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
+        step(Step::Unlock);
     }
 }
 

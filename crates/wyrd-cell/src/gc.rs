@@ -1,6 +1,7 @@
-//! What a garbage collection of the content store would free (`wyrd gc
-//! --dry-run`). Only the report exists: deleting needs a store-wide lock
-//! against a checkpoint that is writing chunks at the same moment (#296).
+//! Garbage collection of the content store (`wyrd gc`). Collection takes the
+//! store lock exclusive, computes the roots, and only then sweeps, so a
+//! checkpoint or import that is writing chunks at the same moment is never
+//! swept from under its own reference (#296; see `docs/cas-format.md`).
 //!
 //! The roots are every checkpoint manifest of every session in the data
 //! directory, from the session record *and* from the ledger's
@@ -14,6 +15,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::time::Duration;
 
 use wyrd_cas::{Cas, ChunkHash, GcReport};
 use wyrd_schema::EventBody;
@@ -22,6 +24,10 @@ use crate::{CellError, DataDir, Result, io_err, state};
 
 /// Events read per call while scanning a ledger.
 const BATCH: usize = 10_000;
+
+/// How long a collection waits for a checkpoint or import to finish before it
+/// gives up. A writer holds the store lock for the length of its write.
+pub const WAIT: Duration = Duration::from_secs(10);
 
 /// Every manifest a session in `data` refers to.
 pub fn roots(data: &DataDir) -> Result<BTreeSet<ChunkHash>> {
@@ -77,8 +83,18 @@ fn parse(session: &str, manifest: &str) -> Result<ChunkHash> {
     })
 }
 
+/// Collect the content store: delete every chunk that no session's checkpoint
+/// reaches, and the staging files of dead processes. With `dry_run`, delete
+/// nothing and only report what would be freed. Fails, deleting nothing, if
+/// the store is still busy after [`WAIT`] or a session cannot be read.
+pub fn collect(data: &DataDir, dry_run: bool) -> Result<GcReport> {
+    let cas = Cas::open(data.cas())?;
+    let lock = cas.lock_exclusive(WAIT)?;
+    let roots: Vec<ChunkHash> = roots(data)?.into_iter().collect();
+    Ok(cas.gc(&lock, &roots, dry_run)?)
+}
+
 /// What collecting the store now would keep and free. Nothing is deleted.
 pub fn dry_run(data: &DataDir) -> Result<GcReport> {
-    let roots: Vec<ChunkHash> = roots(data)?.into_iter().collect();
-    Ok(Cas::open(data.cas())?.gc(&roots, true)?)
+    collect(data, true)
 }
