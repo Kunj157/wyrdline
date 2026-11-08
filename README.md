@@ -67,6 +67,9 @@ roadmap is [below](#roadmap); what 1.0 does not do is in
 - **Sharing:** signed, redacted `.wyrd` bundles that anyone can verify
   with `wyrd verify`, and a team Hub for uploading and searching them.
 
+The policy commands need the `.wasm` files, which `make policies` builds from a
+checkout; the release archives do not include them.
+
 ```
 wyrd run -- claude -p "fix the failing cart test"   # hooks injected, workspace sandboxed
 wyrd events <session> --plane effect                # what actually happened in the kernel
@@ -76,7 +79,7 @@ wyrd tail <session>                                 # follow a live session
 wyrdd                                               # API on a same-UID socket and 127.0.0.1:7717
 wyrd studio                                         # open Studio in the browser
 wyrd checkpoints <session>                          # one checkpoint per tool call
-wyrd rewind <session> c3 && wyrd diff <session> c3 head
+wyrd rewind <session> c3 && wyrd diff <session> c3 a  # after the rewind, head is c3; a is the old branch
 wyrd apply <session> head                            # bring the result into the real tree
 wyrd run --policy policies/default.wasm -- claude …   # decide, ask, and enforce in the kernel
 wyrd ask <session>                                   # answer what the policy asks
