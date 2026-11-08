@@ -79,10 +79,10 @@ CHANGE`. Unknown fields are rejected on decode.
 | effect | `effect.proc.exec`, `effect.proc.fork`, `effect.proc.exit` | program and argv (the first 8 arguments, up to 63 bytes each; a 64-byte kernel buffer with its terminator), child pid, exit code |
 | | `effect.file.open_write`, `effect.file.write`, `effect.file.rename`, `effect.file.unlink`, `effect.file.mkdir`, `effect.file.chmod`, `effect.file.truncate` | the path (and the second path for renames), whether it is inside the Cell |
 | | `effect.file.read_sensitive` | a read of a secret-classified path (path only; contents are never captured) |
-| | `effect.net.connect` | family, address, port, the most recent DNS name that resolved to the address in this session, verdict (`attempt` / `allowed` / `denied`) |
-| | `effect.net.dns_query` | the name |
+| | `effect.net.connect` | family, address, port, `dns_name`: the allowed host name that `wyrd run` itself resolved to the address (the first name in the policy's order when several share it; empty when no allowed name resolved to it), verdict (`attempt` / `allowed` / `denied`) |
+| | `effect.net.dns_query` | the name. The sensor does not capture DNS, so no such event is recorded today |
 | state | `state.checkpoint.created` | checkpoint id, branch, parent, the tool call it follows, the CAS manifest hash (`b3:…`), files changed, bytes added, duration |
-| | `state.checkpoint.rewound`, `state.checkpoint.forked`, `state.checkpoint.applied` | the branch operations; a rewound event also lists `irreversible_seqs`, the seqs of the `effect.net.*` events after the checkpoint on the branch being left (denied attempts included; empty when there are none, and always empty for a fork) |
+| | `state.checkpoint.rewound`, `state.checkpoint.forked`, `state.checkpoint.applied` | the branch operations; a rewound event also lists `irreversible_seqs`, the seqs of the `effect.net.*` events after the checkpoint on the branch being left (denied attempts included; empty when there are none). A forked event has no such field: `wyrd fork` lists the same seqs on stderr and in the API response, but does not record them. |
 | guard | `guard.decision` | stage (`hook` / `gateway` / `kernel` / `effect`), decision (`allow` / `deny` / `ask`), policy id and version, reason, the call or the effect `seq` it is about |
 | verdict | `verdict.claim.extracted` | claim id, turn, type, subject, the verbatim quote, extractor (`rule` / `llm`) |
 | | `verdict.divergence.raised` | divergence id, rule (`D001`–`D010`), severity, the claim, the evidence `seq`s, confidence in basis points, summary |

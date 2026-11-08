@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - deploy/docker/**
+      - scripts/hub-up.sh
       - crates/wyrd-hub/**
       - crates/wyrd-sync/**
       - Cargo.toml
@@ -98,6 +99,26 @@ jobs:
           if docker run --rm --entrypoint /bin/sh wyrdline-hub:ci -c true 2>/dev/null; then
             echo "::error::the image contains a shell"; exit 1
           fi
+
+  compose:
+    # `make hub-up` (deploy/docker/compose.yaml): the Hub built from this
+    # checkout with PostgreSQL 17 and MinIO answers /readyz, as the system
+    # test's prepare step expects (plan §23.1).
+    name: Hub image · make hub-up (compose, /readyz)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: make hub-up
+        run: make hub-up
+      - name: The credentials file is private and ignored
+        run: |
+          test "$(stat -c %a deploy/docker/.env.hub)" = 600
+          git check-ignore -q deploy/docker/.env.hub
+      - name: make hub-down
+        if: always()
+        run: make hub-down
 
   publish:
     name: Hub image · push by digest, gate, sign, attest
