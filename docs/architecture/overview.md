@@ -25,10 +25,11 @@ flowchart LR
     TOOLS -.syscalls.-> KERN
     AGENT -.syscalls.-> KERN
 
-    ADAPT --> D[wyrdd · per user]
-    GW --> D
-    OTLP --> D
-    SENSOR -- unix socket --> D
+    OTLP --> D[wyrdd · per user]
+    SENSOR -- unix socket --> RUN[wyrd run · per session]
+    ADAPT --> RUN
+    GW --> RUN
+    RUN -- ledger events --> D
 
     D --> LEDGER[(Ledger · SQLite hash chain)]
     D --> CAS[(CAS · BLAKE3 chunks)]
@@ -77,7 +78,7 @@ is a projection of it.
 | # | Boundary | Rule |
 |---|---|---|
 | B1 | Agent ↔ Wyrdline | The agent, its inputs (repo files, web pages, MCP results), and its outputs are untrusted. |
-| B2 | `wyrdd` ↔ `wyrd-sensord` | The sensor streams events only for cgroups owned by the peer UID (`SO_PEERCRED`). |
+| B2 | `wyrd run` ↔ `wyrd-sensord` | The sensor streams events only for cgroups owned by the peer UID (`SO_PEERCRED`). |
 | B3 | Cell ↔ host | Landlock and cgroup BPF confine the agent; the daemon socket is outside its reach. |
 | B4 | Local ↔ Hub | Bundles are redacted and signed before leaving the machine and verified on ingest. |
 | B5 | Wyrdline ↔ LLM provider | Only redacted transcript excerpts are sent; never secrets or file contents. |
