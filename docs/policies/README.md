@@ -21,7 +21,8 @@ file and egress rules for the whole session, and effect-time stops.
 
 ## The shipped policies
 
-Both are built from the same rules ([`policies/common`](../../policies/common/src/lib.rs))
+`make policies` builds both from a checkout (the release archives do not
+include the `.wasm` files). Both are built from the same rules ([`policies/common`](../../policies/common/src/lib.rs))
 and differ in how far they go:
 
 | | `policies/default` | `policies/strict` |

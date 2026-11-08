@@ -29,10 +29,10 @@ step checks its result, and the script fails if any check fails. This run:
 
 | Step  | What                   | Result                                                        |
 | ----- | ---------------------- | ------------------------------------------------------------- |
-| 23.1  | Prepare                | Partial: unit and Hub readiness by CI; gaps below             |
+| 23.1  | Prepare                | **Pass** by CI: AppArmor profile, `make hub-up` and Hub readiness (sensor unit and kind chart in CI) |
 | 23.2  | Baseline overhead      | Interleaved medians instead of hyperfine (decision, #270)     |
 | 23.3  | Scripted demo          | **Pass**                                                      |
-| 23.4  | Real agent             | Run; divergences differ: the agent refused the injection      |
+| 23.4  | Real agent             | **Pass** (accepted by the maintainer); divergences differ: the agent refused the injection |
 | 23.5  | Rewind, fork, apply    | **Pass** with the fakeagent; limits below                     |
 | 23.6  | Tamper                 | **Pass** locally; Hub half covered by CI only                 |
 | 23.7  | Offline, collaboration | **Pass** for export and scan; browser half covered by CI only |
@@ -94,11 +94,24 @@ for them where a CI job really does the step:
 
 Not covered by any CI job:
 
-- **The AppArmor profile.** The `.deb` installs `/etc/apparmor.d/wyrd`, but no
-  job loads it and runs a Cell without `sudo`, so the profile itself is
-  untested.
-- **`make hub-up`.** There is no such target and no compose file
-  (plan §10.4); the Hub runs in CI only through Testcontainers and kind.
+- **The AppArmor profile** is now tested in CI. The step "The AppArmor
+  profile lets an unprivileged Cell start" in `Cell · privileged integration`
+  (`.github/workflows/pull-request.yml`, merged with #295; run 42484310399,
+  job 128742742546, on `59fcb9ba`) checks that the host restricts
+  unprivileged user namespaces, then runs `wyrd run` with no privileged
+  helper in a fresh workspace. Without the profile it exits 1 with "Cell mode
+  needs a mount namespace, but unprivileged user namespaces are blocked".
+  After `make apparmor-install` loads `deploy/apparmor/wyrd`, the same command
+  exits 0; the session records `mode cell`, and the write lands in the Cell's
+  upper layer, not in the workspace.
+- **`make hub-up`** now exists and is tested in CI (#291). The job
+  `Hub image · make hub-up (compose, /readyz)` in `hub-image.yml` runs it on
+  the merged head `b12097f8` (run 42488683655, job 128756057681): it builds
+  the Hub image from the checkout, starts PostgreSQL 17, MinIO and the Hub
+  from `deploy/docker/compose.yaml`, waits for `/readyz` (`scripts/hub-up.sh`
+  polls it), checks that the credentials file is mode 0600 and ignored by git,
+  and runs `make hub-down`. It binds 127.0.0.1 only. It was not run on ws11,
+  which is shared; CI is the evidence.
 
 ## 23.2 Baseline overhead
 
@@ -165,6 +178,12 @@ named the planted instruction. The second run (session
 The §2 storyline needs an agent that follows the injection. The scripted
 agent does that deterministically (§23.3), and a real agent's behaviour
 cannot be scripted. Rewind and fork with the real agent were not repeated.
+
+**Accepted as passed (2026-11-08, by the maintainer).** The step asks for a
+real-agent run of the §2 task and its divergences. The second run made the
+edit and both runs were recorded in full. Its divergences differ from the
+scripted demo's D001, D002, D003 and D006, because the agent refused the
+injection. The maintainer accepted that as the pass for this step.
 
 ## 23.5 Rewind, fork, apply
 
@@ -286,6 +305,15 @@ The Hub upload was not run: the test repository has no Hub. Hub ingest is
 covered by `Hub · Postgres and MinIO integration` and the Action's
 `hub-upload.test.sh`.
 
+The Hub image's Trivy gate (`Hub image · build, Trivy scan, SBOM`, and the
+same gate before publish on a `v*` tag) carries two time-boxed ignores in
+`.trivyignore`, added with #291: CVE-2026-85091 and CVE-2026-76844, both
+HIGH, both in `zlib1g` of the distroless `cc-debian13:nonroot` base. Debian
+has the fix, but neither the pinned digest nor the newest one (checked
+2026-11-08) ships it. The Hub does not load the system libz: `Cargo.lock`
+has no `libz-sys`, and `flate2` uses the pure-Rust zlib-rs backend. Both
+ignores expire on 2026-12-08 and must be removed when the base is updated.
+
 ## 23.10 Observability
 
 By decision (2026-11-08) CI evidence counts here.
@@ -313,18 +341,13 @@ By decision (2026-11-08) CI evidence counts here.
   end`) shows sessions, divergence rates, denials and loss, but against a
   stand-in Hub API, not a running Hub.
 
-Not covered: no test opens the dashboard against a running Hub; `make hub-up`
-(#291) makes that possible. The judge numbers are zero in every run so far:
+Not covered: no test opens the dashboard against a running Hub. `make hub-up`
+(#291) makes that possible, but no CI job opens the dashboard on it. The judge numbers are zero in every run so far:
 no live model run has been recorded (#212).
 
 ## Still open for v1.0.0
 
-- The 5-minute video (#169, plan §29): by the maintainer.
-- §23.4: whether a real run in which the agent refuses the injection meets
-  the step, which asks for the same classes of divergences as the scripted
-  demo. That is the maintainer's call.
+- The 5-minute video (#169, plan §29) does not block v1.0.0. It moved to a
+  post-1.0 follow-up issue, #298, by the maintainer's decision (2026-11-08).
 - #288: D007 flags the agent's own model-API traffic.
-- §23.1: the AppArmor profile is untested and `make hub-up` does not exist
-  (above). CI evidence covers the rest and does not block v1.0.0 (decision,
-  2026-11-08).
 - #239: checkpoint p95 above the 150 ms target (reported, not gating).
