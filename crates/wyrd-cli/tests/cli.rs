@@ -121,3 +121,31 @@ fn verify_rejects_non_ledger_files() {
     let out = wyrd().arg("verify").arg(&path).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
 }
+
+#[test]
+fn gc_reports_a_dry_run_and_refuses_to_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let out = wyrd()
+        .arg("gc")
+        .env("WYRD_DATA_DIR", &data)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--dry-run"));
+
+    let out = wyrd()
+        .args(["gc", "--dry-run", "--json"])
+        .env("WYRD_DATA_DIR", &data)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["dry_run"], true);
+    assert_eq!(v["collectable"], 0);
+}
