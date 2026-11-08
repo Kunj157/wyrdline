@@ -66,7 +66,7 @@ is a projection of it.
 | Component | Privilege | Responsibility |
 |---|---|---|
 | `wyrd-sensord` | `CAP_BPF` kept after start-up (`CAP_PERFMON` and `CAP_NET_ADMIN` only while loading the programs) | load eBPF, stream events of registered cgroups, attach network enforcement; the rest is dropped before the first client connects (see the unit file) |
-| `wyrdd` | user | sessions, Cells, ledger, CAS, correlation, policies, divergence, API, Studio |
+| `wyrdd` | user | API and Studio over the sessions: correlation, backtests, divergence, OTLP ingest; rewind, fork and apply write the same ledger events as the CLI. `wyrd run` owns each live session: its Cell, its single ledger writer and its intent socket ([daemon](daemon.md)) |
 | `wyrd` | user | CLI client; `doctor`, `verify`, `open` work standalone |
 | `wyrd-gateway` | user, inside the session | MCP proxy with policy checks |
 | Studio | browser | live mode against `wyrdd`; bundle mode fully offline |
