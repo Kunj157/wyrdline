@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -143,18 +143,27 @@ pub struct Env {
     pub probes: Probes,
     /// Value of `WYRD_DOCTOR_MASK`.
     pub mask: Option<String>,
-    /// Path of the `wyrd-sensord` socket, relative to `root`.
+    /// The `wyrd-sensord` socket the check probes: the path the sensor client
+    /// connects to (`WYRD_SENSORD_SOCKET`, else the system socket).
     pub sensord_socket: PathBuf,
 }
 
 impl Env {
     pub fn new(root: impl Into<PathBuf>, probes: Probes) -> Self {
+        let root = root.into();
         Env {
-            root: root.into(),
             probes,
             mask: None,
-            sensord_socket: PathBuf::from("run/wyrdline/sensord.sock"),
+            sensord_socket: root.join(SENSORD_SOCKET.trim_start_matches('/')),
+            root,
         }
+    }
+
+    /// Probe `path` as the sensor socket instead of the one under the root.
+    #[must_use]
+    pub fn with_sensord_socket(mut self, path: impl Into<PathBuf>) -> Self {
+        self.sensord_socket = path.into();
+        self
     }
 
     fn path(&self, rel: &str) -> PathBuf {
@@ -170,6 +179,19 @@ impl Env {
     fn exists(&self, rel: &str) -> bool {
         self.path(rel).exists()
     }
+}
+
+/// The system socket of `wyrd-sensord`.
+pub const SENSORD_SOCKET: &str = "/run/wyrdline/sensord.sock";
+
+/// The socket the sensor client connects to: `WYRD_SENSORD_SOCKET` when it is
+/// set, else [`SENSORD_SOCKET`]. This is the rule of
+/// `wyrd_sensor::client::socket_path`; wyrd-cli has a test that keeps the two
+/// equal. It is repeated here because wyrdd depends on this crate, not on the
+/// sensor crate with its eBPF build script.
+pub fn sensord_socket_path() -> PathBuf {
+    std::env::var_os("WYRD_SENSORD_SOCKET")
+        .map_or_else(|| PathBuf::from(SENSORD_SOCKET), PathBuf::from)
 }
 
 /// Kernel version triple parsed from a release string such as `6.17.0-14-generic`.
@@ -478,19 +500,18 @@ fn check_sock_addr(version: Option<(u32, u32, u32)>, cgroup_v2: bool) -> Check {
 }
 
 fn check_sensord(env: &Env) -> Check {
-    let path = env.root.join(&env.sensord_socket);
+    let path = &env.sensord_socket;
     let present = path.exists();
-    let shown = Path::new("/").join(&env.sensord_socket);
     mk(
         CheckId::Sensord,
         "wyrd-sensord",
         if present { Status::Ok } else { Status::Missing },
         if present {
-            format!("listening at {}", shown.display())
+            format!("listening at {}", path.display())
         } else {
             format!(
                 "no socket at {} (run `make sensord-install`)",
-                shown.display()
+                path.display()
             )
         },
         "Without the sensor only intent (hooks, MCP) is captured, not kernel effects.",
