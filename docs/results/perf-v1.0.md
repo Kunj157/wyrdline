@@ -83,9 +83,10 @@ Context, not a target:
   time bound on a hosted runner separates a regression from noise. Release
   runs therefore report the checkpoint figure without gating on it; the
   nightly sets `WYRD_PERF_STRICT=1` and enforces 150 ms, so it stays red
-  until #239 is fixed. A deterministic test of the sync barriers each
-  checkpoint makes, run on every pull request, is the planned regression
-  guard instead (#239).
+  until #239 is fixed. The regression guard that does not depend on the
+  runner's disk is `crates/wyrd-cell/tests/checkpoint_sync_guard.rs` (#253):
+  it asserts that a checkpoint makes exactly two `syncfs` barriers and no
+  per-file sync, and it runs in every pull request's `make test-rust`.
 - **The `pnpm test` workload is the suite run 20 times (#240).** One run of
   the victim-shop suite takes about 120 ms, and at that length noise
   dominates. Single runs measured captured −0.5 % and −0.2 % on ws11. On the
