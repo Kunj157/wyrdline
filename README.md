@@ -41,7 +41,7 @@ From that it can:
 
 ## Status
 
-Pre-1.0: the 1.0 user documentation is in [`docs/`](#documentation). The
+1.0: the user documentation is in [`docs/`](#documentation). The
 roadmap is [below](#roadmap); what 1.0 does not do is in
 [limitations](docs/limitations.md). The capabilities, in short:
 
@@ -109,7 +109,7 @@ reproduce them: [performance at v1.0](docs/results/perf-v1.0.md).
 | Denied-connect latency, p99 | 2.3–2.6 µs | met; the report explains why it is not compared with allowed connects |
 | Allowed-connect latency added, p99 (target ≤ 50 µs) | +0.2 µs (run 2), +1.4 µs (run 1) | met |
 | Overhead on `cargo build`, captured (target ≤ 5 %) | +0.1 % (run 2), −1.3 % (run 1) | met |
-| Overhead on the `pnpm test` workload, captured | −0.5 % (run 2), −0.2 % (run 1), on a 120 ms workload | met, but the workload is too short to trust ([#240](https://github.com/Kunj157/wyrdline/issues/240)) |
+| Overhead on the `pnpm test` workload, captured (target ≤ 5 %) | +0.3 % (run 2), +0.5 % (run 1); the suite runs 20 times per measurement, about 2.4 s ([#240](https://github.com/Kunj157/wyrdline/issues/240)) | met |
 | Judge cost per session | not measured: needs a live `ANTHROPIC_API_KEY` | not measured ([#212](https://github.com/Kunj157/wyrdline/issues/212)) |
 
 **The checkpoint target is missed.** Checkpoint p95 is 158.7 ms against a
@@ -187,12 +187,19 @@ reports exactly what is available and what degrades without it.
   [agent adapters](docs/architecture/adapters.md), [redaction](docs/architecture/redaction.md),
   [the eBPF sensor](docs/architecture/sensor.md), [the correlator](docs/architecture/correlator.md),
   [the daemon and its API](docs/architecture/daemon.md), [the Hub](docs/architecture/hub.md),
-  [collaborative annotations](docs/architecture/annotations.md)
-- [Ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md),
-  [bundle format](docs/bundle-format.md)
+  [collaborative annotations](docs/architecture/annotations.md),
+  [the MCP server](docs/architecture/mcp-server.md)
+- Formats and API: [ledger format](docs/ledger-format.md), [CAS format](docs/cas-format.md),
+  [bundle format](docs/bundle-format.md), [event schema](docs/schemas/event.v1.json),
+  [daemon API (OpenAPI)](docs/api/openapi.json)
 - [Writing a policy](docs/policies/README.md)
 - [Architecture decision records](docs/adr/README.md)
-- [Threat model](docs/threat-model/scope.md)
+- [Threat model](docs/threat-model/scope.md), [1.0 security review](docs/threat-model/review-2026.md)
+- Results: [performance at v1.0](docs/results/perf-v1.0.md),
+  [system test for v1.0.0](docs/results/v1.0.0/system-test.md),
+  [enforcement](docs/results/enforcement.md), [attribution](docs/results/attribution.md),
+  [divergence evals](docs/results/evals-dev.md), [sensor performance](docs/results/perf-sensor.md),
+  [Studio performance](docs/results/studio-perf.md)
 - [Releases: assets, verification, reproducibility](docs/release.md)
 
 ## Contributing
