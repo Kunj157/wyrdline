@@ -1,7 +1,7 @@
 /**
  * Everything the page says, in one place. Shipped features describe what is
- * merged and released; the roadmap lists the phases still to come, and each
- * one moves into `features` (with a screenshot or recording) as it ships.
+ * released; the phases behind 1.0 are listed after them, and each new phase
+ * moves into `features` (with a screenshot or recording) when it ships.
  */
 import type { Meaning } from "@wyrdline/ui";
 
@@ -58,7 +58,7 @@ export const features: Feature[] = [
     points: [
       "BLAKE3 hash chain, ed25519-signed session head",
       "Append-only: the database rejects updates and deletes",
-      "Secrets redacted before anything is stored",
+      "Known secret formats redacted before anything is stored",
     ],
   },
   {
@@ -80,7 +80,7 @@ export const features: Feature[] = [
     id: "daemon",
     phase: "Phases 4 and 7",
     title: "Works with the agents you already use",
-    body: "Hooks for the claude-code, Codex and Gemini CLIs, an MCP gateway for any MCP client, and an OTLP receiver for agents that emit GenAI traces. The per-user daemon serves an authenticated API and a live stream to Studio and the CLI.",
+    body: "Hooks for Claude Code, wired automatically, and for Codex CLI and Gemini CLI after a one-time registration. An MCP gateway for any MCP client, and an OTLP receiver for agents that emit GenAI traces. The per-user daemon serves an authenticated API and a live stream to Studio and the CLI.",
     points: [
       "wyrd run, events, graph, explain, tail, rewind, fork, apply",
       "Same-UID socket plus a token-guarded loopback port",
@@ -132,11 +132,11 @@ export const features: Feature[] = [
     id: "guard",
     phase: "Phase 9",
     title: "Guard: policies the kernel enforces",
-    body: "A policy is a sandboxed WebAssembly component. It decides every tool call before it runs (allow, deny, or ask you), and its rules are enforced in the kernel: Landlock keeps the agent out of your keys and outside the workspace, cgroup BPF refuses connections to hosts it did not allow, and a forbidden program, even renamed, stops the session. Replay any recorded session against a stricter policy to see what it would have stopped.",
+    body: "A policy is a sandboxed WebAssembly component. It decides every tool call before it runs (allow, deny, or ask you), and its rules are enforced in the kernel: Landlock keeps the agent out of your keys and outside the workspace, cgroup BPF refuses connections to addresses that no allowed host resolved to, and a forbidden program, even renamed, is stopped once the kernel reports it. Replay any recorded session against a stricter policy to see what it would have stopped.",
     points: [
       "Prompt-injected curl to an unknown host: EPERM in the kernel, in the ledger",
-      "An escape suite of 13 attempts, every one refused",
-      "Allowed connects pay 0.3 µs at p99",
+      "Ten escape attempts against the Cell, every one refused in the kernel",
+      "Allowed connects add 0.2 to 1.4 µs at p99, against a 50 µs target",
     ],
   },
 ];
@@ -167,12 +167,12 @@ export const roadmap: Phase[] = [
   {
     n: 13,
     title: "CI capture",
-    body: "A GitHub Action that records agent runs in CI, plus containers and Kubernetes.",
+    body: "A GitHub Action that records agent runs in CI. The team Hub ships as a container image and a Helm chart.",
   },
   {
     n: 14,
     title: "Launch",
-    body: "Hardening, performance, signed releases, install packages, and the demo video.",
+    body: "Hardening, performance, signed releases and install packages. The demo video with a real agent is a follow-up after 1.0.",
   },
 ];
 
