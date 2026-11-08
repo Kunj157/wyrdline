@@ -103,6 +103,57 @@ settings; the defaults apply.
 - Two replicas by default; the autoscaler is off until you enable it.
 - The chart sets no TLS by default. Put ingress TLS in front of the Hub.
 
+## Back up and restore
+
+The Hub keeps its state in two places, and a backup needs both, taken
+together:
+
+- **PostgreSQL**: accounts, organisations, memberships, API tokens, and the
+  bundle records (who uploaded what, and when).
+- **The bucket** (`s3.bucket`, `wyrd-bundles` in the chart's example): the
+  bundle files themselves.
+
+Nothing else needs a backup. The Hub's data and scratch volumes are
+`emptyDir` (see above): they hold only uploads in progress and rebuildable
+analytics.
+
+To back up, stop uploads first (scale the Hub to zero replicas, or block
+ingress), then take both copies:
+
+```sh
+# PostgreSQL, custom format (restore with pg_restore)
+kubectl -n <ns> exec deploy/<postgres> -- pg_dump -U hub -d hub -Fc > hub.dump
+
+# The bucket, with any S3 client (here the AWS CLI against the bucket's endpoint)
+aws --endpoint-url <s3-endpoint> s3 sync s3://wyrd-bundles ./s3-backup
+```
+
+To restore into a new cluster:
+
+1. Start PostgreSQL and the bucket, and create the Hub's Secrets (the
+   database URL and the S3 keys) with the **same values** as before. The
+   restored data does not carry new credentials, and the Hub reads its
+   connection details from those Secrets.
+2. Restore the database: `pg_restore -U hub -d hub --clean --if-exists
+   --no-owner --exit-on-error < hub.dump`.
+3. Restore the bucket: `aws --endpoint-url <s3-endpoint> s3 sync
+   ./s3-backup s3://wyrd-bundles`.
+4. Install the chart with the same values (`helm install ...`), and check
+   `/readyz`. The Hub runs its migrations on start; a database restored from
+   the same release has nothing new to apply.
+5. Check the restore: list an organisation's bundles with an API token
+   (`GET /api/v1/orgs/<org>/bundles`), download them, and run `wyrd verify`
+   on each file.
+
+The CI job that exercises this procedure is `Hub restore` in
+`.github/workflows/hub-chart.yml` (run on demand with `workflow_dispatch`).
+Its recorded run and timings are in
+[`docs/results/v1.0.0/hub-restore.md`](results/v1.0.0/hub-restore.md). It
+backs up a three-bundle Hub with no uploads running, restores it into a
+fresh kind cluster, and takes under a minute to verify every bundle again. It does not measure a live backup under load, a
+point-in-time restore, or a restore between clusters with different
+credentials.
+
 ## Accounts and tokens
 
 - **Browser login** uses your OIDC provider. Sessions last 7 days.
