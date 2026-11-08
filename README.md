@@ -201,7 +201,7 @@ reports exactly what is available and what degrades without it.
 - Results: [performance at v1.0](docs/results/perf-v1.0.md),
   [system test for v1.0.0](docs/results/v1.0.0/system-test.md),
   [enforcement](docs/results/enforcement.md), [attribution](docs/results/attribution.md),
-  [divergence evals](docs/results/evals-dev.md), [sensor performance](docs/results/perf-sensor.md),
+  [divergence evals baseline](docs/results/evals-baseline.json), [sensor performance](docs/results/perf-sensor.md),
   [Studio performance](docs/results/studio-perf.md)
 - [Releases: assets, verification, reproducibility](docs/release.md)
 
