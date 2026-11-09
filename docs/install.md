@@ -232,7 +232,11 @@ or let `wyrd run` go through `sudo` for the two internal commands that
 set up the mount namespace, dropping back to your user before the agent
 starts: `export WYRD_PRIVILEGED_HELPER=sudo` (passwordless sudo for
 `wyrd __cell-exec` and `wyrd __cell-cleanup` is enough). Details in
-[the Cell](architecture/cell.md).
+[the Cell](architecture/cell.md). Once `sudo -n` allows the helper without a
+password, `wyrd doctor` prints `Cell mode: yes` and a line
+`Privileged helper (WYRD_PRIVILEGED_HELPER=sudo): sudo -n allows the Cell's
+stage two without a password (Cell mode via the privileged helper)`; otherwise
+that line says `refused:` with sudo's reason.
 
 ## Where things live
 
@@ -256,7 +260,7 @@ starts: `export WYRD_PRIVILEGED_HELPER=sudo` (passwordless sudo for
 | `WYRD_STUDIO_DIR` | `wyrdd` | built Studio to serve |
 | `WYRD_STUDIO_ORIGIN` | `wyrdd` | one extra CORS origin (Studio development server) |
 | `WYRD_LOG` | `wyrdd`, `wyrd-hub` | log filter (`info` by default; JSON lines on stderr) |
-| `WYRD_PRIVILEGED_HELPER` | `wyrd run` | `sudo`: set up the Cell's namespaces through `sudo -n` |
+| `WYRD_PRIVILEGED_HELPER` | `wyrd run`, `wyrd doctor` | `sudo`: set up the Cell's namespaces through `sudo -n`. `wyrd doctor` checks it with `sudo -n -l`, which runs nothing, and counts Cell mode through it only when sudo allows the helper without a password ([ADR-008](adr/008-doctor-probes-the-privileged-helper.md)) |
 | `WYRD_DOCTOR_MASK` | `wyrd doctor`, `wyrd run` | comma-separated check ids to pretend are missing (testing) |
 | `ANTHROPIC_API_KEY`, `LLM_PROVIDER`, `ANTHROPIC_BASE_URL`, `WYRD_CLAIM_MODEL`, `WYRD_LLM_MAX_COST_USD` | `wyrd run`, `wyrd divergences` | claim extraction with a model: on when the key is set (`LLM_PROVIDER=none` turns it off); model `claude-haiku-4-5` and a `0.50` USD cap per session by default |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` and friends | the agent | if you set an OTLP endpoint yourself, `wyrd run` leaves it alone; otherwise it points the agent's trace exporter at the daemon |

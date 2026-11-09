@@ -341,6 +341,26 @@
           }
         ]
       },
+      "CellPath": {
+        "description": "The path that makes Cell mode available, in the order `wyrd run` prefers them.",
+        "oneOf": [
+          {
+            "const": "user_namespace",
+            "description": "Unprivileged user namespaces (or the `AppArmor` profile that allows them).",
+            "type": "string"
+          },
+          {
+            "const": "privileged_helper",
+            "description": "`WYRD_PRIVILEGED_HELPER=sudo`, verified by `sudo -n -l`.",
+            "type": "string"
+          },
+          {
+            "const": "sensord",
+            "description": "`wyrd-sensord` creates the namespaces.",
+            "type": "string"
+          }
+        ]
+      },
       "ChainProblem": {
         "description": "The first problem found, if any.",
         "oneOf": [
@@ -2448,6 +2468,39 @@
         ],
         "type": "object"
       },
+      "PrivilegedHelper": {
+        "description": "State of the `WYRD_PRIVILEGED_HELPER=sudo` path, which runs the Cell's\nstage two through `sudo -n`.\n\nThe probe is `sudo -n -l`, which lists the sudoers rule for\n`wyrd __cell-exec` and runs nothing, so doctor never executes anything as\nroot. The result is only as current as the probe: a later sudoers change\nis seen by the next `wyrd doctor` or `wyrd run`.",
+        "oneOf": [
+          {
+            "const": "not_configured",
+            "description": "`WYRD_PRIVILEGED_HELPER` is not `sudo`.",
+            "type": "string"
+          },
+          {
+            "const": "verified",
+            "description": "`WYRD_PRIVILEGED_HELPER=sudo` and `sudo -n -l` allows the stage-two command.",
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "description": "`WYRD_PRIVILEGED_HELPER=sudo` but the probe failed; the text says why.",
+            "properties": {
+              "refused": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "refused"
+            ],
+            "type": "object"
+          },
+          {
+            "const": "not_probed",
+            "description": "`WYRD_PRIVILEGED_HELPER=sudo` but this caller does not run sudo (the\ndaemon). `wyrd doctor` gives the verified answer.",
+            "type": "string"
+          }
+        ]
+      },
       "Problem": {
         "description": "An error answered as `application/problem+json`.",
         "properties": {
@@ -2695,6 +2748,17 @@
           "cell_mode": {
             "type": "boolean"
           },
+          "cell_path": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CellPath"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which path makes Cell mode available; `None` when Cell mode is off."
+          },
           "checks": {
             "items": {
               "$ref": "#/components/schemas/Check"
@@ -2715,12 +2779,17 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "privileged_helper": {
+            "$ref": "#/components/schemas/PrivilegedHelper"
           }
         },
         "required": [
           "kernel_release",
           "checks",
           "cell_mode",
+          "cell_path",
+          "privileged_helper",
           "kernel_capture",
           "kernel_network_enforcement",
           "masked"

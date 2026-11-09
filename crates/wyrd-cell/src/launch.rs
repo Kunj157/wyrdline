@@ -21,6 +21,40 @@ pub fn sudo_helper_enabled() -> bool {
     std::env::var(SUDO_HELPER_ENV).is_ok_and(|v| v == "sudo")
 }
 
+/// Check that `sudo -n` will run stage two (`<helper> __cell-exec <spec>`) for
+/// this user without a password, with `sudo -n -l`, which lists the matching
+/// sudoers rule and runs nothing. Returns the sudo error text when it refuses.
+pub fn probe_sudo_helper(helper: &Path) -> std::result::Result<(), String> {
+    probe_sudo_helper_via("sudo", helper)
+}
+
+/// [`probe_sudo_helper`] with the sudo binary given, for tests.
+pub fn probe_sudo_helper_via(
+    sudo: impl AsRef<std::ffi::OsStr>,
+    helper: &Path,
+) -> std::result::Result<(), String> {
+    // A placeholder spec path: sudoers rules match argument shape, not the file.
+    let out = Command::new(sudo)
+        .args(["-n", "-l", "--"])
+        .arg(helper)
+        .args(["__cell-exec", "/nonexistent/wyrd-doctor-probe.json"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run sudo: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map_or_else(
+            || format!("sudo -n -l exited with {}", out.status),
+            str::to_string,
+        ))
+}
+
 /// Decide how to obtain the mount namespace.
 ///
 /// Preference: observe mode; already root (drop to `SUDO_UID`); an
