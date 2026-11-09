@@ -305,6 +305,26 @@ impl Ledger {
         Ok(seq)
     }
 
+    /// Write a consistent copy of this ledger to `dest`, a file that must not
+    /// exist yet. The copy is one self-contained database file (its write-ahead
+    /// log folded in), taken in a single read transaction, so events appended
+    /// by another process while it runs are either all in the copy or none of
+    /// them. Copy a ledger this way, never its `-wal` and `-shm` files.
+    pub fn snapshot_to(&self, dest: impl AsRef<Path>) -> Result<()> {
+        let dest = dest.as_ref();
+        if dest.exists() {
+            return Err(LedgerError::Format(format!(
+                "{} already exists",
+                dest.display()
+            )));
+        }
+        let dest = dest
+            .to_str()
+            .ok_or_else(|| LedgerError::Format(format!("{} is not valid UTF-8", dest.display())))?;
+        self.conn.execute("VACUUM INTO ?1", [dest])?;
+        Ok(())
+    }
+
     /// Seal the ledger: sign the head with the host key. No appends afterwards.
     pub fn seal(&mut self, key: &HostKey, sealed_at_ms: i64) -> Result<Seal> {
         if self.sealed {
