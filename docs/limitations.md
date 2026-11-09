@@ -202,14 +202,13 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
 
 ## Operational
 
-- **No `wyrd backup` or `wyrd restore` yet** ([#318](https://github.com/Kunj157/wyrdline/issues/318)).
-  To back up, stop the sessions (`wyrd stop`, or wait for them to finish),
-  then copy the data directory (`$WYRD_DATA_DIR`, else
-  `$XDG_DATA_HOME/wyrdline`, else `~/.local/share/wyrdline`): the ledgers
-  with their `-wal` and `-shm` files, `cas/`, `sessions/`, and
-  `keys/host.key`, which stays mode 0600. Overlay `work/` directories may be
-  root-owned scratch space and need not be copied. The daemon token is not
-  in the data directory (`wyrd token path`).
+- **No `wyrd restore` yet** ([#318](https://github.com/Kunj157/wyrdline/issues/318)).
+  `wyrd backup <dir>` writes a verified copy of the data directory and
+  refuses while any session runs; the format is in
+  [backup format](backup-format.md). Until `wyrd restore` exists, a backup
+  is restored by hand, and the result should be checked with `wyrd verify`.
+  A backup does not include uncheckpointed workspace edits or the host private
+  key unless `--include-key` is given.
 - **Checkpoints miss their latency target for large changes.** For 200
   files and a 50 MB delta the checkpoint p95 is 158.7 ms on the development
   machine, against a 150 ms target, and 260–530 ms on a GitHub-hosted
