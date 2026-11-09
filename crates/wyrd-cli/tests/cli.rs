@@ -369,3 +369,80 @@ fn backup_writes_a_verified_copy_and_refuses_a_busy_or_occupied_destination() {
     assert!(String::from_utf8_lossy(&out.stderr).contains(&id));
     assert!(!busy.exists());
 }
+
+#[test]
+fn restore_round_trips_a_backup_and_refuses_an_occupied_data_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = data_with_session(dir.path());
+    let backup = dir.path().join("backup");
+    let out = wyrd()
+        .args(["backup", backup.to_str().unwrap()])
+        .env("WYRD_DATA_DIR", &data)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+
+    let restored = dir.path().join("restored");
+    let run = |args: &[&str], data: &std::path::Path| {
+        wyrd()
+            .args(args)
+            .env("WYRD_DATA_DIR", data)
+            .output()
+            .unwrap()
+    };
+    let out = wyrd()
+        .args(["restore", backup.to_str().unwrap(), "--json"])
+        .env("WYRD_DATA_DIR", &restored)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["format"], "wyrdline.backup.v1");
+
+    // The restored session verifies with the same head as the original.
+    let id = v["sessions"][0]["id"].as_str().unwrap().to_string();
+    let original = run(&["verify", &id, "--json"], &data);
+    let copy = run(&["verify", &id, "--json"], &restored);
+    assert_eq!(
+        copy.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&copy.stderr)
+    );
+    let head = |o: &std::process::Output| {
+        serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap()["head_hash"].clone()
+    };
+    assert_eq!(head(&copy), head(&original));
+
+    // The restored store checks out: every checkpoint chunk is present.
+    let gc = run(&["gc", "--dry-run", "--json"], &restored);
+    assert_eq!(
+        gc.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&gc.stderr)
+    );
+
+    // A session command reads the restored record and its checkpoints.
+    let out = run(&["checkpoints", &id], &restored);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Restoring into a data directory that is not empty is a conflict, and
+    // nothing in it changes.
+    let out = wyrd()
+        .args(["restore", backup.to_str().unwrap()])
+        .env("WYRD_DATA_DIR", &restored)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+}

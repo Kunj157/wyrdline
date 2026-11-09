@@ -86,6 +86,7 @@ wyrd ask <session>                                   # answer what the policy as
 wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy would have stopped
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
 wyrd backup ~/wyrd-backup                   # verified copy of the data directory (refuses while a session runs)
+wyrd restore ~/wyrd-backup                   # restore a backup into an empty data directory, verified
 wyrd gc --dry-run                                   # report the chunks no checkpoint refers to; deletes nothing
 wyrd gc                                             # delete them (waits briefly for a checkpoint in progress)
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only

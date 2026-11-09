@@ -22,7 +22,7 @@ use wyrd_ledger::{HostKey, Ledger};
 use wyrd_schema::SessionState;
 
 use crate::cgroup::Cgroup;
-use crate::{CellError, DataDir, Result, gc, io_err, now_ms, state};
+use crate::{CellError, DataDir, Result, gc, io_err, now_ms, session, state};
 
 /// Format identifier in the manifest.
 pub const FORMAT_ID: &str = "wyrdline.backup.v1";
@@ -130,6 +130,206 @@ pub fn verify_tree(root: &Path) -> Result<TreeReport> {
         roots: roots.len(),
         chunks: chunks.len(),
     })
+}
+
+/// Restore a backup into the data directory, which must be absent or empty.
+/// The tree is copied beside the data directory, verified against the manifest,
+/// and renamed into place only then. Nothing is written into the data directory
+/// until that check has passed. A backup holds no branch overlays, so a
+/// restored session keeps its ledger, record, checkpoints and baseline, but
+/// not the uncheckpointed edits of its branches (see `docs/backup-format.md`).
+pub fn restore(source: &Path, data: &DataDir) -> Result<Manifest> {
+    let manifest = read_manifest(source)?;
+    check_target(source, data)?;
+    let target = data.root();
+    let parent = parent_of(target);
+    fs::create_dir_all(parent).map_err(io_err(parent))?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| CellError::Invalid(format!("{} has no name", target.display())))?;
+    let stage = parent.join(format!(
+        ".{}.restore-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    if stage.exists() {
+        fs::remove_dir_all(&stage).map_err(io_err(&stage))?;
+    }
+    fs::create_dir(&stage).map_err(io_err(&stage))?;
+    set_mode(&stage, 0o700)?;
+    let ready = copy_in(source, &stage)
+        .and_then(|()| rebuild_all(&stage))
+        .and_then(|()| check_copy(&stage, &manifest))
+        .and_then(|()| wyrd_cas::sync_fs_of(&stage).map_err(CellError::from));
+    if let Err(e) = ready {
+        let _ = fs::remove_dir_all(&stage);
+        return Err(e);
+    }
+    publish(&stage, target)?;
+    Ok(manifest)
+}
+
+/// The data directory must be absent or empty, and must not be inside the
+/// backup (or the backup inside it).
+fn check_target(source: &Path, data: &DataDir) -> Result<()> {
+    let target = data.root();
+    if target.exists() {
+        let empty = target.is_dir()
+            && fs::read_dir(target)
+                .map_err(io_err(target))?
+                .next()
+                .is_none();
+        if !empty {
+            return Err(CellError::Occupied(target.to_path_buf()));
+        }
+    }
+    let abs_target = resolve(target)?;
+    let abs_source = resolve(source)?;
+    if abs_target.starts_with(&abs_source) || abs_source.starts_with(&abs_target) {
+        return Err(CellError::Invalid(format!(
+            "the backup {} and the data directory {} must not contain each other",
+            abs_source.display(),
+            abs_target.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Entries of one session directory in a backup: the ledger snapshot and the
+/// files `backup` writes beside it.
+const SESSION_ENTRIES: &[&str] = &[
+    "ledger.wyrdledger",
+    "session.json",
+    "baseline.cbor",
+    "import.json",
+    "launch.json",
+    "judge-runs.jsonl",
+    "mcp-pins.json",
+];
+
+/// Copy the parts of a backup that a data directory holds. Every entry is
+/// checked against what `backup` writes; anything else is refused, so an
+/// unexpected entry cannot land in the data directory unchecked.
+fn copy_in(source: &Path, stage: &Path) -> Result<()> {
+    for e in read_entries(source)? {
+        match e.name.as_str() {
+            MANIFEST => {}
+            "sessions" => copy_sessions_in(&e.path, &stage.join("sessions"))?,
+            "cas" => copy_store_in(&e.path, &stage.join("cas"))?,
+            "policies" => copy_tree(&e.path, &stage.join("policies"))?,
+            "keys" => copy_keys_in(&e.path, &stage.join("keys"))?,
+            other => return Err(unexpected(other)),
+        }
+    }
+    Ok(())
+}
+
+fn unexpected(entry: &str) -> CellError {
+    CellError::Invalid(format!(
+        "unexpected entry {entry} in the backup; it is not a wyrd backup"
+    ))
+}
+
+/// The entries of a directory: name and path, each with its file type checked
+/// to be a regular file or a directory.
+struct Entry {
+    name: String,
+    path: PathBuf,
+    is_dir: bool,
+}
+
+fn read_entries(dir: &Path) -> Result<Vec<Entry>> {
+    let mut out = Vec::new();
+    for e in fs::read_dir(dir).map_err(io_err(dir))? {
+        let e = e.map_err(io_err(dir))?;
+        let path = e.path();
+        let kind = fs::symlink_metadata(&path)
+            .map_err(io_err(&path))?
+            .file_type();
+        if !(kind.is_dir() || kind.is_file()) {
+            return Err(CellError::Invalid(format!(
+                "{} is not a regular file or directory",
+                path.display()
+            )));
+        }
+        out.push(Entry {
+            name: e.file_name().to_string_lossy().into_owned(),
+            path,
+            is_dir: kind.is_dir(),
+        });
+    }
+    Ok(out)
+}
+
+fn copy_sessions_in(src: &Path, dst: &Path) -> Result<()> {
+    for s in read_entries(src)? {
+        if !s.is_dir || s.name.starts_with('.') {
+            return Err(unexpected(&format!("sessions/{}", s.name)));
+        }
+        let to = dst.join(&s.name);
+        fs::create_dir_all(&to).map_err(io_err(&to))?;
+        for f in read_entries(&s.path)? {
+            if f.is_dir || !SESSION_ENTRIES.contains(&f.name.as_str()) {
+                return Err(unexpected(&format!("sessions/{}/{}", s.name, f.name)));
+            }
+            copy_file_if_present(&f.path, &to.join(&f.name))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_store_in(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst).map_err(io_err(dst))?;
+    for e in read_entries(src)? {
+        match (e.name.as_str(), e.is_dir) {
+            ("FORMAT", false) => copy_file_if_present(&e.path, &dst.join("FORMAT"))?,
+            ("chunks", true) => copy_tree(&e.path, &dst.join("chunks"))?,
+            _ => return Err(unexpected(&format!("cas/{}", e.name))),
+        }
+    }
+    Ok(())
+}
+
+fn copy_keys_in(src: &Path, dst: &Path) -> Result<()> {
+    for e in read_entries(src)? {
+        if e.is_dir || e.name != "host.key" {
+            return Err(unexpected(&format!("keys/{}", e.name)));
+        }
+    }
+    let key = src.join("host.key");
+    if key.exists() {
+        fs::create_dir_all(dst).map_err(io_err(dst))?;
+        set_mode(dst, 0o700)?;
+        let to = dst.join("host.key");
+        copy_file_if_present(&key, &to)?;
+        set_mode(&to, 0o600)?;
+    }
+    Ok(())
+}
+
+/// Rebuild the branch overlays of every session in a copied tree.
+fn rebuild_all(stage: &Path) -> Result<()> {
+    let stage_data = DataDir::new(stage);
+    for id in session_ids(&stage_data)? {
+        session::rebuild_overlays(&stage_data, &id)?;
+    }
+    Ok(())
+}
+
+/// The copied tree must match the manifest: the same sessions, with the same
+/// events and head, and the same checkpoints and chunks.
+fn check_copy(stage: &Path, manifest: &Manifest) -> Result<()> {
+    let report = verify_tree(stage)?;
+    if report.sessions != manifest.sessions
+        || report.roots != manifest.roots
+        || report.chunks != manifest.chunks
+    {
+        return Err(CellError::Invalid(
+            "the backup does not match its manifest (sessions, checkpoints or chunks differ)"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Read and check a backup's manifest.
@@ -473,7 +673,7 @@ fn copy_file_if_present(src: &Path, dst: &Path) -> Result<()> {
 
 /// Copy a directory tree of regular files and directories. A missing source is
 /// an empty tree; a symbolic link or other special file is an error.
-fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
+pub(crate) fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
     let Ok(rd) = fs::read_dir(src) else {
         return Ok(());
     };

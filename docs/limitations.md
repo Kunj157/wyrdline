@@ -211,13 +211,12 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
 
 ## Operational
 
-- **No `wyrd restore` yet** ([#318](https://github.com/Kunj157/wyrdline/issues/318)).
-  `wyrd backup <dir>` writes a verified copy of the data directory and
-  refuses while any session runs; the format is in
-  [backup format](backup-format.md). Until `wyrd restore` exists, a backup
-  is restored by hand, and the result should be checked with `wyrd verify`.
-  A backup does not include uncheckpointed workspace edits or the host private
-  key unless `--include-key` is given.
+- **Backups do not hold branch overlays.** `wyrd backup` copies the
+  checkpoints, the ledgers and the content store, not the edits a branch made
+  after its last checkpoint, nor the host private key unless `--include-key`
+  is given. A restored session keeps its checkpoints and can be checked and
+  applied from them. See [backup format](backup-format.md)
+  ([#318](https://github.com/Kunj157/wyrdline/issues/318)).
 - **Checkpoints miss their latency target for large changes.** For 200
   files and a 50 MB delta the checkpoint p95 is 158.7 ms on the development
   machine, against a 150 ms target, and 260–530 ms on a GitHub-hosted

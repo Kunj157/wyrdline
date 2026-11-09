@@ -83,8 +83,10 @@ latency of a denied connect is in [enforcement](results/enforcement.md).
 `wyrd backup <dir>` copies the data directory to a new directory, takes a
 consistent snapshot of each ledger, and verifies the copy before it is named.
 It refuses while a session is running; stop the session first (`wyrd stop`).
-The host private key is left out unless you pass `--include-key`. What a
-backup holds, and what it leaves out, is in [backup format](backup-format.md).
+The host private key is left out unless you pass `--include-key`. `wyrd
+restore <dir>` puts a backup into an empty data directory after checking it.
+What a backup holds, and what it leaves out, is in
+[backup format](backup-format.md).
 
 ### Where does my data go?
 

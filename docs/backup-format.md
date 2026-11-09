@@ -1,11 +1,9 @@
 # Backup format (`wyrdline.backup.v1`)
 
 `wyrd backup <dir>` copies the data directory to `<dir>` as a consistent,
-verified tree. This page is the contract for that tree: what is in it, what
-is left out, and what a reader must check. Restoring a tree is not yet a
-command (`wyrd restore` is tracked in
-[#318](https://github.com/Kunj157/wyrdline/issues/318)); until it lands, the
-tree is restored by hand and checked with `wyrd verify`.
+verified tree, and `wyrd restore <dir>` puts such a tree into an empty data
+directory. This page is the contract for the tree: what is in it, what is left
+out, and what a reader must check.
 
 ## What a backup is
 
@@ -95,15 +93,41 @@ errors.
   includes it as private as the key.
 - **`cas/tmp/`, `cas/LOCK`.** Staging files of other writers and the lock.
 
+## Restore
+
+`wyrd restore <dir>` restores into the data directory (`$WYRD_DATA_DIR`, and
+so on), which must be absent or empty; otherwise it exits 4 and touches
+nothing. The backup is copied beside the data directory, the copy is verified
+(below) and checked against the manifest's sessions, checkpoints and chunk
+counts, and only then renamed into place. A backup with an entry other than
+`BACKUP.json`, `sessions/`, `cas/`, `policies/` or `keys/` is refused.
+
+The host private key is restored only if the backup has it, with mode 0600.
+Without it, the next session closed in the restored directory is sealed with
+a new key, and its fingerprint differs from the old one. Sessions sealed
+before the backup still verify against the keys in their own seals.
+
+A restored session keeps its ledger, record, checkpoints and baseline, so
+`wyrd verify`, `wyrd checkpoints`, `wyrd diff` between checkpoints, and
+applying a checkpoint all work. Branch overlays are not in a backup. A restore
+rebuilds each branch's overlay from its head checkpoint (for a fork, the
+checkpoint it was forked from), as a rewind does, so an open session
+checkpoints on from its last checkpoint. The edits made after that checkpoint
+are not restored. Rebuilding a checkpoint that records deleted files needs
+device nodes; without the privilege for them the restore fails, names the
+branch, and leaves the data directory untouched. Session
+records store absolute paths (the workspace, the policy, the cgroup); they are
+copied as they were, so a restore that needs the same workspace works where
+that path exists.
+
 ## Verification
 
 `verify_tree` checks a copy: every session record reads and names its own
 directory, every ledger passes `wyrd verify` (the chain, and the seal's
 signature when sealed), and every chunk reachable from a checkpoint reads back
 with the hash its name gives. It deletes nothing and repairs nothing. A
-backup runs it on the staging tree before the manifest is written. A restore
-command, when it exists, will run it on its own copy before anything is
-renamed into place.
+backup runs it on the staging tree before the manifest is written, and a
+restore runs it on its own copy before anything is renamed into place.
 
 ## Compatibility
 
@@ -112,3 +136,4 @@ copy is internally consistent. They do not prove who made it. A backup that
 includes the host key carries the same authority as the key.
 
 A reader that meets a manifest with another `format` must refuse it.
+
