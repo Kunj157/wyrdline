@@ -177,13 +177,24 @@ pub fn backup(data: &DataDir, dest: &Path, include_key: bool) -> Result<Manifest
             return Err(e);
         }
     };
-    if dest.exists() {
-        fs::remove_dir(dest).map_err(io_err(dest))?;
-    }
-    fs::rename(&stage, dest).map_err(io_err(dest))?;
-    let parent = parent_of(dest);
-    wyrd_cas::sync_dir(parent)?;
+    publish(&stage, dest)?;
     Ok(manifest)
+}
+
+/// Rename a finished staging directory to its final name, and sync the
+/// parent. A failure removes the staging directory: nothing is left half made.
+fn publish(stage: &Path, dest: &Path) -> Result<()> {
+    let step = || -> Result<()> {
+        if dest.exists() {
+            fs::remove_dir(dest).map_err(io_err(dest))?;
+        }
+        fs::rename(stage, dest).map_err(io_err(dest))
+    };
+    if let Err(e) = step() {
+        let _ = fs::remove_dir_all(stage);
+        return Err(e);
+    }
+    wyrd_cas::sync_dir(parent_of(dest)).map_err(CellError::from)
 }
 
 fn build(data: &DataDir, stage: &Path, include_key: bool) -> Result<Manifest> {
@@ -197,6 +208,9 @@ fn build(data: &DataDir, stage: &Path, include_key: bool) -> Result<Manifest> {
     copy_store(data, stage)?;
     wyrd_cas::sync_fs_of(stage)?;
     let report = verify_tree(stage)?;
+    // Opening the copied store (for the check above) created its staging
+    // directory; a backup holds none of the store's own staging state.
+    let _ = fs::remove_dir(stage.join("cas/tmp"));
     let manifest = Manifest {
         format: FORMAT_ID.into(),
         created_ms: now_ms(),
