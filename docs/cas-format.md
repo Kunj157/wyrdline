@@ -103,6 +103,22 @@ Those edits were never durable, and nothing here changes that.
 
 ## Garbage collection
 
+`wyrd gc --keep-days N --keep-sessions M` (both opt-in) first expires sessions,
+then sweeps. A session expires only when it is **closed** (its status is
+`closed`), **not imported** (no `import.json`), **not possibly running** (no
+populated cgroup and no live recorded pid), and beyond both limits: it is
+not among the newest M closed sessions and was not created within N days.
+With only one limit set, the other does not keep sessions. With neither, no
+session expires. Expiry runs under the exclusive store lock, and takes each
+candidate's session lock without waiting (a checkpoint takes the session lock
+before the store lock, so waiting here could deadlock). A session that is busy
+is kept and reported in `kept_busy`. An expired session is renamed into
+`.trash/` (outside `sessions/`, so `roots` never sees a half-removed session),
+then removed. A root-owned `work/` directory can keep `.trash/` in place; the
+files then stay on disk until removed by hand. The ledger of an expired
+session is deleted with it, so that history is gone unless a backup holds it.
+A dry run reports the sessions it would expire and deletes nothing.
+
 `wyrd gc` (`wyrd_cell::gc::collect`) deletes every chunk that no root reaches, and
 with `--dry-run` only reports them. The roots are every checkpoint manifest of
 every session: the session record's checkpoints and the ledger's

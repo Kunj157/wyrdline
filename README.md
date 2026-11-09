@@ -87,6 +87,7 @@ wyrd policy backtest policies/strict.wasm <session>  # what a stricter policy wo
 wyrd export <session> -o session.wyrd               # signed bundle, strict redaction by default
 wyrd gc --dry-run                                   # report the chunks no checkpoint refers to; deletes nothing
 wyrd gc                                             # delete them (waits briefly for a checkpoint in progress)
+wyrd gc --keep-sessions 20 --keep-days 90 --dry-run  # opt-in: also expire closed sessions beyond both limits (deletes ledgers)
 wyrd verify session.wyrd && wyrd import session.wyrd # check every hash, then add read-only
 wyrd mcp                                             # MCP server for the agent: inspect itself, request a rewind
 wyrd rewind <session> --requests                     # the agent's rewind requests; --confirm / --reject <id>
