@@ -1271,6 +1271,37 @@ impl Session {
     }
 }
 
+/// Rebuild the overlay of every branch of a restored session from the content
+/// store: a branch's head checkpoint (or the checkpoint it was forked from) is
+/// materialized into its upper layer, as a rewind does. A backup holds no
+/// overlays, so a restore calls this for each session it copied; without it an
+/// open session would checkpoint an empty tree. Imported sessions are read-only
+/// and have no overlay to rebuild.
+pub fn rebuild_overlays(data: &DataDir, id: &str) -> Result<()> {
+    let s = Session::open(data, id)?;
+    if s.rec.mode != CaptureMode::Cell || s.imported().is_some() {
+        return Ok(());
+    }
+    let branches: Vec<String> = s.rec.branches.iter().map(|b| b.id.clone()).collect();
+    for b in branches {
+        let forked = s
+            .rec
+            .branch(&b)
+            .and_then(|x| x.forked_from.as_ref())
+            .is_some();
+        if s.dir.upper(&b).exists() || (s.rec.branch_head(&b).is_none() && !forked) {
+            continue;
+        }
+        s.restore_branch(&b).map_err(|e| {
+            CellError::Invalid(format!(
+                "session {id}: branch {b} cannot be rebuilt from its checkpoint ({e}); \
+                 a deleted file needs a device node, which needs privileges"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 /// Where an imported session came from (`import.json` in its directory).
 /// An imported session is read-only: nothing can run, checkpoint, rewind,
 /// apply, or append to it.

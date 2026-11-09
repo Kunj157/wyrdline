@@ -77,6 +77,10 @@ enum Command {
     Export(cmd::bundle::ExportArgs),
     /// Upload a bundle to a Wyrdline Hub (token in `$WYRD_HUB_TOKEN`).
     Push(cmd::push::PushArgs),
+    /// Copy the data directory to a new directory, verified (refuses while a session runs).
+    Backup(cmd::backup::Args),
+    /// Restore a backup into an empty data directory, verified against its manifest.
+    Restore(cmd::restore::Args),
     /// Delete content store chunks that no checkpoint reaches (`--dry-run` only reports them).
     Gc(cmd::gc::Args),
     /// Verify a `.wyrd` bundle and add it as a read-only session.
@@ -122,6 +126,8 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Doctor(args) => cmd::doctor::run(&args),
         Command::Verify(args) => cmd::verify::run(&args),
+        Command::Backup(a) => cmd::backup::run(&a),
+        Command::Restore(a) => cmd::restore::run(&a),
         Command::Gc(a) => cmd::gc::run(&a),
         Command::ProbeLandlock => cmd::doctor::probe_landlock(),
         Command::Run(a) => cmd::session::run(&a),
