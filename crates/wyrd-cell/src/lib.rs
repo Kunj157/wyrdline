@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod apply;
+pub mod backup;
 pub mod baseline;
 pub mod cgroup;
 pub mod confine;
@@ -52,6 +53,9 @@ pub enum CellError {
     NoNamespace(String),
     #[error("apply refused; the real workspace changed since the session started: {0:?}")]
     Conflicts(Vec<String>),
+    /// The destination of a backup or restore exists and is not an empty directory.
+    #[error("{0} exists and is not an empty directory")]
+    Occupied(PathBuf),
     /// The session's state does not allow the operation right now.
     #[error("{0}")]
     Busy(String),

@@ -136,6 +136,26 @@ pub fn is_locked(path: &Path) -> Result<bool> {
     }
 }
 
+/// Take the session lock if no other holder has it; `None` when it is held.
+/// Unlike [`lock`] this never waits, so a caller that holds the store lock
+/// can use it without a deadlock risk (see `docs/cas-format.md`).
+pub fn try_lock(path: &Path) -> Result<Option<SessionLock>> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(io_err(path))?;
+    match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(Some(SessionLock { _file: file })),
+        Err(e) if e == rustix::io::Errno::WOULDBLOCK => Ok(None),
+        Err(e) => Err(CellError::Io {
+            path: path.to_path_buf(),
+            source: e.into(),
+        }),
+    }
+}
+
 pub fn lock(path: &Path) -> Result<SessionLock> {
     let file = fs::OpenOptions::new()
         .create(true)
