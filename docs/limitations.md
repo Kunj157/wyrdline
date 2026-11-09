@@ -238,8 +238,12 @@ returns session text as quoted data, cut at 200 items and 32 KiB per block
 - `wyrd gc` deletes the content store's chunks that no session's checkpoint
   refers to, or with `--dry-run` only reports them. It waits at most ten
   seconds for a checkpoint or import in progress, then fails without
-  deleting. It does not delete a checkpoint or any session: history is kept
-  as long as its session exists ([#296](https://github.com/Kunj157/wyrdline/issues/296)).
+  deleting ([#296](https://github.com/Kunj157/wyrdline/issues/296)). Without
+  `--keep-days` or `--keep-sessions` it never deletes a session: history is
+  kept as long as its session exists. With them, closed sessions beyond the
+  limits are removed, with their ledgers, before the sweep
+  ([#318](https://github.com/Kunj157/wyrdline/issues/318);
+  [retention](cas-format.md#garbage-collection)).
 - The sensor sees exactly the syscalls its programs trace
   ([sensor](architecture/sensor.md)); file operations issued through
   other interfaces (for example `io_uring`) are not among them. Reads
