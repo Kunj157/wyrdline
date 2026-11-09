@@ -197,3 +197,104 @@ fn gc_deletes_unreferenced_chunks_and_a_dry_run_only_reports_them() {
     let v = run(&["--json"]);
     assert_eq!(v["deleted"], 0, "a second collection has nothing to free");
 }
+
+/// A data directory with one session that has a checkpoint.
+fn data_with_session(root: &std::path::Path) -> std::path::PathBuf {
+    let data_dir = root.join("data");
+    let data = wyrd_cell::DataDir::new(&data_dir);
+    let ws = root.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let mut s = wyrd_cell::Session::create(
+        &data,
+        wyrd_cell::session::CreateOptions {
+            workspace: ws,
+            command: vec!["true".into()],
+            observe: false,
+            name: None,
+            agent_kind: "test".into(),
+            deny_tools: Vec::new(),
+            policy: None,
+            kernel_release: "test".into(),
+            capabilities: std::collections::BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    std::fs::write(s.dir().upper("a").join("f.txt"), "hello\n").unwrap();
+    s.checkpoint(None).unwrap();
+    data_dir
+}
+
+#[test]
+fn backup_writes_a_verified_copy_and_refuses_a_busy_or_occupied_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = data_with_session(dir.path());
+    let dest = dir.path().join("out/backup");
+    let run = |args: &[&str]| {
+        wyrd()
+            .arg("backup")
+            .args(args)
+            .env("WYRD_DATA_DIR", &data)
+            .output()
+            .unwrap()
+    };
+
+    let out = run(&[dest.to_str().unwrap(), "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["format"], "wyrdline.backup.v1");
+    assert_eq!(v["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(v["host_key_included"], false);
+    assert!(!dest.join("keys/host.key").exists());
+    assert!(dest.join("BACKUP.json").is_file());
+
+    // The copy is a verifiable session ledger on its own.
+    let session = std::fs::read_dir(dest.join("sessions"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let v = wyrd_ledger::verify(&session.join("ledger.wyrdledger")).unwrap();
+    assert!(v.ok(), "{v:?}");
+
+    // A second backup to the same, now occupied, path is refused.
+    let out = run(&[dest.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "an occupied destination is a conflict"
+    );
+    assert!(
+        dest.join("BACKUP.json").is_file(),
+        "the first copy is untouched"
+    );
+
+    // A running session (a populated cgroup) makes the backup exit 4 and name it.
+    let cg = dir.path().join("cgroup");
+    std::fs::create_dir_all(&cg).unwrap();
+    std::fs::write(cg.join("cgroup.procs"), "").unwrap();
+    std::fs::write(cg.join("cgroup.events"), "populated 1\n").unwrap();
+    let data_handle = wyrd_cell::DataDir::new(&data);
+    let id = std::fs::read_dir(data_handle.sessions())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .into_owned();
+    let s = data_handle.session(&id);
+    let mut rec = wyrd_cell::state::load(&s).unwrap();
+    rec.cgroup = Some(cg);
+    wyrd_cell::state::save(&s, &rec).unwrap();
+    let busy = dir.path().join("busy");
+    let out = run(&[busy.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&id));
+    assert!(!busy.exists());
+}
