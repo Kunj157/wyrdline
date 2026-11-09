@@ -127,8 +127,11 @@ through the same privilege path (it only accepts `…/branches/<id>/work`).
 Either install the AppArmor profile (`sudo make apparmor-install
 WYRD_BIN=$(which wyrd)`), or opt in to the sudo helper with
 `WYRD_PRIVILEGED_HELPER=sudo` (passwordless sudo for `wyrd __cell-exec` and
-`wyrd __cell-cleanup` is enough). From Phase 5, `wyrd-sensord` takes over
-this role.
+`wyrd __cell-cleanup` is enough). `wyrd doctor` checks the helper with
+`sudo -n -l` (no command runs) and counts it toward Cell mode only when sudo
+allows it without a password; `wyrd-sensord` and the AppArmor profile are the
+other two paths. From Phase 5, `wyrd-sensord` takes over this role.
+See [ADR-008](../adr/008-doctor-probes-the-privileged-helper.md).
 
 ## Session states
 

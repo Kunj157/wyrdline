@@ -70,6 +70,15 @@ without kernel capture unless `WYRD_ALLOW_DEGRADED=true`.
 | BPF LSM not enabled | Exec denial is detect-and-stop (below). Nothing else changes; BPF LSM is optional. |
 | `cgroup_sock_addr` hooks absent (kernel < 4.17) | No kernel egress filtering. |
 
+The `WYRD_PRIVILEGED_HELPER=sudo` path is the only Cell path on some hosts.
+`wyrd doctor` counts it toward Cell mode only after `sudo -n -l` allows the
+helper ([ADR-008](adr/008-doctor-probes-the-privileged-helper.md)). That probe
+checks the sudoers rule and does not run stage two, so a rule that is
+matched but cannot start the Cell still shows as allowed; the run then fails
+at launch and is marked Failed. The daemon (Studio's `/system/doctor`) does
+not run sudo: it reports the helper as `not_probed` and `cell_mode: false`,
+so on those hosts it understates Cell mode. Use `wyrd doctor` for the answer.
+
 ## Enforcement boundaries
 
 - **Egress rules are addresses, not names.** `egress-allow-hosts` is

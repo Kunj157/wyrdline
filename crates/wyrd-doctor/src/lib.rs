@@ -102,12 +102,71 @@ pub struct Check {
     pub required_for_capture: bool,
 }
 
+/// State of the `WYRD_PRIVILEGED_HELPER=sudo` path, which runs the Cell's
+/// stage two through `sudo -n`.
+///
+/// The probe is `sudo -n -l`, which lists the sudoers rule for
+/// `wyrd __cell-exec` and runs nothing, so doctor never executes anything as
+/// root. The result is only as current as the probe: a later sudoers change
+/// is seen by the next `wyrd doctor` or `wyrd run`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivilegedHelper {
+    /// `WYRD_PRIVILEGED_HELPER` is not `sudo`.
+    #[default]
+    NotConfigured,
+    /// `WYRD_PRIVILEGED_HELPER=sudo` and `sudo -n -l` allows the stage-two command.
+    Verified,
+    /// `WYRD_PRIVILEGED_HELPER=sudo` but the probe failed; the text says why.
+    Refused(String),
+    /// `WYRD_PRIVILEGED_HELPER=sudo` but this caller does not run sudo (the
+    /// daemon). `wyrd doctor` gives the verified answer.
+    NotProbed,
+}
+
+impl PrivilegedHelper {
+    /// Run `probe` (the `sudo -n -l` check) only when the helper is enabled.
+    pub fn probed(enabled: bool, probe: impl FnOnce() -> Result<(), String>) -> Self {
+        if !enabled {
+            return PrivilegedHelper::NotConfigured;
+        }
+        match probe() {
+            Ok(()) => PrivilegedHelper::Verified,
+            Err(reason) => PrivilegedHelper::Refused(reason),
+        }
+    }
+
+    /// The helper is enabled but this caller does not probe it.
+    pub fn unprobed(enabled: bool) -> Self {
+        if enabled {
+            PrivilegedHelper::NotProbed
+        } else {
+            PrivilegedHelper::NotConfigured
+        }
+    }
+}
+
+/// The path that makes Cell mode available, in the order `wyrd run` prefers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CellPath {
+    /// Unprivileged user namespaces (or the `AppArmor` profile that allows them).
+    UserNamespace,
+    /// `WYRD_PRIVILEGED_HELPER=sudo`, verified by `sudo -n -l`.
+    PrivilegedHelper,
+    /// `wyrd-sensord` creates the namespaces.
+    Sensord,
+}
+
 /// Full report.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema, ts_rs::TS)]
 pub struct Report {
     pub kernel_release: String,
     pub checks: Vec<Check>,
     pub cell_mode: bool,
+    /// Which path makes Cell mode available; `None` when Cell mode is off.
+    pub cell_path: Option<CellPath>,
+    pub privileged_helper: PrivilegedHelper,
     pub kernel_capture: bool,
     pub kernel_network_enforcement: bool,
     pub masked: Vec<String>,
@@ -133,6 +192,8 @@ pub struct Probes {
     /// Landlock ABI reported by `landlock_create_ruleset`, `None` if unavailable.
     pub landlock_abi: Option<i32>,
     pub uid: u32,
+    /// Result of the `WYRD_PRIVILEGED_HELPER` probe; see [`PrivilegedHelper`].
+    pub privileged_helper: PrivilegedHelper,
 }
 
 /// Inputs to [`run`].
@@ -236,12 +297,24 @@ pub fn run(env: &Env) -> Report {
 
     let masked = apply_mask(&mut checks, env.mask.as_deref());
     let ok = |id: CheckId| checks.iter().any(|c| c.id == id && c.status == Status::Ok);
-    // The Cell needs a user namespace, either directly or created by wyrd-sensord.
-    let cell_mode = CheckId::ALL
+    let helper_ok = env.probes.privileged_helper == PrivilegedHelper::Verified;
+    // The Cell needs a user namespace, a verified sudo helper, or wyrd-sensord.
+    let cell_path = if !CheckId::ALL
         .iter()
         .filter(|c| c.required_for_cell())
         .all(|c| ok(*c))
-        && (ok(CheckId::Userns) || ok(CheckId::Sensord));
+    {
+        None
+    } else if ok(CheckId::Userns) {
+        Some(CellPath::UserNamespace)
+    } else if helper_ok {
+        Some(CellPath::PrivilegedHelper)
+    } else if ok(CheckId::Sensord) {
+        Some(CellPath::Sensord)
+    } else {
+        None
+    };
+    let cell_mode = cell_path.is_some();
     let kernel_capture = CheckId::ALL
         .iter()
         .filter(|c| c.required_for_capture())
@@ -251,6 +324,8 @@ pub fn run(env: &Env) -> Report {
         kernel_release: release,
         checks,
         cell_mode,
+        cell_path,
+        privileged_helper: env.probes.privileged_helper.clone(),
         kernel_capture,
         kernel_network_enforcement,
         masked,
@@ -544,6 +619,32 @@ pub fn render_text(report: &Report) -> String {
         yn(report.kernel_capture),
         yn(report.kernel_network_enforcement)
     );
+    match &report.privileged_helper {
+        PrivilegedHelper::NotConfigured => {}
+        PrivilegedHelper::Verified => {
+            let _ = writeln!(
+                out,
+                " Privileged helper (WYRD_PRIVILEGED_HELPER=sudo): sudo -n allows the Cell's stage two without a password{}",
+                if report.cell_path == Some(CellPath::PrivilegedHelper) {
+                    " (Cell mode via the privileged helper)"
+                } else {
+                    ""
+                }
+            );
+        }
+        PrivilegedHelper::Refused(reason) => {
+            let _ = writeln!(
+                out,
+                " Privileged helper (WYRD_PRIVILEGED_HELPER=sudo): refused: {reason}"
+            );
+        }
+        PrivilegedHelper::NotProbed => {
+            let _ = writeln!(
+                out,
+                " Privileged helper (WYRD_PRIVILEGED_HELPER=sudo): not probed here; `wyrd doctor` checks it"
+            );
+        }
+    }
     if !report.masked.is_empty() {
         let _ = writeln!(out, " Masked: {}", report.masked.join(","));
     }

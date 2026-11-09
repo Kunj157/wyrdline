@@ -37,6 +37,77 @@ fn doctor_mask_makes_cell_mode_unavailable() {
     assert_eq!(v["cell_mode"], false);
 }
 
+/// A `sudo` on a temporary PATH whose exit status and stderr the test chooses.
+fn fake_sudo_on_path(exit: i32, stderr: &str) -> (tempfile::TempDir, String) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let sudo = dir.path().join("sudo");
+    std::fs::write(
+        &sudo,
+        format!("#!/bin/sh\necho '{stderr}' >&2\nexit {exit}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&sudo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (dir, path)
+}
+
+#[test]
+fn doctor_probes_the_privileged_helper_with_sudo_l() {
+    let (_sudo, path) = fake_sudo_on_path(0, "");
+    let out = wyrd()
+        .args(["doctor", "--json"])
+        .env("WYRD_PRIVILEGED_HELPER", "sudo")
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["privileged_helper"], "verified");
+}
+
+#[test]
+fn doctor_reports_a_refused_privileged_helper() {
+    let (_sudo, path) = fake_sudo_on_path(1, "sudo: a password is required");
+    let out = wyrd()
+        .args(["doctor", "--json"])
+        .env("WYRD_PRIVILEGED_HELPER", "sudo")
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["privileged_helper"]["refused"],
+        "sudo: a password is required"
+    );
+    // The helper must not be the path that enables Cell mode.
+    assert_ne!(v["cell_path"], "privileged_helper");
+}
+
+#[test]
+fn doctor_does_not_run_sudo_unless_the_helper_is_enabled() {
+    // A sudo that records that it ran. It must not run without the variable.
+    let (sudo_dir, path) = fake_sudo_on_path(1, "");
+    let marker = sudo_dir.path().join("ran");
+    std::fs::write(
+        sudo_dir.path().join("sudo"),
+        format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+    )
+    .unwrap();
+    let out = wyrd()
+        .args(["doctor", "--json"])
+        .env_remove("WYRD_PRIVILEGED_HELPER")
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["privileged_helper"], "not_configured");
+    assert!(!marker.exists(), "sudo ran without WYRD_PRIVILEGED_HELPER");
+}
+
 #[test]
 fn doctor_text_output_has_summary_line() {
     let out = wyrd().arg("doctor").output().unwrap();
