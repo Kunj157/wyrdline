@@ -197,3 +197,67 @@ fn gc_deletes_unreferenced_chunks_and_a_dry_run_only_reports_them() {
     let v = run(&["--json"]);
     assert_eq!(v["deleted"], 0, "a second collection has nothing to free");
 }
+
+#[test]
+fn gc_retention_is_opt_in_and_expires_only_closed_sessions_beyond_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let dd = wyrd_cell::DataDir::new(&data);
+    let ws = dir.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let mut ids = Vec::new();
+    for (i, name) in ["old", "new"].iter().enumerate() {
+        let mut s = wyrd_cell::Session::create(
+            &dd,
+            wyrd_cell::session::CreateOptions {
+                workspace: ws.clone(),
+                command: vec!["true".into()],
+                observe: false,
+                name: None,
+                agent_kind: "test".into(),
+                deny_tools: Vec::new(),
+                policy: None,
+                kernel_release: "test".into(),
+                capabilities: std::collections::BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        std::fs::write(s.dir().upper("a").join(format!("{name}.txt")), name).unwrap();
+        s.checkpoint(None).unwrap();
+        s.close("done").unwrap();
+        let mut rec = wyrd_cell::state::load(s.dir()).unwrap();
+        let days_ago: i64 = if i == 0 { 2 } else { 1 };
+        rec.created_ms = wyrd_cell::now_ms() - days_ago * 86_400_000;
+        wyrd_cell::state::save(s.dir(), &rec).unwrap();
+        ids.push(s.record().id.clone());
+    }
+    let run = |args: &[&str]| {
+        let out = wyrd()
+            .arg("gc")
+            .args(args)
+            .env("WYRD_DATA_DIR", &data)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+    // No limit: nothing expires, even though both sessions are closed.
+    let v = run(&["--json"]);
+    assert_eq!(v["expired"].as_array().unwrap().len(), 0);
+    assert!(data.join("sessions").join(&ids[0]).exists());
+
+    // A dry run names the older session and removes nothing.
+    let v = run(&["--dry-run", "--keep-sessions", "1", "--json"]);
+    assert_eq!(v["expired"][0], ids[0].as_str());
+    assert!(data.join("sessions").join(&ids[0]).exists());
+
+    let v = run(&["--keep-sessions", "1", "--json"]);
+    assert_eq!(v["expired"][0], ids[0].as_str());
+    assert!(!data.join("sessions").join(&ids[0]).exists());
+    assert!(data.join("sessions").join(&ids[1]).exists());
+}
