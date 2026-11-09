@@ -176,7 +176,9 @@ one, and a missing name is only ever referenced by nothing.
 1. Inside the freeze, `snapshot_staged` chunks each changed file and writes
    each new chunk to a unique staging name `tmp/<hex>.<pid>.<seq>`. No sync,
    no rename. Files are chunked by up to eight workers, each with its own
-   batch, merged afterwards.
+   batch, merged afterwards. After each staged write, the file gets a
+   `posix_fadvise(DONTNEED)` hint, which starts its writeback early. It is
+   not a barrier (see "Writeback hint" below).
 2. The cgroup is thawed.
 3. `stage_manifest` writes the manifest to staging the same way.
 4. `commit`:
@@ -200,6 +202,13 @@ power cut could leave `session.json` naming an event the ledger had lost
 the event, its sync and the record.
 Barrier 2 is kept even though a journal commit would usually make the renames
 durable: that depends on the filesystem, so the ordering does not rely on it.
+
+### Writeback hint
+
+Staged chunks get a `posix_fadvise(DONTNEED)` hint after each write. It starts
+their writeback early and changes no barrier. Its order argument, its
+measured effect and its side effects (the staged chunks leave the page cache)
+are in [ADR-009](../adr/009-checkpoint-writeback-hint.md).
 
 ### Every write checks what it finds
 

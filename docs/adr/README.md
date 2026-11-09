@@ -13,6 +13,7 @@ immutable once accepted; a later ADR supersedes an earlier one explicitly.
 | [006](006-llm-extracts-code-decides.md) | The LLM extracts claims, code decides verdicts | Accepted |
 | [007](007-wasm-policy-host.md) | Wasm policy host: wasmtime, fresh instance per call, no WASI | Accepted |
 | [008](008-doctor-probes-the-privileged-helper.md) | `wyrd doctor` probes the privileged helper with `sudo -n -l` | Accepted |
+| [009](009-checkpoint-writeback-hint.md) | Writeback hint on staged chunks in a checkpoint | Accepted |
 
 Template: Status, Date, Context, Decision, Consequences, Alternatives
 considered.
