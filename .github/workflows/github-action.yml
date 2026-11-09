@@ -48,7 +48,7 @@ jobs:
           ACTIONLINT_VERSION: 1.7.12
         run: |
           # -f: an HTTP error fails here instead of feeding an error page to tar.
-          curl -fsSL --retry 3 --retry-all-errors -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 8 --retry-delay 10 --retry-all-errors --retry-max-time 300 -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           tar -xzf actionlint.tar.gz actionlint
           ./actionlint -color integrations/github-action/examples/*.yml
 

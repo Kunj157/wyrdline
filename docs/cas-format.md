@@ -140,6 +140,9 @@ holder:
   cgroup freeze, until `session.json` is saved. An import holds it from the
   store open until the session is renamed into place and its directory is
   synced. Shared holders do not block one another.
+- **A backup** (`wyrd backup`, see [backup format](backup-format.md)) holds it
+  shared from before its first copy until its verified copy is named, so a
+  collection cannot remove a chunk a copied record refers to.
 - **Garbage collection** holds it exclusive while it reads the roots and
   sweeps. It never takes a session lock while it holds the store lock, and a
   checkpoint takes the session lock before the store lock, so the two cannot
