@@ -15,6 +15,7 @@ pub mod mcp_proxy;
 pub mod open;
 pub mod policy;
 pub mod push;
+pub mod restore;
 pub mod session;
 pub mod studio;
 pub mod verdict;
