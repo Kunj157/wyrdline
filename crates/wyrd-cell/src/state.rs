@@ -136,6 +136,26 @@ pub fn is_locked(path: &Path) -> Result<bool> {
     }
 }
 
+/// Take the session lock if no other holder has it; `None` when it is held.
+/// Unlike [`lock`] this never waits, so a caller that holds the store lock
+/// can use it without a deadlock risk (see `docs/cas-format.md`).
+pub fn try_lock(path: &Path) -> Result<Option<SessionLock>> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(io_err(path))?;
+    match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(Some(SessionLock { _file: file })),
+        Err(e) if e == rustix::io::Errno::WOULDBLOCK => Ok(None),
+        Err(e) => Err(CellError::Io {
+            path: path.to_path_buf(),
+            source: e.into(),
+        }),
+    }
+}
+
 pub fn lock(path: &Path) -> Result<SessionLock> {
     let file = fs::OpenOptions::new()
         .create(true)
@@ -150,4 +170,25 @@ pub fn lock(path: &Path) -> Result<SessionLock> {
         }
     })?;
     Ok(SessionLock { _file: file })
+}
+
+/// Whether a session may have a live agent: its cgroup is populated, or its
+/// recorded pid is alive. Observe-mode and non-root runs record no cgroup, so
+/// the pid is what marks them. A pid that no longer exists does not count; a
+/// reused pid counts, which errs on the side of keeping the session.
+pub fn may_be_running(rec: &SessionRecord) -> bool {
+    let in_cgroup = rec
+        .cgroup
+        .as_ref()
+        .is_some_and(|c| crate::cgroup::Cgroup::at(c).is_populated());
+    let pid_alive = rec
+        .pid
+        .and_then(|p| i32::try_from(p).ok())
+        .and_then(rustix::process::Pid::from_raw)
+        .is_some_and(|p| match rustix::process::test_kill_process(p) {
+            Ok(()) => true,
+            // EPERM: the process exists, owned by someone else.
+            Err(e) => e == rustix::io::Errno::PERM,
+        });
+    in_cgroup || pid_alive
 }
