@@ -12,6 +12,7 @@ immutable once accepted; a later ADR supersedes an earlier one explicitly.
 | [005](005-cell-design.md) | Cell design and user-namespace strategy | Accepted |
 | [006](006-llm-extracts-code-decides.md) | The LLM extracts claims, code decides verdicts | Accepted |
 | [007](007-wasm-policy-host.md) | Wasm policy host: wasmtime, fresh instance per call, no WASI | Accepted |
+| [008](008-doctor-probes-the-privileged-helper.md) | `wyrd doctor` probes the privileged helper with `sudo -n -l` | Accepted |
 
 Template: Status, Date, Context, Decision, Consequences, Alternatives
 considered.

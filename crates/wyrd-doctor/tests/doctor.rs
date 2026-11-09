@@ -3,7 +3,10 @@
 use std::fs;
 use std::path::Path;
 
-use wyrd_doctor::{CheckId, Env, Probes, Status, parse_kernel_version, render_text, run};
+use wyrd_doctor::{
+    CellPath, CheckId, Env, PrivilegedHelper, Probes, Status, parse_kernel_version, render_text,
+    run,
+};
 
 fn write(root: &Path, rel: &str, content: &str) {
     let p = root.join(rel);
@@ -47,6 +50,7 @@ fn env(root: &Path, abi: Option<i32>) -> Env {
         Probes {
             landlock_abi: abi,
             uid: 1000,
+            ..Probes::default()
         },
     )
 }
@@ -74,6 +78,8 @@ fn ubuntu_2404_profile() {
     assert!(r.kernel_capture);
     assert!(r.kernel_network_enforcement);
     assert!(r.get(CheckId::Landlock).unwrap().detail.contains("ABI v7"));
+    assert_eq!(r.cell_path, None);
+    assert_eq!(r.privileged_helper, PrivilegedHelper::NotConfigured);
 }
 
 #[test]
@@ -100,6 +106,7 @@ fn apparmor_profile_allows_userns() {
     let r = run(&env(dir.path(), Some(7)));
     assert_eq!(r.get(CheckId::Userns).unwrap().status, Status::Ok);
     assert!(r.cell_mode);
+    assert_eq!(r.cell_path, Some(CellPath::UserNamespace));
 }
 
 #[test]
@@ -231,4 +238,89 @@ fn sensord_check_probes_the_configured_socket() {
     write(scratch.path(), "sensord.sock", "");
     let r = run(&env(dir.path(), Some(7)).with_sensord_socket(&configured));
     assert_eq!(r.get(CheckId::Sensord).unwrap().status, Status::Ok);
+}
+
+#[test]
+fn verified_helper_makes_cell_mode_available() {
+    // The sudo helper stands in for the user namespace. The userns check itself
+    // is unchanged: it stays degraded and the report says which path works.
+    let dir = tempfile::tempdir().unwrap();
+    ubuntu_2404(dir.path());
+    let mut e = env(dir.path(), Some(7));
+    e.probes.privileged_helper = PrivilegedHelper::Verified;
+    let r = run(&e);
+    assert!(r.cell_mode);
+    assert_eq!(r.cell_path, Some(CellPath::PrivilegedHelper));
+    assert_eq!(r.privileged_helper, PrivilegedHelper::Verified);
+    let userns = r.get(CheckId::Userns).unwrap();
+    assert_eq!(userns.status, Status::Degraded);
+    assert!(userns.detail.contains("AppArmor"));
+    let text = render_text(&r);
+    assert!(text.contains("Cell mode: yes"));
+    assert!(text.contains("privileged helper"));
+}
+
+#[test]
+fn refused_helper_keeps_cell_mode_off_and_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    ubuntu_2404(dir.path());
+    let mut e = env(dir.path(), Some(7));
+    e.probes.privileged_helper = PrivilegedHelper::Refused("sudo: a password is required".into());
+    let r = run(&e);
+    assert!(!r.cell_mode);
+    assert_eq!(r.cell_path, None);
+    assert_eq!(
+        r.privileged_helper,
+        PrivilegedHelper::Refused("sudo: a password is required".into())
+    );
+    assert!(render_text(&r).contains("a password is required"));
+}
+
+#[test]
+fn unprobed_helper_is_not_counted() {
+    // The daemon reports without running sudo; it must not claim Cell mode.
+    let dir = tempfile::tempdir().unwrap();
+    ubuntu_2404(dir.path());
+    let mut e = env(dir.path(), Some(7));
+    e.probes.privileged_helper = PrivilegedHelper::NotProbed;
+    let r = run(&e);
+    assert!(!r.cell_mode);
+    assert_eq!(r.privileged_helper, PrivilegedHelper::NotProbed);
+}
+
+#[test]
+fn verified_helper_does_not_skip_the_required_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    ubuntu_2404(dir.path());
+    let mut e = env(dir.path(), None);
+    e.probes.privileged_helper = PrivilegedHelper::Verified;
+    let r = run(&e);
+    assert_eq!(r.get(CheckId::Landlock).unwrap().status, Status::Unknown);
+    assert!(!r.cell_mode);
+}
+
+#[test]
+fn probed_helper_runs_the_probe_only_when_configured() {
+    let mut calls = 0;
+    let off = PrivilegedHelper::probed(false, || {
+        calls += 1;
+        Ok(())
+    });
+    assert_eq!(off, PrivilegedHelper::NotConfigured);
+    assert_eq!(calls, 0, "no sudo run unless WYRD_PRIVILEGED_HELPER=sudo");
+
+    let on = PrivilegedHelper::probed(true, || Err("no sudoers rule".into()));
+    assert_eq!(on, PrivilegedHelper::Refused("no sudoers rule".into()));
+    assert_eq!(
+        PrivilegedHelper::probed(true, || Ok(())),
+        PrivilegedHelper::Verified
+    );
+    assert_eq!(
+        PrivilegedHelper::unprobed(true),
+        PrivilegedHelper::NotProbed
+    );
+    assert_eq!(
+        PrivilegedHelper::unprobed(false),
+        PrivilegedHelper::NotConfigured
+    );
 }

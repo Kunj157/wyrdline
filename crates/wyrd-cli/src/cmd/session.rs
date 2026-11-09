@@ -404,6 +404,7 @@ pub fn run(a: &RunArgs) -> anyhow::Result<u8> {
             wyrd_doctor::Probes {
                 landlock_abi: None,
                 uid: rustix::process::getuid().as_raw(),
+                ..wyrd_doctor::Probes::default()
             },
         )
         .with_sensord_socket(wyrd_doctor::sensord_socket_path()),

@@ -4,7 +4,8 @@ use std::io::Write as _;
 use std::process::Command;
 
 use anyhow::Context as _;
-use wyrd_doctor::{Env, Probes};
+use wyrd_cell::launch::{probe_sudo_helper, sudo_helper_enabled};
+use wyrd_doctor::{Env, PrivilegedHelper, Probes};
 
 use crate::exit;
 
@@ -16,9 +17,13 @@ pub struct Args {
 }
 
 pub fn run(args: &Args) -> anyhow::Result<u8> {
+    let exe = std::env::current_exe().context("locating the wyrd binary")?;
     let probes = Probes {
         landlock_abi: landlock_abi_from_child(),
         uid: rustix::process::getuid().as_raw(),
+        privileged_helper: PrivilegedHelper::probed(sudo_helper_enabled(), || {
+            probe_sudo_helper(&exe)
+        }),
     };
     let mut env = Env::new("/", probes).with_sensord_socket(wyrd_doctor::sensord_socket_path());
     env.mask = std::env::var("WYRD_DOCTOR_MASK").ok();
