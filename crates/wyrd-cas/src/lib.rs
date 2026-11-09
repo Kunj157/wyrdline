@@ -448,6 +448,12 @@ impl Cas {
         staged.files.push((tmp.clone(), path));
         let mut f = fs::File::create(&tmp).map_err(io_err(&tmp))?;
         f.write_all(&compressed).map_err(io_err(&tmp))?;
+        // A hint, not a barrier: the kernel starts writing the staged data back
+        // now, so the commit's `syncfs` has less left to write. Nothing waits
+        // for it, the commit still syncs everything, and a failure is ignored.
+        // It also drops the clean pages of the staged file, so a read of the
+        // new chunk soon after the checkpoint goes to disk.
+        let _ = rustix::fs::fadvise(&f, 0, None, rustix::fs::Advice::DontNeed);
         Ok(h)
     }
 
