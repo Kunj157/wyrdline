@@ -64,6 +64,10 @@ pub fn doctor_report(wyrd_bin: &Path) -> wyrd_doctor::Report {
         wyrd_doctor::Probes {
             landlock_abi,
             uid: rustix::process::getuid().as_raw(),
+            // The daemon runs no sudo; `wyrd doctor` gives the verified answer.
+            privileged_helper: wyrd_doctor::PrivilegedHelper::unprobed(
+                wyrd_cell::launch::sudo_helper_enabled(),
+            ),
         },
     )
     .with_sensord_socket(wyrd_doctor::sensord_socket_path());
