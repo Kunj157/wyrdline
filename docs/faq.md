@@ -78,6 +78,14 @@ runs, above the 5 % budget for build and test workloads. The sensor received
 and method: [performance at v1.0](results/perf-v1.0.md). The enforcement
 latency of a denied connect is in [enforcement](results/enforcement.md).
 
+### How do I back up my data?
+
+`wyrd backup <dir>` copies the data directory to a new directory, takes a
+consistent snapshot of each ledger, and verifies the copy before it is named.
+It refuses while a session is running; stop the session first (`wyrd stop`).
+The host private key is left out unless you pass `--include-key`. What a
+backup holds, and what it leaves out, is in [backup format](backup-format.md).
+
 ### Where does my data go?
 
 Nowhere, unless you send it. Sessions live in your data directory
@@ -129,7 +137,7 @@ agent's own resume flags in the relaunched command
 
 `0` ok · `1` usage or an error · `2` capability missing or session not
 found · `3` verification failed (`wyrd verify`, `wyrd policy test`) ·
-`4` conflict (`wyrd apply` over files you changed) · `5` daemon
+`4` conflict (`wyrd apply` over files you changed; `wyrd backup` or `wyrd restore` into a destination that is occupied or busy) · `5` daemon
 unavailable (`wyrd daemon status`, `wyrd studio`) · `141` the reader of
 standard output closed early (`wyrd events … | head -n1`); nothing is
 printed, the same status a shell reports for a filter stopped by a pipe.
