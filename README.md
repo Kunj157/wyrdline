@@ -5,8 +5,9 @@
 > Every agent leaves a thread. Wyrdline lets you follow it, cut it, and
 > re-weave it.
 
-**[Website and live demo](https://kunj157.github.io/wyrdline/)**: the
-real Studio replaying a recorded session in your browser.
+**[Live demo](https://kunj157.github.io/wyrdline/studio/?offline=/wyrdline/studio/demo-session.jsonl)**:
+the real Studio replaying a recorded session in your browser, no install ·
+**[Website](https://kunj157.github.io/wyrdline/)**
 
 Coding agents (Claude Code, Codex CLI, Gemini CLI, any MCP client) run real
 commands on real machines. What they *say* they did and what they *actually*
